@@ -289,7 +289,7 @@ function showExecution(meta){
   backendMeta.replaceChildren();
   $('h3','control-subheading',backendMeta,'Run backend and precision');
   const grid=$('div','execution-meta',backendMeta);
-  const compact=(label,value)=>{if(value==null||value==='')return;const item=$('div','execution-meta-item',grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
   compact('Requested backend',meta.requestedBackend);
   compact('Executed backend',meta.executedBackend);
   compact('Precision',meta.precision);
@@ -301,7 +301,7 @@ function showExecution(meta){
     compact('GPU adapter',identity||'Adapter details unavailable');
     const limits=device.limits||{},limitParts=[];
     for(const key of ['maxStorageBufferBindingSize','maxBufferSize'])if(Number.isFinite(Number(limits[key])))limitParts.push(`${key==='maxBufferSize'?'buffer':'storage'} ${(Number(limits[key])/1048576).toFixed(0)} MiB`);
-    for(const key of ['maxComputeWorkgroupSizeX','maxComputeWorkgroupsPerDimension'])if(Number.isFinite(Number(limits[key])))limitParts.push(`${key} ${limits[key]}`);
+    for(const [key,label] of [['maxComputeWorkgroupSizeX','max workgroup width'],['maxComputeWorkgroupsPerDimension','max groups per axis']])if(Number.isFinite(Number(limits[key])))limitParts.push(`${label} ${limits[key]}`);
     if(limitParts.length)compact('Relevant GPU limits',limitParts.join(' · '));
   }
 
@@ -312,11 +312,13 @@ function showExecution(meta){
     const summary=[status,fixtureCount?`${fixtureCount} fixtures`:'no fixture records',`worst |primal| ${num(maxOf('maxPrimalAbs'),3)}`,`worst |JVP| ${num(maxOf('maxJvpAbs'),3)}`].join(' · ');
     compact('GPU validation',summary);
     const budget=validation.budget||{};
-    const budgetText=[budget.status,(budget.primal||budget.jvp)&&'independent f64 quadrature: abs ≤ 1e-6 + rel ≤ 1e-4 (primal/JVP)',budget.amplitudeDerivative&&'full-request amplitude gate < 1e-5 remains separate'].filter(Boolean).join(' · ');
+    const budgetText=[budget.status,(budget.primal||budget.jvp)&&'independent f64 quadrature: abs ≤ 1e-6 + rel ≤ 1e-4 (primal/JVP)',budget.amplitudeDerivative&&'full-request amplitude gate ≤ 1e-5 remains separate'].filter(Boolean).join(' · ');
     if(budgetText)compact('Validation budget',budgetText);
   }
 
-  const timings=meta.timings||meta.gpuAttempt?.timings||{},stages=timings.stages||{},stageParts=Object.entries(stages).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${k.replace(/Milliseconds$/,'')} ${num(v,3)} ms`);
+  const timings=meta.timings||meta.gpuAttempt?.timings||{},stages=timings.stages||{};
+  const stageLabels={preparationMilliseconds:'preparation',directMilliseconds:device?'direct/setup':'CPU direct',finiteDifferenceMilliseconds:'CPU finite difference',cpuRecoveryMilliseconds:'CPU recovery',finalizationMilliseconds:stages.cpuRecoveryMilliseconds>0?'finalization (includes recovery)':'finalization'};
+  const stageParts=Object.entries(stages).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${stageLabels[k]||k.replace(/Milliseconds$/,'')} ${num(v,3)} ms`);
   if(typeof timings.kernelMs==='number'&&Number.isFinite(timings.kernelMs))stageParts.unshift(`GPU kernel ${num(timings.kernelMs,3)} ms`);
   if(typeof timings.totalMs==='number'&&Number.isFinite(timings.totalMs))stageParts.unshift(`GPU total ${num(timings.totalMs,3)} ms`);
   if(stageParts.length)compact('Timings',stageParts.join(' · '));
