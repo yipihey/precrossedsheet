@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Numerical core of the pre-shell-crossing phase-space sheet report.
 //! Derived from the MIT-licensed Hopf–Cole cosmology core; the historical
 //! crate name and supplementary upstream modules are retained.
@@ -16,6 +17,7 @@ pub mod nbody;
 pub mod tangent;
 pub mod observables;
 pub mod laboratory;
+pub mod cosmological;
 pub mod r3d;
 pub mod rng;
 pub mod sheet;

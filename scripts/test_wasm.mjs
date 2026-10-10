@@ -11,5 +11,11 @@ for(const dim of [1,2,3]) {
   assert.equal(d.rho.length,d.mesh**dim);
   console.log(`Wasm ${dim}D: mass and fixed-time derivatives pass.`);
 }
-const bad=JSON.parse(lab_run('{"fraction":1.2}'));
-assert.ok(bad.error&&!bad.rho,'Wasm must reject a post-crossing request before publishing scientific fields.');
+const bad=JSON.parse(lab_run('{"fraction":-1}'));
+assert.ok(bad.error&&!bad.rho,'Wasm rejects invalid parameters before allocation.');
+
+const crossed=JSON.parse(lab_run(JSON.stringify({dim:1,n:64,forceMesh:64,fraction:1.2,omegaM:1})));
+assert.equal(crossed.guard?.ok,false);
+assert.ok(crossed.rho.every(Number.isFinite));
+assert.ok(Math.abs(crossed.diagnostics.mass-1)<1e-6);
+console.log('Wasm crossing: finite fields remain visible and mass is conserved.');

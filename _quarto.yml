@@ -39,6 +39,7 @@ book:
     - index.qmd
     - chapters/01-sheet.qmd
     - chapters/02-lpt.qmd
+    - chapters/02-cosmology.qmd
     - chapters/03-meshing.qmd
     - chapters/04-validation.qmd
     - chapters/05-pdfs.qmd

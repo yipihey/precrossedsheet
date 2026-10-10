@@ -9,19 +9,20 @@ title: "Notation and conventions"
 | $\mathbf q$ | Uniform-mass Lagrangian comoving label |
 | $\mathbf x=\mathbf q+\boldsymbol\Psi$ | Current comoving position; kept unwrapped in geometry |
 | $a$ | Scale factor, the PM integration clock |
-| $D$ | Linear growth, equal to $a$ in the live EdS lab; early-time $D\sim a$ convention in the inherited $\Lambda$CDM core |
+| $D$ | Linear growth, equal to $a$ in EdS; early-time $D\sim a$ convention in the inherited $\Lambda$CDM core |
 | $\mathbf u=a\dot{\mathbf x}$ | Physical peculiar velocity; dot here denotes cosmic time |
-| $\mathbf v_D=\partial\mathbf x/\partial D$ | Quantity displayed in the phase-space plot; not physical peculiar velocity |
-| $\mathbf p=a^2\dot{\mathbf x}$ | Canonical momentum; $a^{3/2}\mathbf v_D$ in EdS with $H_0=1$ |
+| $\mathbf v_D=\partial\mathbf x/\partial D$ | Derivative used by the LPT core; not physical peculiar velocity |
+| $\mathbf v_a=\partial(\mathbf x/L)/\partial a$ | Phase-space panel velocity in unit-box coordinates |
+| $\mathbf p=a^2\dot{\mathbf x}$ | Canonical momentum; $a^3E(a)\partial\mathbf x/\partial a$ with $H_0=1$ |
 | $F_{ij}=\delta_{ij}+\Psi_{i,j}$ | Deformation gradient |
 | $J=\det F$, $J_T$ | Spectral-vertex Jacobian and affine-simplex signed volume ratio |
-| $r=1+\delta=\rho/\bar\rho$ | Dimensionless density; positivity required before crossing |
+| $r=1+\delta=\rho/\bar\rho$ | Dimensionless positive total density; stream contributions use absolute volume |
 | $L,N_q,N_e$ | Box side, vertices per axis, Eulerian cells per axis |
 | $R_f,R_s$ | Initial-condition filter scale and observable filter scale |
 | $A$ | Amplitude multiplier of the initial field; tangent at $A=1$ |
 | $y=\log_{10}r$ | PDF coordinate; ordinate is probability per unit $y$ |
 
-The live lab uses $L=1$ and $H_0=1$, with no implied calibration to $h^{-1}\mathrm{Mpc}$. The published replay preserves the original $h^{-1}\mathrm{Mpc}$ units and filters. The Gaussian observation filter in the live lab is not the archival top-hat filter.
+The facade uses unit-box positions and $H_0=1$ internally, with an explicit physical box length in $h^{-1}\mathrm{Mpc}$; @sec-dimensional-units gives the conversions. Fourier output uses physical $k$ and $P_d$. The live Gaussian observation filter uses $R_s/L$ as its control; the initial filter is entered directly in $h^{-1}\mathrm{Mpc}$. Neither Gaussian filter is the archival top-hat filter. Lower-dimensional modes describe translationally invariant solutions, with a distinct power normalization.
 
 ## Fourier and finite-element conventions
 

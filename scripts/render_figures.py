@@ -19,7 +19,7 @@ OUT.mkdir(exist_ok=True)
 plt.rcParams.update({'font.family':'DejaVu Sans','font.size':10,'axes.spines.top':False,'axes.spines.right':False,'svg.hashsalt':'precrossedsheet-v1'})
 BLUE='#0072B2';ORANGE='#D55E00';GREEN='#009E73'
 def run(dim):
- req={'dim':dim,'n':16,'fraction':.55 if dim==1 else .45,'order':4,'steps':64,'mesh':32,'forceMesh':32,'smoothing':0.0,'ic':'waves'}
+ req={'dim':dim,'n':16,'fraction':.55 if dim==1 else .45,'order':4,'steps':64,'mesh':32,'forceMesh':32,'smoothing':0.0,'ic':'waves','omegaM':1.0}
  res=subprocess.run([str(ROOT/'core/target/release/examples/lab_dump')],input=json.dumps(req),capture_output=True,text=True,check=True)
  d=json.loads(res.stdout)
  if not d.get('guard',{}).get('ok'):raise RuntimeError(d)

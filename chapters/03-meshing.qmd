@@ -6,6 +6,8 @@ title: "Exact meshing and continuous Fourier modes"
 
 Once nLPT gives the vertices, linear interpolation defines an affine map on each simplex. For fixed initial simplex mass $m_T$, its pushforward density is $m_T/|V_T|$, a piecewise constant field, commonly called P0. This construction is exact for the **discrete affine sheet**, not for the unresolved smooth cosmological map.
 
+To see why the density is constant, write the affine map on a Lagrangian simplex as $\mathbf x=\mathbf x_0+A(\mathbf q-\mathbf q_0)$. Its volume ratio is $|\det A|=|V_T|/V_{T,0}$, while the Lagrangian mass is $m_T=\bar\rho V_{T,0}$. The pushforward ratio is therefore $\rho_T/\bar\rho=V_{T,0}/|V_T|=1/|J_T|$. This equals the smooth formula at the element level only when the represented map is affine. Refining the Lagrangian mesh changes that map approximation even when the Eulerian clipping is exact.
+
 An optional P1 density reconstruction uses vertex weights $w_i>0$ and barycentric coordinates $\lambda_i(\mathbf x)$:
 
 $$
@@ -30,6 +32,16 @@ A center sample can miss a small simplex altogether or overcount a sharp feature
 
 For periodicity, keep positions unwrapped and lift a neighbor across the Lagrangian boundary by $L$. Clip against unwrapped cell indices, then reduce the deposited cell index modulo the Eulerian mesh size. Wrapping each vertex independently before constructing a simplex can turn a short boundary-crossing element into a spurious box-sized one.
 
+The cell averages obey the global conservation identity
+
+$$
+\sum_C \rho_C V_C=\sum_Tm_T=\bar\rho L^d.
+$$ {#eq-deposit-conservation}
+
+This identity is a check on clipping and periodic bookkeeping, not on the trajectory generator. In the nondegenerate P0 case a cell receives $m_T |T\cap C|/(|V_T|V_C)$. In the [archived study implementation](https://github.com/yipihey/DiscoDJ.jl/blob/0db7baf609c7b0294d03e602e93492f128bd7f7d/studies/lpt_pdf/sheet_pdf/sheet_deposit.jl), elements with $|V_T|<10^{-12}V_{T,0}$ use a centroid-cell mass fallback; that exceptional branch is conservative but is not an exact overlap integral. The statement “exact deposit” therefore refers to geometric integration of the represented nondegenerate affine elements and should be read with this finite-precision fallback in mind.
+
+After shell crossing, a flipped simplex still has positive mass and contributes $m_T/|V_T|$ wherever its position-space image overlaps another stream. The projection adds these positive contributions; the signed volume is retained separately to diagnose orientation. A finite-volume cell can thus display a crossed projected field even though the one-to-one identity $r=1/J$ no longer applies. That geometric operation does not evolve the sheet or validate an LPT extrapolation past crossing. The live comparison guard remains pre-crossing; the small crossed fraction in the archived cosmological study is described in @sec-published-evidence.
+
 ## Fourier conventions and windows {#sec-fourier}
 
 Use the periodic transform
@@ -40,7 +52,7 @@ $$
 P(\mathbf k)=L^d|\delta_{\mathbf k}|^2.
 $$ {#eq-fourier-power}
 
-For nonzero modes, $\delta_{\mathbf k}=L^{-d}\int\rho(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx$ in units with $\bar\rho=1$. The DC mode of the contrast is zero. $P$ has units of volume in $d$ dimensions; a 2D teaching spectrum is not a 3D cosmological power spectrum.
+For nonzero modes, $\delta_{\mathbf k}=L^{-d}\int\rho(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx$ in units with $\bar\rho=1$. The DC mode of the contrast is zero. $P$ has units of volume in $d$ dimensions; a reduced-dimensional spectrum is not a 3D cosmological power spectrum.
 
 A cell-average mesh has the top-hat window
 
@@ -50,9 +62,22 @@ $$ {#eq-cell-window}
 
 An FFT of the cell averages suppresses power by approximately $|W_{\rm cell}|^2$, and sampling that mesh aliases unresolved modes. Deconvolving the window{{< src sheet::tophat_cell_window >}} is useful on well-resolved modes but does not remove aliasing. The comparison test checks agreement with the continuous estimator in a resolved band{{< test tophat_deconvolution_matches_direct_spectrum "resolved Fourier band" >}}. Near Nyquist, dividing by a window alone is not a convergence argument [@jing2005].
 
+More explicitly, the cell average is a convolution of the continuous field with a cubical top hat, followed by sampling on the lattice. At a sampled Fourier wavevector $\mathbf k$, the discrete transform consequently contains the windowed aliases
+
+$$
+\widehat\delta_{\rm grid}(\mathbf k)
+\;\propto\;\sum_{\mathbf n\in\mathbb Z^d}
+\widehat\delta\!\left(\mathbf k+2k_{\rm Nyq}\mathbf n\right)
+ W_{\rm cell}\!\left(\mathbf k+2k_{\rm Nyq}\mathbf n\right)
+ e^{i(\mathbf k+2k_{\rm Nyq}\mathbf n)\cdot\mathbf x_c},
+\qquad k_{\rm Nyq}=\frac{\pi}{\Delta x}.
+$$ {#eq-cell-aliases}
+
+Here $\mathbf x_c$ is the offset of the sampling lattice from the origin. The base-mode phase is immaterial to power, but the alias images carry relative phases and can interfere. Even if the $\mathbf n=0$ window is divided out, the other terms remain and are amplified by that division. A useful resolution study holds the Lagrangian map and physical filter fixed while changing the Eulerian mesh; then changes the Lagrangian grid at fixed mesh; and for PM-generated maps, varies force mesh and step count independently. Agreement under only the first refinement establishes estimator convergence for a fixed represented map, not convergence of the cosmological dynamics. The archived realistic-$\Lambda$CDM comparison uses its own $256^3$ analysis mesh and filtered Planck18 realization; those measurements are separate evidence and are not recalculated by the configurable live laboratory.
+
 ## Direct sheet transforms {#sec-direct-modes}
 
-The continuous sheet also admits a transform without an Eulerian deposit. Let $s_i=-i\mathbf k\cdot\mathbf x_i$ for the vertices of a $d$-simplex. The Hermite–Genocchi identity gives its normalized P0 mass contribution{{< src direct::exp_divided_difference >}}:
+The continuous sheet also admits a transform without an Eulerian deposit. Let $s_i=-i\mathbf k\cdot\mathbf x_i$ for the vertices of a $d$-simplex. Barycentric coordinates write $\mathbf x=\sum_{i=0}^d\lambda_i\mathbf x_i$ with $\lambda_i\ge0$ and $\sum_i\lambda_i=1$. The Hermite–Genocchi identity for the exponential over the reference simplex then gives the P0 mass contribution{{< src direct::exp_divided_difference >}}:
 
 $$
 \int_T\rho_T e^{-i\mathbf k\cdot\mathbf x}\,d^dx
@@ -61,7 +86,9 @@ $$ {#eq-simplex-fourier}
 
 The brackets denote a divided difference. When all phases coincide, $\exp[s,\ldots,s]=e^s/d!$, so the zero-mode contribution is exactly $m_T$. This provides a valuable mass-normalization check. Repeated phases must be evaluated with a stable confluent expression rather than division by nearly zero phase differences.
 
-Sum @eq-simplex-fourier over all elements to obtain the unnormalized integral $I(\mathbf k)$; divide by $L^d$ to obtain $\delta_{\mathbf k}$ for nonzero modes, and use $P=|I|^2/L^d$. The resulting modes{{< src direct::direct_spectrum >}} have no Eulerian assignment window or mesh aliasing. They still describe a **finite simplex approximation**. An average over a subset of lattice modes has mode-selection variance; it is not point-deposition noise. The teaching gradient plot uses deterministic modes along the first axis, while the general inherited spectrum routine samples lattice modes in bins.
+Summing @eq-simplex-fourier over elements gives the unnormalized integral $I(\mathbf k)$; dividing by $L^d$ gives $\delta_{\mathbf k}$ for nonzero modes, and $P=|I|^2/L^d$. The zero mode checks total mass; it is omitted from the contrast spectrum. The resulting modes{{< src direct::direct_spectrum >}} have no Eulerian assignment window or mesh aliasing. They still describe a **finite simplex approximation**. An average over a subset of lattice modes has mode-selection variance; it is not point-deposition noise. The live gradient plot uses deterministic modes along the first axis, while the general inherited spectrum routine samples lattice modes in bins. Comparisons are meaningful only when both estimators use the same box, density normalization, mode set or binning rule, and P0/P1 field definition.
+
+Two analytic checks follow immediately. At $\mathbf k=0$, $I(0)=\sum_Tm_T=\bar\rho L^d$. Under a uniform translation $\mathbf x\mapsto\mathbf x+\mathbf c$, each nonzero mode gains a phase $e^{-i\mathbf k\cdot\mathbf c}$, so its power is unchanged. A direct-versus-grid discrepancy under translation indicates a boundary-lift, centering, or normalization error rather than a change in the density statistics.
 
 ## What happened to shot noise?
 
@@ -69,8 +96,16 @@ For independently sampled equal-mass points, the familiar white Poisson contribu
 
 Exact deposition removes density **integration** noise. Finite-element error, FFT windows, aliasing, force resolution, and time integration remain measurable error sources. Convergence is demonstrated by varying these separately, not by calling every residual “shot noise.”
 
+The spectral tail of a finite piecewise-linear map also contains geometric information about the element facets; changing the observation mesh cannot remove this finite-element feature. Its amplitude depends on the map, tessellation, and observable, so no universal tail slope or cosmological error follows from the existence of facets. For a realistic cosmological claim, report the initial transfer function and filter, cosmology, box and phases, perturbative growth prescription, output epoch, estimator, and resolution study together. Here the published comparison supplies that context only for its specified filtered setup. It should not be generalized to unfiltered or smaller-scale power.
+
 ::: {.callout-tip title="Try it: same dynamics, different measurement"}
 Compare the exact cell-average sheet spectrum and the CIC spectrum of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step.
 
-{{< lab "view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
+{{< lab "v=2&view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
 :::
+
+## Analysis exercises
+
+1. **Cell window and aliases.** For a one-dimensional input mode with $k\Delta x=\pi/2$, compute $W_{\rm cell}$ and the multiplicative suppression in power. Explain why applying $1/W_{\rm cell}^2$ to the measured power does not remove aliases from modes separated by $2k_{\rm Nyq}$.
+2. **Simplex transform.** Starting from barycentric coordinates, verify @eq-simplex-fourier at $\mathbf k=0$. Then translate every vertex by $\mathbf c$ and show that $P(\mathbf k)$ is invariant. State which Fourier convention supplies the factor $L^{-d}$.
+3. **Convergence design.** Give a sequence of runs that distinguishes Eulerian estimator error from finite Lagrangian tessellation, PM force resolution, and time-step error. For each sequence, hold the other three choices fixed and state what convergence claim the sequence would support.

@@ -4,16 +4,18 @@ title: "Status, evidence, and provenance"
 
 ## What this report establishes {#sec-status}
 
-This is a pedagogical implementation of the pre-shell-crossing cold sheet, using nLPT through fourth order and conservative simplex observables. It reproduces the existing numerical core and adds a controlled EdS PM comparison and directional-derivative laboratory. The scientific motivation is the existing filtered-cosmology evidence described in @sec-published-evidence. Smaller scales and post-crossing dynamics are outside this report's scope.
+This is a scientific laboratory of the pre-shell-crossing cold sheet, using nLPT through fourth order and conservative simplex observables. It reproduces the existing numerical core and adds a controlled flat $\Lambda$CDM/EdS PM comparison and directional-derivative laboratory. The scientific motivation is the existing filtered-cosmology evidence described in @sec-published-evidence. Smaller-scale extensions and validated post-crossing LPT dynamics remain outside the scientific claims. Crossed outputs stay visible with orientation diagnostics and a caution.
 
 | Claim or capability | Evidence | Practical limit |
 |---|---|---|
 | nLPT recurrence through fourth order | Equation residuals, 2LPT closed form, growth tests | Finite Fourier grid and input bandwidth |
 | Conservative sheet deposit | Analytic moments, independent R3D fixtures, mass tests | Exact for the represented affine sheet |
 | Continuous simplex Fourier modes | Analytic transforms and low-mode deposit comparison | Finite Lagrangian mesh; selected mode coverage |
-| PM dynamics | Uniform/plane-wave benchmarks and convergence tests | Finite force mesh and timesteps; live EdS model |
-| Directional derivatives | Independent centered finite differences | Fixed cosmology, pre-crossing regime, smooth branches |
+| PM dynamics | Uniform/plane-wave benchmarks and convergence tests | Finite force mesh and timesteps; matched flat $\Lambda$CDM or EdS background |
+| Directional derivatives | Independent centered finite differences | Fixed cosmology and smooth CIC branches; crossing status is diagnostic |
 | Published PDF agreement | Packaged original summaries and source metadata | Original filters and small crossing contamination |
+| Physical initial modes | EH98 smooth transfer, $\sigma_8$ quadrature and Hermitian/refinement tests | Approximate transfer without BAO or massive neutrinos |
+| Higher resolution | Native benchmarks and explicit resource envelope | Browser wall time depends on device; grids are never silently reduced |
 | General sub-percent 4LPT accuracy | **Not asserted** | Must specify observable and validation domain |
 
 The [release verification record](https://github.com/yipihey/precrossedsheet/blob/main/docs/verification.md) lists commands actually run and remaining checks. Passing a browser demonstration does not certify inference accuracy; passing a local build does not confirm a deployed GitHub Pages site.
@@ -22,6 +24,6 @@ The [release verification record](https://github.com/yipihey/precrossedsheet/blo
 
 This repository is [yipihey/precrossedsheet](https://github.com/yipihey/precrossedsheet). The interface and publication machinery come from [quadrant](https://github.com/yipihey/quadrant). The original Rust mathematical/geometric core comes from [Hopf–Cole cosmology](https://github.com/yipihey/hopf-cole-cosmology); the archived validation and implementation comparison come from [DiscoDJ.jl](https://github.com/yipihey/DiscoDJ.jl). The [evidence audit](https://github.com/yipihey/precrossedsheet/blob/main/docs/evidence-audit.md) documents the precise scope of the imported claims and code paths.
 
-Cite this teaching implementation using `CITATION.cff`, and cite the primary papers and original studies for the scientific claims. No DOI or precision-performance claim is invented for this first implementation.
+Cite this implementation using `CITATION.cff`, and cite the primary papers and original studies for the scientific claims. No DOI or precision-performance claim is invented for this implementation.
 
-The footer gives build {{< var build.sha >}} and the build date {{< var build.date >}}. Share the laboratory URL to reproduce its controls; download SVG/CSV/PNG for a saved figure. Hypothesis annotations and the repository's issues provide routes for corrections.
+The footer gives build {{< var build.sha >}} and the build date {{< var build.date >}}. Share the laboratory URL to reproduce its controls; download a full JSON experiment manifest and SVG/CSV/PNG figures. Hypothesis annotations and the repository's issues provide routes for corrections.

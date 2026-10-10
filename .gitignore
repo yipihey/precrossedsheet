@@ -17,3 +17,5 @@
 *.pem
 *.key
 *.p12
+
+/app/data/build-info.json

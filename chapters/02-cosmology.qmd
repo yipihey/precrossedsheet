@@ -1,0 +1,94 @@
+---
+title: "Cosmology, initial modes, and physical units"
+---
+
+## The physical specification of an experiment {#sec-cosmology}
+
+A sheet calculation is specified by a background expansion, an initial Fourier field, its normalization and filters, and an output epoch. None of these is determined by the perturbative order. The live laboratory now treats these as explicit inputs. Its default values $(\Omega_{m0},\Omega_{b0},h,n_s,\sigma_8)=(0.315,0.049,0.674,0.965,0.811)$ are representative of the Planck 2018 base-$\Lambda$CDM constraints [@planck2020]. They specify a useful fiducial model, rather than a new fit to observations. The adopted smooth transfer function does not reproduce the full Planck Boltzmann spectrum.
+
+The background is flat, with pressureless matter and a cosmological constant:
+
+$$
+E(a)^2\equiv\frac{H(a)^2}{H_0^2}=\Omega_{m0}a^{-3}+1-\Omega_{m0},\qquad
+\Omega_m(a)=\frac{\Omega_{m0}a^{-3}}{E(a)^2}.
+$$ {#eq-lcdm-background}
+
+Here $H_0=100h\,\mathrm{km\,s^{-1}\,Mpc^{-1}}$. Late-time growth neglects radiation and massive neutrinos. Baryons enter the initial smooth matter spectrum and are subsequently evolved as part of the pressureless matter fluid. This specifies the model used in the laboratory; adding hydrodynamics or a separate neutrino component would change the equations.
+
+### Growth normalization and the epoch
+
+With $\eta=\ln a$ and a prime denoting $d/d\eta$, linear growth obeys
+
+$$
+D''+\left[2-\frac32\Omega_m(a)\right]D'-\frac32\Omega_m(a)D=0,
+\qquad D(a)\sim a\quad(a\to0).
+$$ {#eq-linear-lcdm-growth}
+
+The early-time normalization makes $D=a$ in EdS. In $\Lambda$CDM, generally $D(1)\ne1$. The initial field $\delta_0$ in the LPT recurrence therefore satisfies $\delta_{\rm lin}(a)=D(a)\delta_0$, while a spectrum quoted at $z=0$ describes $D(1)\delta_0$. The conversion must be made before computing nonlinear spatial terms: dividing a final 4LPT displacement by $D(1)$ would normalize its different orders incorrectly.
+
+Each higher-order growth function solves its own forced equation, as described in @sec-lcdm-recursion. The core integrates these equations in $\ln a$ from growing-mode EdS initial conditions at $a=10^{-3}$, with a table extending to $a=20$ {{< src growth::Growth::new_lcdm >}}. The finite initialization time and interpolation are numerical choices that can be refined independently of the spatial grid.
+
+The laboratory offers a physical scale factor $a$ or a reference growth fraction $D/D_{\rm ref}$. The latter uses a common reference for all displayed LPT orders: the minimum of the ZA growth threshold and reachable sampled-vertex crossing estimates at orders 2–4. This is a convenience for comparison, not a proof that the affine mesh or PM trajectory remains single stream. The resolved Jacobians are reported separately. In a weak $\Lambda$CDM realization the formal ZA threshold may be unreachable because growth saturates. Such a threshold has no finite associated scale factor; an unreachable requested fraction produces an explicit error, and a physical epoch remains available. The manifest records $a$, $z=a^{-1}-1$, $D$, $D(1)$, the reference and the initialization epoch.
+
+## Initial spectrum and its normalization {#sec-initial-spectrum}
+
+The Gaussian option uses a smooth CDM+baryon transfer approximation from Eisenstein & Hu [@eisenstein1998], including their scale-dependent effective shape parameter. It retains the turnover and broad baryon suppression, while omitting acoustic oscillations. The implementation {{< src cosmological::transfer >}} fixes $T_{\rm CMB}=2.7255\,\mathrm K$ and evaluates their equations 26 and 28–31 in the stated $h/\mathrm{Mpc}$ convention. A Boltzmann transfer table is the appropriate replacement when precision baryonic features, neutrinos or radiation-dependent growth are required.
+
+Write the **unfiltered**, $z=0$, three-dimensional linear spectrum as
+
+$$
+P_{3,0}(k)=\mathcal A\,k^{n_s}T(k)^2.
+$$ {#eq-linear-spectrum-model}
+
+The normalization is defined by a spherical top-hat, independently of the finite simulation box:
+
+$$
+\sigma_8^2=\frac{1}{2\pi^2}\int_0^\infty
+ k^3 P_{3,0}(k)\,W_{\rm TH}(8k)^2\,d\ln k,
+\qquad W_{\rm TH}(x)=3\frac{\sin x-x\cos x}{x^3}.
+$$ {#eq-sigma8-normalization}
+
+Lengths in this expression are $h^{-1}\mathrm{Mpc}$ and $k$ is in $h\,\mathrm{Mpc}^{-1}$. The code evaluates the integral over $10^{-5}\le k\le100\,h\,\mathrm{Mpc}^{-1}$ with composite Simpson integration in $\ln k$ {{< src cosmological::variance >}}. A series avoids cancellation in $W_{\rm TH}$ near zero. Refining the integration checks normalization independently of the sheet grid {{< test smooth_transfer_has_correct_limits_and_sigma8_integral_converges "spectrum normalization" >}}. The finite integration range is part of the prescription, not a claim of an exact infinite integral.
+
+The initial smoothing radius $R_f$ subsequently multiplies the **field** by $\exp[-k^2R_f^2/2]$, and an explicit radial integer-mode cutoff removes unresolved modes. Thus the filtered realization has neither an expected nor an exactly measured RMS equal to $\sigma_8$. The lab does not rescale each random realization to a target RMS: doing so would correlate its mode amplitudes and change the ensemble. The deterministic wave benchmark instead fixes its analytic $\delta_0$ amplitudes and is independent of the $\sigma_8$ control.
+
+### Same realization under refinement {#sec-stable-modes}
+
+For a periodic cube of side $L$, the physical modes are $\mathbf k_{\mathbf m}=2\pi\mathbf m/L$. Take one representative from each pair $(\mathbf m,-\mathbf m)$ and draw independent unit normal variates $g_1,g_2$. The normalized initial coefficient is
+
+$$
+(\delta_0)_{\mathbf m}=
+\frac{\sqrt{P_{3,0}(k_{\mathbf m})/L^3}}{\sqrt2\,D(1)}
+ e^{-k_{\mathbf m}^2R_f^2/2}(g_1+i g_2),\qquad
+(\delta_0)_{-\mathbf m}=(\delta_0)_{\mathbf m}^{*}.
+$$ {#eq-gaussian-mode-draw}
+
+The zero mode vanishes. Only modes with $|\mathbf m|\le m_{\rm cut}$ are retained. The random key combines the seed and canonical **integer mode**, without the lattice size. Consequently, refining the lattice at fixed $L$, seed, cutoff and cosmology preserves every input coefficient {{< src cosmological::gaussian_hat >}} {{< test gaussian_modes_are_hermitian_and_identical_under_lattice_refinement "shared Fourier modes" >}}. Generating new white noise on each refined grid would reproduce a seed but change the physical realization.
+
+This prescription makes a convergence experiment well defined. Refining $N_q$ changes the numerical representation; changing $m_{\rm cut}$ adds physical input modes. These are separate experiments. Products through fourth order can reach four times the initial bandwidth. The facade requires $N_q>8m_{\rm cut}$ for Gaussian 4LPT so these products lie strictly below the per-axis Nyquist frequency. This conservative condition controls spectral products; it does not certify convergence of the nonlinear Eulerian density near a caustic.
+
+## Reduced-dimensional models and units {#sec-dimensional-units}
+
+The 1D and 2D calculations solve the three-dimensional cosmological equations with translational symmetry along the unused axes. They are neither alternative gravitational cosmologies nor slices through a stochastic 3D realization. For the Gaussian demonstration, their Fourier coefficient variance is still $P_{3,0}(k)/L^3$: they retain the $k_3=0$ or $k_2=k_3=0$ subspace of the box modes. Their effective $d$-dimensional spectrum is therefore $P_d=P_3/L^{3-d}$. A reduced-dimensional power curve should not be compared directly with a 3D power spectrum.
+
+Internally the facade uses $\widetilde{\mathbf x}=\mathbf x/L$ on a unit periodic box. The physical conversion of a normalized continuous mode is
+
+$$
+k_{\rm physical}=k_{\rm unit}/L,\qquad
+P_d=L^d|\delta_{\mathbf m}|^2.
+$$ {#eq-physical-mode-units}
+
+Reported Fourier power has units $(h^{-1}\mathrm{Mpc})^d$. The phase-space panel uses $d(\mathbf x/L)/da$, so the peculiar velocity conversion is
+
+$$
+\mathbf u=a\dot{\mathbf x}=a^2 H(a)L\,
+\frac{d(\mathbf x/L)}{da}.
+$$ {#eq-physical-velocity-conversion}
+
+For $L$ entered numerically in $h^{-1}\mathrm{Mpc}$ this gives $\mathbf u=100a^2E(a)L\,d(\mathbf x/L)/da$ in $\mathrm{km\,s^{-1}}$. The $h$ factors cancel in this conversion; $h$ still affects the initial transfer spectrum. Spatial density maps use equal scales on both axes. A 3D wireframe uses an orthographic projection with a common spatial scale; velocity axes in a 1D phase-space plot have different dimensions and consequently a separately labeled scale.
+
+::: {.callout-tip title="A reproducible cosmological comparison"}
+Fix the seed, initial cutoff, physical box and initial filter. Compare matched 32 and 64 per-axis particle/force grids at the same physical $a$, and keep the observation mesh and smoothing fixed. Then refine the observation mesh separately. Export the complete experiment manifest at every stage; a changed output reference fraction must not silently substitute a different physical epoch.
+
+{{< lab "v=2&dim=3&n=32&force=32&mesh=32&ic=gaussian&cutoff=3&epoch=scaleFactor&a=0.5&view=density" "Inspect a filtered ΛCDM realization" >}}
+:::

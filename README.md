@@ -1,6 +1,6 @@
 # Pre-crossed sheet
 
-A pedagogical Quarto book and Rust/WebAssembly laboratory for the cold phase-space
+A scientific Quarto report and Rust/WebAssembly laboratory for the cold phase-space
 sheet **before shell crossing**. Built from [yipihey/quadrant](https://github.com/yipihey/quadrant),
 with the MIT-licensed nLPT and exact-deposition core from
 [Hopf–Cole cosmology](https://github.com/yipihey/hopf-cole-cosmology).
@@ -8,9 +8,9 @@ with the MIT-licensed nLPT and exact-deposition core from
 The book covers 1D–3D sheet geometry, nLPT through fourth order, conservative
 meshing and continuous Fourier modes, qualified validation against N-body,
 volume/mass PDFs, and directional derivatives for forward modeling. The live
-lab uses an EdS teaching model; the published replay preserves the original
+lab uses flat ΛCDM or EdS growth, an EH98 smooth physical spectrum and matched PM dynamics; the published replay preserves the original
 DiscoDJ filtered-cosmology results and their limitations. Smaller scales and
-post-crossing evolution are future work.
+validated post-crossing LPT dynamics are future work. Crossed outputs remain available with a caution.
 
 ## Build
 
@@ -25,7 +25,7 @@ python3 scripts/serve.py 8790 _site
 
 Open `http://localhost:8790`, or `app/index.html` through that HTTP server.
 The browser needs the generated Wasm package; it has no numerical JS fallback.
-Plots export SVG/CSV and field panels export PNG. All controls live in the URL.
+Plots export SVG/CSV and field panels export PNG. Versioned URLs record every control. Full JSON manifests preserve inputs, numerical results and build provenance. Supported browser lattice ceilings are 1024 in 1D, 256² in 2D and 64³ in 3D, with explicit mesh/memory limits rather than silent reductions.
 
 ## Verification and reuse
 

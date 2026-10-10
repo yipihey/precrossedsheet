@@ -1,4 +1,4 @@
-//! Conservative pre-crossing sheet observables for the teaching laboratory.
+//! Conservative sheet observables for the numerical laboratory.
 //! Fixed simplex masses, unwrapped periodic connectivity, cell-average fields,
 //! and PDFs of log10(rho) are kept distinct from the displacement dynamics.
 use crate::{fft::FftEngine, grid::Grid};
@@ -95,16 +95,47 @@ pub fn minimum_simplex_jacobian(grid: &Grid, pos: &[f64]) -> f64 {
     });
     minimum
 }
-/// Exact mass overlap for the pre-crossing 1D affine map (periodic lifts).
+/// Fraction of initial mass in negatively oriented affine elements at this
+/// epoch. This is a final signed-orientation statistic, not an ever-crossed
+/// union, Eulerian volume fraction, or local stream multiplicity.
+pub fn inverted_mass_fraction(grid: &Grid, pos: &[f64]) -> f64 {
+    let mut crossed = 0.;
+    for_each_simplex(grid, |verts, mass| {
+        let mut x = Vec::with_capacity(grid.dim + 1);
+        let mut q = Vec::with_capacity(grid.dim + 1);
+        for &(id, lift) in verts {
+            let ijk = grid.unravel(id);
+            let mut p = [0.; 3];
+            let mut r = [0.; 3];
+            for a in 0..grid.dim {
+                p[a] = pos[id * grid.dim + a] + lift[a];
+                r[a] = ijk[a] as f64 * grid.dx() + lift[a];
+            }
+            x.push(p);
+            q.push(r);
+        }
+        if det(&x, grid.dim) / det(&q, grid.dim) < 0. {
+            crossed += mass;
+        }
+    });
+    crossed / grid.l.powi(grid.dim as i32)
+}
+/// Exact mass overlap for the 1D affine map (periodic lifts), including folds.
 /// The 2D and 3D counterparts are the inherited R3D clipping routines.
 pub fn interval_density(grid: &Grid, pos: &[f64], ne: usize) -> Vec<f32> {
     assert_eq!(grid.dim, 1);
     let dx = grid.l / ne as f64;
     let mut rho = vec![0.; ne];
     for i in 0..grid.n {
-        let lo = pos[i];
-        let hi = pos[(i + 1) % grid.n] + if i + 1 == grid.n { grid.l } else { 0. };
-        assert!(hi > lo, "crossed interval");
+        let a = pos[i];
+        let b = pos[(i + 1) % grid.n] + if i + 1 == grid.n { grid.l } else { 0. };
+        let (lo, hi) = (a.min(b), a.max(b));
+        if hi == lo {
+            // A collapsed interval is a point mass; choose the containing cell.
+            let j = (lo / dx).floor() as i64;
+            rho[j.rem_euclid(ne as i64) as usize] += grid.dx() / dx;
+            continue;
+        }
         let density = grid.dx() / (hi - lo);
         let first = (lo / dx).floor() as i64;
         let last = (hi / dx).ceil() as i64;
@@ -162,6 +193,49 @@ pub fn density_pdf(
         mean,
         var,
     )
+}
+
+/// Full-field moments and inverse empirical CDFs, independent of histogram
+/// clipping. Mass CDFs weight the smoothed environment by raw cell mass.
+pub fn density_summary(rho: &[f32], raw_mass: &[f32], probabilities: &[f64]) -> serde_json::Value {
+    assert_eq!(rho.len(), raw_mass.len());
+    let count = rho.len() as f64;
+    let mean = rho.iter().map(|&r| r as f64).sum::<f64>() / count;
+    let central = |order: i32| {
+        rho.iter()
+            .map(|&r| (r as f64 - mean).powi(order))
+            .sum::<f64>()
+            / count
+    };
+    let variance = central(2);
+    let s3 = if variance > 0. {
+        Some(central(3) / variance.powi(2))
+    } else {
+        None
+    };
+    let s4 = if variance > 0. {
+        Some((central(4) - 3. * variance.powi(2)) / variance.powi(3))
+    } else {
+        None
+    };
+    let mut sorted: Vec<usize> = (0..rho.len()).collect();
+    sorted.sort_unstable_by(|&i, &j| rho[i].total_cmp(&rho[j]));
+    let total = raw_mass.iter().map(|&r| r as f64).sum::<f64>();
+    let quantile = |p: f64, mass: bool| {
+        let target = p * if mass { total } else { count };
+        let mut cumulative = 0.;
+        for &i in &sorted {
+            cumulative += if mass { raw_mass[i] as f64 } else { 1. };
+            if cumulative >= target {
+                return rho[i] as f64;
+            }
+        }
+        rho[*sorted.last().unwrap()] as f64
+    };
+    serde_json::json!({"mean":mean,"variance":variance,"S3":s3,"S4":s4,
+        "probabilities":probabilities,
+        "volumeQuantiles":probabilities.iter().map(|&p|quantile(p,false)).collect::<Vec<_>>(),
+        "massQuantiles":probabilities.iter().map(|&p|quantile(p,true)).collect::<Vec<_>>()})
 }
 /// Continuous P0 sheet mode and directional derivative for fixed element
 /// masses. `jvp` maps normalized vertex phases, so no volume derivative is

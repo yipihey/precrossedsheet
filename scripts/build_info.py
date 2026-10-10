@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write _variables.yml with the git revision and build date, used in the page footer and on the status page
 ({{< var build.sha >}} etc.). Runs as a Quarto pre-render step."""
-import pathlib, subprocess, datetime
+import pathlib, subprocess, datetime, json
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 def git(*a):
     try:
@@ -20,3 +20,8 @@ now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"
   rendered: "{now}"
 """)
 print("build:", sha + dirty, date)
+
+(ROOT / "app/data/build-info.json").write_text(json.dumps({
+    "gitRevision": full, "buildTime": now, "engineVersion": "0.2.0",
+    "dirty": bool(dirty), "schemaVersion": 2,
+}, indent=2) + "\n")

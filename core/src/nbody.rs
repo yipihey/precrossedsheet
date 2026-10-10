@@ -1,14 +1,17 @@
 //! Periodic particle-mesh dynamics and its analytic directional derivative.
 //!
-//! EdS, H0=1: `a` is time, `p=a² dx/dt=a^(3/2) dx/da`.
-//! We solve ∇²φ=3δ/(2a) with an undeconvolved spectral Green function and
-//! derivative-safe Fourier gradients. Matched node-centered CIC deposition
+//! Flat ΛCDM, H0=1: `a` is time and `p=a² dx/dt=a³ E(a) dx/da`.
+//! We solve ∇²φ=3Ω_m δ/(2a) with an undeconvolved spectral Green function
+//! and derivative-safe Fourier gradients. Matched node-centered CIC deposition
 //! and gathering define the finite-resolution force. KDK freezes the scaled
-//! force -3∇∇⁻²δ/2 in each kick and integrates its EdS time coefficient exactly.
+//! force -3Ω_m∇∇⁻²δ/2 in each kick. Its kick and drift clocks are integrated
+//! accurately in ln(a), with closed forms in EdS.
 //! Positions remain unwrapped. Tangents differentiate the actual discrete
 //! solver, including both CIC operations, away from CIC cell boundaries.
+//! Crossing may either terminate a run or be recorded while the PM particles
+//! continue; continuing does not make finite-order LPT a post-crossing solution.
 
-use crate::{fft::FftEngine, grid::Grid};
+use crate::{fft::FftEngine, grid::Grid, growth::Cosmology};
 use num_complex::Complex64 as C64;
 
 #[derive(Clone, Debug)]
@@ -22,12 +25,24 @@ pub struct PmTangent {
     pub dx: Vec<f64>,
     pub dp: Vec<f64>,
 }
+/// Bracket of the first discrete drift that loses positive sheet orientation.
+/// A step of zero indicates the input sheet was already crossed. This records
+/// a diagnostic bracket, not an interpolated physical shell-crossing time.
+#[derive(Clone, Debug)]
+pub struct PmCrossing {
+    pub step: usize,
+    pub a_start: f64,
+    pub a_end: f64,
+    pub minimum_jacobian: f64,
+}
 #[derive(Clone, Debug)]
 pub struct PmRun {
     pub state: PmState,
     pub tangent: Option<PmTangent>,
     pub min_jacobian: f64,
     pub completed_steps: usize,
+    pub crossed: bool,
+    pub first_crossing: Option<PmCrossing>,
 }
 
 /// CIC stencil and directional weight derivatives, periodic at mesh nodes.
@@ -91,7 +106,7 @@ pub fn cic_density_jvp(mesh: &Grid, x: &[f64], dx: Option<&[f64]>) -> (Vec<f64>,
     (rho, drho)
 }
 
-fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64]) -> Vec<Vec<f64>> {
+fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64], omega_m: f64) -> Vec<Vec<f64>> {
     let hat = eng.forward_real(rho);
     (0..mesh.dim)
         .map(|a| {
@@ -103,7 +118,7 @@ fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64]) -> Vec<Vec<f64>> {
                     if k2 == 0.0 {
                         C64::new(0.0, 0.0)
                     } else {
-                        C64::new(0.0, 1.5 * mesh.kvec(i)[a] / k2) * z
+                        C64::new(0.0, 1.5 * omega_m * mesh.kvec(i)[a] / k2) * z
                     }
                 })
                 .collect();
@@ -112,13 +127,35 @@ fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64]) -> Vec<Vec<f64>> {
         .collect()
 }
 
-/// Scaled acceleration F=-3∇∇⁻²δ/2 at particles and its complete discrete JVP.
+/// EdS scaled acceleration F=-3∇∇⁻²δ/2 and its complete discrete JVP.
 pub fn force_jvp(mesh: &Grid, x: &[f64], dx: Option<&[f64]>) -> (Vec<f64>, Vec<f64>) {
-    let (rho, drho) = cic_density_jvp(mesh, x, dx);
+    force_cosmology_jvp(mesh, x, dx, Cosmology::eds())
+}
+
+/// Flat ΛCDM scaled acceleration F=-3Ω_m∇∇⁻²δ/2 and its complete JVP.
+/// The matter parameter is the present-day Ω_m, held fixed in the derivative.
+pub fn force_cosmology_jvp(
+    mesh: &Grid,
+    x: &[f64],
+    dx: Option<&[f64]>,
+    cosmo: Cosmology,
+) -> (Vec<f64>, Vec<f64>) {
+    assert!(cosmo.omega_m.is_finite() && cosmo.omega_m > 0.0 && cosmo.omega_m <= 1.0);
     let mut eng = FftEngine::new(mesh);
-    let f = mesh_force(mesh, &mut eng, &rho);
+    force_jvp_with_engine(mesh, &mut eng, x, dx, cosmo.omega_m)
+}
+
+fn force_jvp_with_engine(
+    mesh: &Grid,
+    eng: &mut FftEngine,
+    x: &[f64],
+    dx: Option<&[f64]>,
+    omega_m: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let (rho, drho) = cic_density_jvp(mesh, x, dx);
+    let f = mesh_force(mesh, eng, &rho, omega_m);
     let df = if dx.is_some() {
-        mesh_force(mesh, &mut eng, &drho)
+        mesh_force(mesh, eng, &drho, omega_m)
     } else {
         vec![vec![0.0; mesh.size]; mesh.dim]
     };
@@ -223,20 +260,106 @@ fn minimum_drift_jacobian(sheet: &Grid, start: &[f64], end: &[f64]) -> f64 {
     minimum
 }
 
-/// Integrate a supplied state to `a_end` with equal scale-factor KDK steps.
-/// `sheet` identifies particle Lagrangian connectivity; `mesh` sets force resolution.
-/// Rejects an initially crossed sheet or any linear KDK drift whose simplex
-/// signed Jacobian becomes nonpositive, checking the determinant polynomial at
-/// endpoints and interior extrema. This guard applies to the discrete trajectory;
-/// physical accuracy still requires mesh and step-convergence checks.
-/// Gradients hold cosmology, times, particle masses, mesh and step count fixed.
+/// KDK clocks `(kick, drift)` for a flat ΛCDM interval:
+/// kick=∫ da/(a²E(a)), drift=∫ da/(a³E(a)). The EdS forms are evaluated
+/// analytically. Otherwise composite eight-point Gauss-Legendre quadrature
+/// uses ln(a) segments of width at most 0.5, avoiding early-time singularities.
+pub fn cosmology_clocks(cosmo: Cosmology, a0: f64, a1: f64) -> (f64, f64) {
+    assert!(a0.is_finite() && a1.is_finite() && a0 > 0.0 && a1 >= a0);
+    assert!(cosmo.omega_m.is_finite() && cosmo.omega_m > 0.0 && cosmo.omega_m <= 1.0);
+    if a0 == a1 {
+        return (0.0, 0.0);
+    }
+    if cosmo.omega_m == 1.0 {
+        return (
+            2.0 * (a1.sqrt() - a0.sqrt()),
+            2.0 * (1.0 / a0.sqrt() - 1.0 / a1.sqrt()),
+        );
+    }
+    const NODES: [f64; 4] = [
+        0.1834346424956498,
+        0.5255324099163290,
+        0.7966664774136267,
+        0.9602898564975363,
+    ];
+    const WEIGHTS: [f64; 4] = [
+        0.3626837833783620,
+        0.3137066458778873,
+        0.2223810344533745,
+        0.1012285362903763,
+    ];
+    let u0 = a0.ln();
+    let u1 = a1.ln();
+    let segments = ((u1 - u0) / 0.5).ceil().max(1.0) as usize;
+    let width = (u1 - u0) / segments as f64;
+    let mut kick = 0.0;
+    let mut drift = 0.0;
+    for segment in 0..segments {
+        let mid = u0 + width * (segment as f64 + 0.5);
+        for j in 0..4 {
+            for sign in [-1.0, 1.0] {
+                let u = mid + sign * width * 0.5 * NODES[j];
+                // Equivalent to exp(-u)/E and exp(-2u)/E, rearranged
+                // to avoid forming Ω_m/a³ at very early times.
+                let (ki, di) = if u <= 0.0 {
+                    let denominator =
+                        (cosmo.omega_m + (1.0 - cosmo.omega_m) * (3.0 * u).exp()).sqrt();
+                    (
+                        (0.5 * u).exp() / denominator,
+                        (-0.5 * u).exp() / denominator,
+                    )
+                } else {
+                    let denominator =
+                        (cosmo.omega_m * (-3.0 * u).exp() + 1.0 - cosmo.omega_m).sqrt();
+                    ((-u).exp() / denominator, (-2.0 * u).exp() / denominator)
+                };
+                kick += width * 0.5 * WEIGHTS[j] * ki;
+                drift += width * 0.5 * WEIGHTS[j] * di;
+            }
+        }
+    }
+    (kick, drift)
+}
+
+/// Strict EdS compatibility wrapper. Rejects initially crossed sheets and any
+/// linear drift whose simplex determinant becomes nonpositive.
 pub fn evolve_eds(
+    mesh: &Grid,
+    sheet: &Grid,
+    state: PmState,
+    tangent: Option<PmTangent>,
+    a_end: f64,
+    steps: usize,
+) -> Result<PmRun, String> {
+    evolve_cosmology(
+        mesh,
+        sheet,
+        state,
+        tangent,
+        a_end,
+        steps,
+        Cosmology::eds(),
+        false,
+    )
+}
+
+/// Integrate a supplied canonical state with equal scale-factor KDK steps.
+/// `sheet` gives Lagrangian connectivity and `mesh` sets force resolution.
+/// `allow_crossing=true` continues the PM dynamics after simplex orientation
+/// loss, recording the first crossing bracket and the trajectory minimum.
+/// Otherwise crossing is rejected, as in `evolve_eds`. Each drift determinant
+/// is checked at its endpoints and polynomial extrema, once per step.
+/// The optional JVP holds cosmology, masses, times, mesh and step count fixed;
+/// it does not differentiate the crossing diagnostic or its policy.
+pub fn evolve_cosmology(
     mesh: &Grid,
     sheet: &Grid,
     mut state: PmState,
     mut tangent: Option<PmTangent>,
     a_end: f64,
     steps: usize,
+    cosmo: Cosmology,
+    allow_crossing: bool,
 ) -> Result<PmRun, String> {
     if mesh.dim != sheet.dim
         || state.x.len() != sheet.size * sheet.dim
@@ -256,6 +379,9 @@ pub fn evolve_eds(
     {
         return Err("PM requires positive scale factors, matching boxes and steps > 0".into());
     }
+    if !cosmo.omega_m.is_finite() || cosmo.omega_m <= 0.0 || cosmo.omega_m > 1.0 {
+        return Err("PM flat cosmology requires 0 < Omega_m <= 1".into());
+    }
     if let Some(t) = &tangent {
         if t.dx.len() != state.x.len()
             || t.dp.len() != state.x.len()
@@ -268,18 +394,43 @@ pub fn evolve_eds(
         return Err("PM state must be finite".into());
     }
     let mut minimum = min_jacobian(sheet, &state.x);
-    if minimum <= 0.0 || !minimum.is_finite() {
-        return Err("PM initial sheet has crossed".into());
+    if !minimum.is_finite() {
+        return Err("PM initial Jacobian is nonfinite".into());
     }
+    let mut first_crossing = if minimum <= 0.0 {
+        if !allow_crossing {
+            return Err("PM initial sheet has crossed".into());
+        }
+        Some(PmCrossing {
+            step: 0,
+            a_start: state.a,
+            a_end: state.a,
+            minimum_jacobian: minimum,
+        })
+    } else {
+        None
+    };
     let a_start = state.a;
+    // The final kick leaves x and dx unchanged, so its force and force JVP
+    // also serve the next step's initial kick. Keep one FFT engine for the run.
+    let mut eng = FftEngine::new(mesh);
+    let (mut f, mut df) = force_jvp_with_engine(
+        mesh,
+        &mut eng,
+        &state.x,
+        tangent.as_ref().map(|t| t.dx.as_slice()),
+        cosmo.omega_m,
+    );
     for s in 0..steps {
         let a0 = a_start + (a_end - a_start) * s as f64 / steps as f64;
         let a1 = a_start + (a_end - a_start) * (s + 1) as f64 / steps as f64;
         let amid = 0.5 * (a0 + a1);
-        let k0 = 2.0 * (amid.sqrt() - a0.sqrt());
-        let k1 = 2.0 * (a1.sqrt() - amid.sqrt());
-        let drift = 2.0 * (1.0 / a0.sqrt() - 1.0 / a1.sqrt());
-        let (f, df) = force_jvp(mesh, &state.x, tangent.as_ref().map(|t| t.dx.as_slice()));
+        let k0 = cosmology_clocks(cosmo, a0, amid).0;
+        let k1 = cosmology_clocks(cosmo, amid, a1).0;
+        let drift = cosmology_clocks(cosmo, a0, a1).1;
+        if !k0.is_finite() || !k1.is_finite() || !drift.is_finite() {
+            return Err("PM clock overflowed".into());
+        }
         let before_drift = state.x.clone();
         for j in 0..state.x.len() {
             state.p[j] += k0 * f[j];
@@ -298,10 +449,29 @@ pub fn evolve_eds(
         }
         let jac = minimum_drift_jacobian(sheet, &before_drift, &state.x);
         minimum = minimum.min(jac);
-        if jac <= 0.0 || !jac.is_finite() {
-            return Err(format!("PM sheet crossed during drift ending at a={a1:.6}; increase start safety or reduce target"));
+        if !jac.is_finite() {
+            return Err("PM drift Jacobian is nonfinite".into());
         }
-        let (f, df) = force_jvp(mesh, &state.x, tangent.as_ref().map(|t| t.dx.as_slice()));
+        if jac <= 0.0 {
+            if !allow_crossing {
+                return Err(format!("PM sheet crossed during drift ending at a={a1:.6}; increase start safety or reduce target"));
+            }
+            if first_crossing.is_none() {
+                first_crossing = Some(PmCrossing {
+                    step: s + 1,
+                    a_start: a0,
+                    a_end: a1,
+                    minimum_jacobian: jac,
+                });
+            }
+        }
+        (f, df) = force_jvp_with_engine(
+            mesh,
+            &mut eng,
+            &state.x,
+            tangent.as_ref().map(|t| t.dx.as_slice()),
+            cosmo.omega_m,
+        );
         for j in 0..state.x.len() {
             state.p[j] += k1 * f[j];
             if let Some(t) = &mut tangent {
@@ -322,5 +492,7 @@ pub fn evolve_eds(
         tangent,
         min_jacobian: minimum,
         completed_steps: steps,
+        crossed: first_crossing.is_some(),
+        first_crossing,
     })
 }

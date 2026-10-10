@@ -2,7 +2,7 @@
 title: "What the N-body comparison establishes"
 ---
 
-## Start with the question, not the percentage {#sec-validation}
+## Validation domain and error observables {#sec-validation}
 
 A comparison has meaning only when the initial conditions, gravitational model, output epoch, and estimator are matched. “4LPT agrees within 1%” could refer to a displacement, a power bin, a variance, a density quantile, or a PDF ordinate. Those quantities respond differently to errors. A visually indistinguishable density slice is useful intuition but does not replace a numerical metric.
 
@@ -27,32 +27,50 @@ The separate exact-sheet analysis tests reconstruction and estimator convergence
 
 ## A live, controlled N-body experiment {#sec-pm}
 
-The browser adds a periodic particle-mesh (PM) solver{{< src nbody::evolve_eds >}} that evolves the same labels as nLPT. It uses EdS growth, matched CIC assignment and force interpolation, a spectral Poisson solve, and a kick–drift–kick integrator. We initialize it from growing-mode 4LPT at an early scale factor rather than from an arbitrary zero-velocity load. At the output, we attach the original connectivity to the PM vertices and deposit that sheet with the same conservative estimator used for the LPT vertices. Thus the sheet-vs-sheet field comparison isolates the trajectories more cleanly than using different density estimators for the two models.
+The browser adds a periodic particle-mesh (PM) solver{{< src nbody::evolve_cosmology >}} that evolves the same labels as nLPT. It supports flat $\Lambda$CDM and EdS growth, matched CIC assignment and force interpolation, a spectral Poisson solve, and a kick–drift–kick integrator. We initialize it from growing-mode 4LPT at an early scale factor rather than from an arbitrary zero-velocity load. At the output, we attach the original connectivity to the PM vertices and deposit that sheet with the same conservative estimator used for the LPT vertices. Thus the sheet-vs-sheet field comparison isolates the trajectories more cleanly than using different density estimators for the two models.
 
-In units $H_0=1$, use canonical momentum $\mathbf p=a^2\dot{\mathbf x}$ and a rescaled potential $\widetilde\phi=a\phi$, with $\nabla^2\widetilde\phi=(3/2)\delta$. Then
+In units $H_0=1$, use canonical momentum $\mathbf p=a^2\dot{\mathbf x}$ and a rescaled potential $\widetilde\phi=a\phi$, with $\nabla^2\widetilde\phi=(3/2)\Omega_{m0}\delta$. Thus
 
 $$
-\frac{d\mathbf x}{da}=a^{-3/2}\mathbf p,\qquad
-\frac{d\mathbf p}{da}=a^{-1/2}\mathbf F,\qquad
+\frac{d\mathbf x}{da}=\frac{\mathbf p}{a^3E(a)},\qquad
+\frac{d\mathbf p}{da}=\frac{\mathbf F}{a^2E(a)},\qquad
 \mathbf F=-\nabla\widetilde\phi.
 $$ {#eq-pm-clocks}
 
-A drift from $a_0$ to $a_1$ multiplies momentum by $2(a_0^{-1/2}-a_1^{-1/2})$; a kick multiplies the held force by $2(\sqrt{a_1}-\sqrt{a_0})$. The force is re-evaluated after each drift. Finite force resolution and assignment smoothing remain, even though the observation deposit is exact.
+Define the drift and kick integrals
 
-The live solver is a teaching reference, not a precision replacement for the original converged $\Lambda$CDM simulation. Increase the number of steps and the force mesh separately; use deterministic initial waves when increasing the Lagrangian resolution. Keep observation smoothing fixed in box units. A discrepancy that stops changing with timesteps may still come from the force grid.
+$$
+ \mathcal D(a_0,a_1)=\int_{a_0}^{a_1}\frac{da}{a^3E(a)},\qquad
+ \mathcal K(a_0,a_1)=\int_{a_0}^{a_1}\frac{da}{a^2E(a)}.
+$$ {#eq-kdk-integrals}
 
-A finer force grid at fixed particle count need not improve this point-particle PM reference. The lattice and CIC assignment have a finite-resolution response, and starting very early can amplify particle discreteness errors [@michaux2021]. Start with matched particle and force grids, then refine them together. For the native mixed-wave regression at fixed $a=0.7$, increasing both from 16 to 32 to 64 per axis reduces the displacement residual relative to the LPT displacement RMS from approximately 0.193 to 0.090 to 0.037. The fundamental continuous-mode power ratio $P_{\rm PM}/P_{\rm 4LPT}$ moves from 0.828 to 0.948 to 0.986{{< test mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt "joint PM refinement" >}}. This checks the numerical convergence of a teaching comparison; 4LPT remains an approximation, and higher harmonics can differ more.
+For each equal-$a$ timestep with midpoint $a_m$, KDK applies $\mathbf p\leftarrow\mathbf p+\mathcal K(a_0,a_m)\mathbf F(\mathbf x)$, then $\mathbf x\leftarrow\mathbf x+\mathcal D(a_0,a_1)\mathbf p$, recomputes the force, and applies the final kick with $\mathcal K(a_m,a_1)$. The cosmological clocks are evaluated accurately in $\ln a$ {{< src nbody::cosmology_clocks >}}. In EdS they reduce to $\mathcal D=2(a_0^{-1/2}-a_1^{-1/2})$ and $\mathcal K=2(\sqrt{a_1}-\sqrt{a_0})$. Clock quadrature and the analytic limit have independent tests {{< test lcdm_clocks_match_independent_quadrature_and_eds_closed_forms "cosmological clocks" >}}; a weak plane mode checks the $\Lambda$CDM growing solution {{< test lcdm_plane_mode_tracks_linear_growth "ΛCDM growing mode" >}}.
+
+Matched node-centered CIC deposition and gathering define the finite-resolution force. For $\mathbf k\ne0$ the scaled force mode is $\widehat{\mathbf F}= (3/2)\Omega_{m0} i\mathbf k\widehat\delta/k^2$. The zero mode vanishes, and odd derivatives suppress the even-grid Nyquist component. No force-window deconvolution is applied. Exact observation meshing consequently does not make the underlying PM force exact.
+
+The live solver provides a reproducible numerical reference within its convergence domain. It does not replace the original converged simulation underlying the archive. Increase the number of steps and force resolution separately, then refine the Lagrangian and force lattices together. Both deterministic waves and fixed-cutoff Gaussian realizations now preserve their physical input modes under refinement. Keep the physical epoch and filters fixed. A discrepancy that stops changing with timesteps may still come from the force grid, initial particle load or LPT truncation.
+
+A finer force grid at fixed particle count need not improve this point-particle PM reference. The lattice and CIC assignment have a finite-resolution response, and starting very early can amplify particle discreteness errors [@michaux2021]. Start with matched particle and force grids, then refine them together. For the **EdS** native mixed-wave regression at fixed $a=0.7$, increasing both from 16 to 32 to 64 per axis reduces the displacement residual relative to the LPT displacement RMS from approximately 0.193 to 0.090 to 0.037. The fundamental continuous-mode power ratio $P_{\rm PM}/P_{\rm 4LPT}$ moves from 0.828 to 0.948 to 0.986{{< test mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt "joint PM refinement" >}}. This checks numerical convergence in a particular benchmark; 4LPT remains an approximation, and higher harmonics can differ more.
 
 The default 2D lab uses matched 32-per-axis grids. Its displayed power residual is the maximum $|P_{\rm LPT}/P_{\rm PM}-1|$ over the first four populated FFT bins. It is not an aggregate power error: a weak denominator can make this statistic large even when the dominant mode agrees reasonably well. Inspect the spectra and mode counts alongside that number.
 
 ::: {.callout-tip title="Try it: compare trajectories before crossing"}
 Use the plane-wave experiment as an independent exact growing-mode benchmark. Then repeat with coupled 2D waves, where the nonlinear LPT terms matter. Inspect displacement residuals and density statistics; neither alone proves full convergence.
 
-{{< lab "dim=1&ic=waves&view=density&f=0.5&steps=128" "Compare the analytic plane wave and PM" >}}
+{{< lab "v=2&dim=1&ic=waves&view=density&f=0.5&steps=128" "Compare the analytic plane wave and PM" >}}
 :::
 
-## A validation ladder
+## A convergence protocol
 
-First check mass conservation{{< test checked_lab_conserves_mass_and_has_fixed_time_gradients_in_all_dimensions "live model contract" >}} and the uniform solution{{< test uniform_particles_remain_stationary "uniform PM" >}}. Then test the exact plane wave{{< test plane_mode_follows_eds_growth_and_converges_in_step_count "PM growing mode" >}} and the LPT equation residuals. Next refine time integration, force resolution, Lagrangian sampling, and observation meshing independently. Only then compare physical approximations using the same initial modes and estimator. At every stage, record the epoch, filters, minimum Jacobians, and the tolerance on the particular observable.
+First check mass conservation{{< test checked_lab_conserves_mass_and_has_fixed_time_gradients_in_all_dimensions "live model contract" >}} and the uniform solution{{< test uniform_particles_remain_stationary "uniform PM" >}}. Then test the plane-symmetric growing mode{{< test plane_mode_follows_eds_growth_and_converges_in_step_count "PM growing mode" >}} and the LPT equation residuals. Next refine time integration, force resolution, Lagrangian sampling, and observation meshing independently. Only then compare physical approximations using the same initial modes and estimator. At every stage, record the epoch, filters, minimum Jacobians, and the tolerance on the particular observable.
 
 The repository keeps the mathematical core tests, PM/tangent tests, browser self-checks, and provenance checks together. @sec-status states what has actually been run. Replaying an archived dataset is evidence preservation; passing a local implementation test is evidence about the code. They answer different questions.
+
+
+### Orientation diagnostics and continued output {#sec-crossing-diagnostic}
+
+The PM solver evaluates the signed simplex determinant throughout every drift. Because positions vary linearly along that drift, the determinant is a polynomial of degree at most $d$; checking its interior stationary points detects folds that positive endpoints can miss. The lab also records vertex and simplex minima at resolved LPT epochs. A spectral vertex test alone does not prove positivity throughout an affine element or the underlying continuum.
+
+An inversion now raises a caution while the laboratory continues computing and displaying fields, spectra, PDFs and continuous mode responses. The deposited field sums positive mass from every stream; the signed Jacobian is a diagnostic, not a negative density weight. A crossed LPT map is a formal extrapolation, while PM continues its discrete trajectories. Neither continued output nor exact observation integration validates post-crossing LPT dynamics. The scientific claims here remain restricted to the established pre-crossing domain. Crossing continuation and mass conservation are tested explicitly {{< test crossed_laboratory_keeps_fields_and_conserves_stream_mass "crossed output contract" >}}.
+
+For every comparison, save the full input/result manifest and record the minimum Jacobians alongside the observable error. If any simplex is exactly degenerate, the inherited 2D/3D clipping path can skip its zero-volume contribution; deposited mass diagnostics expose that limitation. An exactly collapsed 1D interval is deposited as a point mass. Convergence to a caustic therefore requires care even though most finite folded maps are handled conservatively.

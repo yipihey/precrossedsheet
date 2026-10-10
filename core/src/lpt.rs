@@ -395,7 +395,12 @@ impl Lpt {
     /// Zel'dovich (1LPT) shell-crossing time 1/max_q(-λ_min(∇S^1)).
     pub fn zeldovich_shell_crossing(&self) -> f64 {
         let d = self.grid.dim;
-        let m1 = self.displacement_gradient(1.0, 1);
+        let term = &self.terms[0];
+        let m1: Vec<Vec<f64>> = if let Some(m) = &term.m {
+            m.iter().map(|v| v.iter().map(|&x|x as f64).collect()).collect()
+        } else {
+            (0..d*d).map(|c| fd_gradient(&self.grid,&term.psi[c/d],c%d)).collect()
+        };
         let mut lam_max = 0.0f64;
         let mut m = vec![0.0; 9];
         for idx in 0..self.grid.size {
@@ -430,9 +435,10 @@ impl Lpt {
         let mut hi = 0.0f64;
         let mut dd = 0.5 * self.zeldovich_shell_crossing().min(1e3).max(1e-3);
         for _ in 0..40 {
-            if dd > dmax { return f64::INFINITY; }
+            dd = dd.min(dmax);
             if self.min_jacobian(dd, order) <= 0.0 { hi = dd; break; }
             lo = dd;
+            if dd == dmax { return f64::INFINITY; }
             dd *= 1.6;
         }
         if hi == 0.0 { return f64::INFINITY; }

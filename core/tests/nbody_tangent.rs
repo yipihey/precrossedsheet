@@ -3,7 +3,10 @@ use hcc_core::{
     grid::Grid,
     growth::Cosmology,
     lpt::Lpt,
-    nbody::{cic_density_jvp, evolve_eds, force_jvp, PmState, PmTangent},
+    nbody::{
+        cic_density_jvp, cosmology_clocks, evolve_cosmology, evolve_eds, force_cosmology_jvp,
+        force_jvp, PmState, PmTangent,
+    },
     tangent::{
         lpt_amplitude_jvp, simplex_mass_transform_jvp, simplex_mass_transform_p1_jvp, LptJvp,
     },
@@ -513,4 +516,301 @@ fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
         power_errors[0] > 0.1 && power_errors[2] < 0.03,
         "fundamental ratios: {fundamental_power_ratios:?}"
     );
+}
+
+// An independent composite Simpson reference uses E(a) directly rather than
+// the production quadrature's rearranged integrands or Gauss-Legendre nodes.
+fn reference_clocks(cosmo: Cosmology, a0: f64, a1: f64) -> (f64, f64) {
+    let intervals = 20000;
+    let width = (a1.ln() - a0.ln()) / intervals as f64;
+    let mut kick = 0.0;
+    let mut drift = 0.0;
+    for j in 0..=intervals {
+        let a = (a0.ln() + j as f64 * width).exp();
+        let weight = if j == 0 || j == intervals {
+            1.0
+        } else if j % 2 == 0 {
+            2.0
+        } else {
+            4.0
+        };
+        kick += weight / (a * cosmo.e(a));
+        drift += weight / (a * a * cosmo.e(a));
+    }
+    (kick * width / 3.0, drift * width / 3.0)
+}
+
+#[test]
+fn lcdm_clocks_match_independent_quadrature_and_eds_closed_forms() {
+    let (kick, drift) = cosmology_clocks(Cosmology::eds(), 0.04, 0.25);
+    assert!((kick - 0.6).abs() < 1e-15);
+    assert!((drift - 6.0).abs() < 1e-14);
+    for omega_m in [0.3, 0.7, 0.999999, 1.0] {
+        let cosmo = Cosmology { omega_m };
+        for (a0, a1) in [(0.0001, 0.05), (0.03, 1.0), (0.1, 10.0)] {
+            let actual = cosmology_clocks(cosmo, a0, a1);
+            let reference = reference_clocks(cosmo, a0, a1);
+            assert!(
+                (actual.0 / reference.0 - 1.0).abs() < 8e-13,
+                "kick Omega_m={omega_m}: {actual:?} vs {reference:?}"
+            );
+            assert!(
+                (actual.1 / reference.1 - 1.0).abs() < 8e-13,
+                "drift Omega_m={omega_m}: {actual:?} vs {reference:?}"
+            );
+            let mid = (a0 * a1).sqrt();
+            let left = cosmology_clocks(cosmo, a0, mid);
+            let right = cosmology_clocks(cosmo, mid, a1);
+            assert!(((left.0 + right.0) / actual.0 - 1.0).abs() < 2e-14);
+            assert!(((left.1 + right.1) / actual.1 - 1.0).abs() < 2e-14);
+        }
+    }
+}
+
+#[test]
+fn uniform_bulk_motion_uses_canonical_lcdm_drift_and_eds_wrapper_matches() {
+    let g = Grid::new(2, 8, 1.0);
+    let x = lattice(&g, 0.37);
+    let p: Vec<_> = (0..x.len())
+        .map(|j| if j % 2 == 0 { 0.004 } else { -0.003 })
+        .collect();
+    for cosmo in [Cosmology::eds(), Cosmology { omega_m: 0.3 }] {
+        let initial = PmState {
+            x: x.clone(),
+            p: p.clone(),
+            a: 0.03,
+        };
+        let run = evolve_cosmology(&g, &g, initial.clone(), None, 1.0, 32, cosmo, false).unwrap();
+        let drift = reference_clocks(cosmo, initial.a, run.state.a).1;
+        let expected: Vec<_> = x.iter().zip(&p).map(|(x, p)| x + drift * p).collect();
+        assert!(rms(&difference(&run.state.x, &expected)) < 2e-14);
+        assert!(rms(&difference(&run.state.p, &p)) < 2e-15);
+        assert!(!run.crossed && run.first_crossing.is_none());
+        assert!((run.min_jacobian - 1.0).abs() < 2e-13);
+        if cosmo.is_eds() {
+            let old = evolve_eds(&g, &g, initial, None, 1.0, 32).unwrap();
+            assert_eq!(old.state.x, run.state.x);
+            assert_eq!(old.state.p, run.state.p);
+        }
+    }
+}
+
+#[test]
+fn lcdm_plane_mode_tracks_linear_growth() {
+    use hcc_core::growth::{growth_rate, term_specs, Growth};
+    let g = Grid::new(1, 256, 1.0);
+    let cosmo = Cosmology { omega_m: 0.3 };
+    let growth = Growth::new_lcdm(cosmo, &term_specs(1, 1), 20.0, 4000);
+    let (a0, a1) = (0.03_f64, 1.0);
+    let (d0, d1) = (growth.d_of_a(a0), growth.d_of_a(a1));
+    let dd_da = growth_rate(&growth, a0) * d0 / a0;
+    let q = lattice(&g, 0.37);
+    let shape: Vec<_> = q
+        .iter()
+        .map(|x| -0.002 * (g.kf() * x).sin() / g.kf())
+        .collect();
+    let x = q.iter().zip(&shape).map(|(q, s)| q + d0 * s).collect();
+    let p = shape
+        .iter()
+        .map(|s| a0.powi(3) * cosmo.e(a0) * dd_da * s)
+        .collect();
+    let run =
+        evolve_cosmology(&g, &g, PmState { x, p, a: a0 }, None, a1, 256, cosmo, false).unwrap();
+    let expected: Vec<_> = shape.iter().map(|s| d1 * s).collect();
+    let actual = difference(&run.state.x, &q);
+    let error = rms(&difference(&actual, &expected)) / rms(&expected);
+    println!("LCDM linear plane mode relative RMS residual: {error:.9}");
+    assert!(error < 0.006, "LCDM linear growth residual {error}");
+}
+
+#[test]
+fn lcdm_force_and_kdk_jvp_match_fixed_cosmology_finite_difference() {
+    let cosmo = Cosmology { omega_m: 0.3 };
+    for dim in 1..=3 {
+        let g = Grid::new(dim, 8, 1.0);
+        let mut x = lattice(&g, 0.37);
+        let mut p = vec![0.0; x.len()];
+        let dx: Vec<_> = (0..x.len())
+            .map(|i| 0.013 * ((i * 17 + 3) as f64).sin())
+            .collect();
+        let dp: Vec<_> = (0..x.len())
+            .map(|i| 0.0002 * ((i * 13 + 7) as f64).cos())
+            .collect();
+        for i in 0..x.len() {
+            x[i] += 0.008 * ((i * 11 + 1) as f64).cos();
+            p[i] = 0.0001 * ((i * 3 + 5) as f64).cos();
+        }
+        let (force, df) = force_cosmology_jvp(&g, &x, Some(&dx), cosmo);
+        let eds = force_jvp(&g, &x, Some(&dx));
+        assert!(
+            rms(&difference(
+                &force,
+                &eds.0.iter().map(|f| cosmo.omega_m * f).collect::<Vec<_>>()
+            )) < 1e-14
+        );
+        let eps = 1e-5;
+        let perturbed = |sign: f64| PmState {
+            x: x.iter().zip(&dx).map(|(x, d)| x + sign * eps * d).collect(),
+            p: p.iter().zip(&dp).map(|(p, d)| p + sign * eps * d).collect(),
+            a: 0.2,
+        };
+        let fp = force_cosmology_jvp(&g, &perturbed(1.0).x, None, cosmo).0;
+        let fm = force_cosmology_jvp(&g, &perturbed(-1.0).x, None, cosmo).0;
+        let fd: Vec<_> = fp
+            .iter()
+            .zip(&fm)
+            .map(|(p, m)| (p - m) / (2.0 * eps))
+            .collect();
+        assert!(rms(&difference(&df, &fd)) < 2e-8);
+        let primal = evolve_cosmology(
+            &g,
+            &g,
+            PmState {
+                x: x.clone(),
+                p: p.clone(),
+                a: 0.2,
+            },
+            Some(PmTangent {
+                dx: dx.clone(),
+                dp: dp.clone(),
+            }),
+            0.4,
+            11,
+            cosmo,
+            false,
+        )
+        .unwrap();
+        let plus = evolve_cosmology(&g, &g, perturbed(1.0), None, 0.4, 11, cosmo, false).unwrap();
+        let minus = evolve_cosmology(&g, &g, perturbed(-1.0), None, 0.4, 11, cosmo, false).unwrap();
+        let t = primal.tangent.unwrap();
+        let fd: Vec<_> = plus
+            .state
+            .x
+            .iter()
+            .zip(&minus.state.x)
+            .map(|(p, m)| (p - m) / (2.0 * eps))
+            .collect();
+        assert!(rms(&difference(&t.dx, &fd)) < 3e-8);
+        let fd: Vec<_> = plus
+            .state
+            .p
+            .iter()
+            .zip(&minus.state.p)
+            .map(|(p, m)| (p - m) / (2.0 * eps))
+            .collect();
+        assert!(rms(&difference(&t.dp, &fd)) < 3e-8);
+    }
+}
+
+#[test]
+fn crossing_policy_continues_and_records_first_drift_or_crossed_input() {
+    let g = Grid::new(1, 8, 1.0);
+    let x = lattice(&g, 0.37);
+    let mut p = vec![0.0; g.size];
+    p[2] = -1.0;
+    let state = PmState {
+        x: x.clone(),
+        p,
+        a: 0.2,
+    };
+    for cosmo in [Cosmology::eds(), Cosmology { omega_m: 0.3 }] {
+        assert!(evolve_cosmology(&g, &g, state.clone(), None, 0.3, 3, cosmo, false).is_err());
+        let run = evolve_cosmology(&g, &g, state.clone(), None, 0.3, 3, cosmo, true).unwrap();
+        assert!(run.crossed && run.min_jacobian < 0.0);
+        assert_eq!(run.completed_steps, 3);
+        assert_eq!(run.state.a, 0.3);
+        assert!(run
+            .state
+            .x
+            .iter()
+            .chain(&run.state.p)
+            .all(|v| v.is_finite()));
+        let crossing = run.first_crossing.unwrap();
+        assert_eq!(crossing.step, 1);
+        assert_eq!(crossing.a_start, 0.2);
+        assert!((crossing.a_end - (0.2 + 0.1 / 3.0)).abs() < 1e-14);
+        assert!(crossing.minimum_jacobian <= 0.0);
+    }
+    let mut crossed_x = x;
+    crossed_x[2] = crossed_x[1] - 0.01;
+    let run = evolve_cosmology(
+        &g,
+        &g,
+        PmState {
+            x: crossed_x,
+            p: vec![0.0; g.size],
+            a: 0.2,
+        },
+        None,
+        0.25,
+        3,
+        Cosmology { omega_m: 0.3 },
+        true,
+    )
+    .unwrap();
+    assert!(run.crossed && run.min_jacobian < 0.0);
+    let first = run.first_crossing.unwrap();
+    assert_eq!(first.step, 0);
+    assert_eq!(first.a_start, 0.2);
+    assert_eq!(first.a_end, 0.2);
+}
+
+#[test]
+fn lcdm_jvp_remains_valid_when_crossing_is_diagnostic_only() {
+    let g = Grid::new(1, 8, 1.0);
+    let cosmo = Cosmology { omega_m: 0.3 };
+    let x = lattice(&g, 0.37);
+    let mut p = vec![0.0; g.size];
+    p[2] = -1.0;
+    let dx: Vec<_> = (0..g.size)
+        .map(|i| 0.013 * (i as f64 + 0.7).sin())
+        .collect();
+    let dp: Vec<_> = (0..g.size)
+        .map(|i| 0.0002 * (i as f64 + 0.3).cos())
+        .collect();
+    let run = evolve_cosmology(
+        &g,
+        &g,
+        PmState {
+            x: x.clone(),
+            p: p.clone(),
+            a: 0.2,
+        },
+        Some(PmTangent {
+            dx: dx.clone(),
+            dp: dp.clone(),
+        }),
+        0.3,
+        3,
+        cosmo,
+        true,
+    )
+    .unwrap();
+    assert!(run.crossed);
+    let eps = 1e-6;
+    let perturbed = |sign: f64| PmState {
+        x: x.iter().zip(&dx).map(|(x, d)| x + sign * eps * d).collect(),
+        p: p.iter().zip(&dp).map(|(p, d)| p + sign * eps * d).collect(),
+        a: 0.2,
+    };
+    let plus = evolve_cosmology(&g, &g, perturbed(1.0), None, 0.3, 3, cosmo, true).unwrap();
+    let minus = evolve_cosmology(&g, &g, perturbed(-1.0), None, 0.3, 3, cosmo, true).unwrap();
+    assert!(plus.crossed && minus.crossed);
+    let tangent = run.tangent.unwrap();
+    let fdx: Vec<_> = plus
+        .state
+        .x
+        .iter()
+        .zip(&minus.state.x)
+        .map(|(p, m)| (p - m) / (2.0 * eps))
+        .collect();
+    let fdp: Vec<_> = plus
+        .state
+        .p
+        .iter()
+        .zip(&minus.state.p)
+        .map(|(p, m)| (p - m) / (2.0 * eps))
+        .collect();
+    assert!(rms(&difference(&tangent.dx, &fdx)) < 3e-8);
+    assert!(rms(&difference(&tangent.dp, &fdp)) < 3e-8);
 }

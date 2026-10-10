@@ -6,7 +6,15 @@ title: "A guide to the laboratory"
 
 The laboratory shares the book's numerical core. Controls are encoded in the URL; “Copy link” preserves the realization, epoch, order, estimator resolution, and selected panel. Calculations run in a background worker so rotating or exporting a plot does not interrupt the page. When a new physical state is requested, obsolete work is cancelled. The lab does not substitute a JavaScript approximation when Wasm fails.
 
-The live model uses a unit periodic box and EdS $D=a$. Its input is a deterministic low-frequency wave combination or a reproducible Gaussian field with a conservative input-mode cutoff. The displayed fraction is measured against a common estimated first crossing of orders one through four. The output includes vertex and simplex Jacobian checks; the PM trajectory is checked throughout every discrete drift. A rejected state produces a reason instead of density or power plots. The checks concern the resolved model, not an unobserved continuum between vertices.
+The live model supports flat $\Lambda$CDM or EdS expansion, deterministic wave benchmarks or physical smooth-spectrum Gaussian modes, and either a physical scale factor or a common reference growth fraction. @sec-cosmology states the amplitude normalization, mode generator, initial cutoff and dimensional conventions. Output includes sampled vertex and affine simplex Jacobian minima, a full-drift PM orientation check, and final inverted-element mass fractions. Crossing produces a caution and retains all finite outputs. This makes the model's breakdown inspectable; it does not extend the validated LPT domain.
+
+Spatial density axes have equal scales, and the 3D sheet uses an orthographic projection. Rendering may decimate a dense wireframe; that changes the display only. Every simplex still contributes to the numerical deposit and continuous Fourier estimator. The physical box, central slice and display decimation are labeled. Velocity in the 1D phase-space panel is $d(x/L)/da$; it has a separate scale from position.
+
+### Resolution and resource control {#sec-lab-resolution}
+
+Supported Lagrangian ceilings are 1024 points in 1D, 256 per axis in 2D and 64 per axis in 3D. Force and observation grids have independent controls; 3D grids can reach 128 per axis when the complete request fits the allocation envelope. A conservative pre-allocation estimate covers growth terms, tensors, tangent arrays, FFT workspaces and JSON output; requests above 1 GiB or a dimension-specific ceiling return a stated error. The solver never substitutes a smaller grid. Native timings and measured memory for selected cases are recorded in [the benchmark log](https://github.com/yipihey/precrossedsheet/blob/main/docs/benchmarks.md); native timings do not predict a particular browser's speed.
+
+For Gaussian 4LPT, $N_q>8m_{\rm cut}$ resolves the conservative input bandwidth. A refinement sequence keeps the seed, cutoff, physical box, initial spectrum, initial filter and physical epoch fixed. Increasing the cutoff while refining the lattice changes the input problem. A force-only refinement can also change particle-load artifacts, so investigate matched particle/force refinement and timestep refinement as separate controls.
 
 | Experiment | What to vary | What it isolates |
 |---|---|---|
@@ -20,12 +28,12 @@ The live model uses a unit periodic box and EdS $D=a$. Its input is a determinis
 | Archival replay | Filter, order, weighting, dataset | Published statistics with their original provenance |
 
 ::: {.callout-tip title="Start with a gentle three-dimensional field"}
-The small grid deliberately keeps the computation short. Increase the resolution only after identifying which approximation you want to test. Use the SVG/CSV controls on quantitative plots and PNG download on field panels.
+Use a modest lattice to establish the experiment, then refine the numerical approximation while keeping its physical inputs fixed. Export complete JSON inputs and results, SVG/CSV quantitative curves and PNG field panels.
 
-{{< lab "dim=3&n=16&force=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
+{{< lab "v=2&dim=3&n=16&force=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
 :::
 
-## Exercises with checks
+## Analysis exercises
 
 1. **Jacobian and density.** Derive @eq-plane-wave from $\nabla^2\varphi=\delta_0$. Identify the first-crossing location. Explain why a 4LPT curve equals 1LPT in this experiment. Check that integrating the displayed cell-average density gives the box mass.
 2. **Simplex mass.** For a triangle stretched by a diagonal deformation with factors $(b_1,b_2)$, compute $J_T$ and its density. Repeat for a tetrahedron with $(b_1,b_2,b_3)$. Check that a uniform translation changes neither density nor power.
@@ -37,6 +45,34 @@ The small grid deliberately keeps the computation short. Increase the resolution
 
 The first exercise has $J=1-AD\cos(kq)$ and $D_{\rm sc}=1/A$. The second gives $J_T=\prod_jb_j$. For the third, each affected axis contributes $\operatorname{sinc}(\pi/4)$ to amplitude. The remaining exercises are investigations: save the links and exported data that support your conclusions.
 
-## Browser checks
+## Reproduction and verification
 
 [Run the self-check page](../app/selftest.html) to verify that the generated Wasm package loads, a guarded model conserves mass, and the tangent agrees with a finite difference. This supplements the native Rust tests; it does not replace the scientific convergence study. Results and failures are displayed directly, so a missing binary cannot masquerade as a passing demonstration.
+
+
+A version-2 experiment URL writes all numerical and display defaults explicitly, preserving numerical precision rather than rounding parameters to six significant digits. For durable reproduction, save the JSON manifest as well: it records the state, executed request, output epoch, cosmology, engine version, build revision, diagnostics, conventions and result arrays. Figure files alone do not record the simulation specification. Imported settings start a new calculation; a change in implementation can be assessed against the saved outputs.
+
+The native runner uses the same request/response facade as Wasm. From the repository revision recorded in a manifest:
+
+```sh
+cargo build --release --manifest-path core/Cargo.toml --example lab_dump
+core/target/release/examples/lab_dump < experiment.json > reproduced.json
+```
+
+The runner accepts a plain request, a complete numerical response, or a browser manifest containing its executed request. It prefers executed inputs over display state, so a stale or rotated plot does not alter the numerical experiment. Browser-only view controls do not enter the dynamics. A compact standalone request is:
+
+```json
+{
+  "dim": 3, "n": 32, "forceMesh": 32, "mesh": 32,
+  "ic": "gaussian", "seed": 2650, "initialCutoff": 3,
+  "omegaM": 0.315, "omegaB": 0.049, "h": 0.674,
+  "ns": 0.965, "sigma8": 0.811, "boxSize": 300,
+  "initialSmoothing": 14, "smoothing": 0.03,
+  "epoch": "scaleFactor", "scaleFactor": 0.5,
+  "fraction": 0.5, "order": 4, "steps": 128
+}
+```
+
+Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
+
+The [browser self-check](../app/selftest.html) verifies worker execution and the generated binary. The native suite checks the physical clocks, equation residuals, Hermitian mode pairing, refinement stability, conservation, and independent finite differences. Record the repository revision with a convergence table; the same seed or a successful self-check alone does not establish scientific convergence.

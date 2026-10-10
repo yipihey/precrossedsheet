@@ -2,7 +2,7 @@
 title: "Building the sheet with nLPT"
 ---
 
-## The expanding-universe equations {#sec-lpt}
+## Lagrangian equations in an expanding background {#sec-lpt}
 
 For pressureless, cold matter before crossing, the comoving equation of motion and Poisson equation are
 
@@ -11,7 +11,7 @@ $$
 \nabla_x^2\phi=4\pi G a^2\bar\rho(a)\,\delta.
 $$ {#eq-comoving-eom}
 
-The expansion produces the Hubble drag. Gravity couples the deformation at one position to the mass distribution everywhere else. Linear perturbation theory solves this coupling for a small density contrast; LPT instead expands the displacement of the initially uniform labels [@bouchet1995; @matsubara2015].
+The Hubble drag and nonlocal Poisson coupling determine the trajectories. LPT expands the displacement of the initially uniform mass labels, retaining the nonlinear transformation between the Lagrangian map and Eulerian density [@bouchet1995; @matsubara2015].
 
 In Einstein–de Sitter (EdS), normalize the growing mode as $D=a$. The displacement{{< src lpt::Lpt >}} is
 
@@ -20,7 +20,7 @@ $$
 \boldsymbol\Psi^{(1)}=-\nabla_q\varphi,\quad \nabla_q^2\varphi=\delta_0.
 $$ {#eq-lpt-expansion}
 
-Thus $\widehat{\boldsymbol\Psi}^{(1)}=i\mathbf k\widehat\delta_0/k^2$ for the Fourier convention of @sec-fourier. A positive cosine overdensity produces a displacement toward its maximum. In a flat $\Lambda$CDM universe, write the expansion as $\sum_\tau g_\tau(a)\mathbf S^\tau(\mathbf q)$: terms of equal perturbative order can have different time functions. Replacing them all by $D^n$ is an approximation, not an identity. The inherited core supports both EdS coefficients and coupled $\Lambda$CDM growth equations{{< src growth::Growth >}}. The new live N-body comparison uses EdS so its time integration and derivative tests have an unambiguous common convention.
+Thus $\widehat{\boldsymbol\Psi}^{(1)}=i\mathbf k\widehat\delta_0/k^2$ for the Fourier convention of @sec-fourier. A positive cosine overdensity produces a displacement toward its maximum. In a flat $\Lambda$CDM universe, write the expansion as $\sum_\tau g_\tau(a)\mathbf S^\tau(\mathbf q)$: terms of equal perturbative order can have different time functions. Replacing them all by $D^n$ is an approximation, not an identity. The inherited core supports both EdS coefficients and coupled $\Lambda$CDM growth equations{{< src growth::Growth >}}. The live comparison now uses the same flat $\Lambda$CDM background and growing-mode normalization for LPT and PM; EdS remains available as an analytic benchmark. @sec-cosmology specifies the initial spectrum, growth clock and physical units.
 
 ## The recurrence, without a list of memorized kernels {#sec-recursion}
 
@@ -66,16 +66,64 @@ At second order, @eq-recursion-coefficients gives $c_2(2;1,1)=-3/7$, recovering 
 
 The 2D demonstration assumes translational symmetry along the third axis of an otherwise 3D universe. $\mu_3$ vanishes, but the growth coefficients and Poisson normalization remain those of the cosmological 3D equations. It is not a separate two-dimensional gravitational cosmology.
 
+## Recovering the recurrence from the fluid equations {#sec-cofactor-recursion}
+
+Let $F_{ij}=x_{i,j}$, $J=\det F$, and $C_{ij}=\partial J/\partial F_{ij}=J(F^{-1})_{ji}$. The chain rule gives $\partial/\partial x_i=(F^{-1})_{ji}\partial/\partial q_j$. Taking the Eulerian divergence of the trajectory equation, multiplying by $J$, and using mass conservation gives
+
+$$
+ C_{ij}\,\mathcal T\Psi_{i,j}=\frac32\Omega_m(a)H(a)^2(J-1),\qquad
+ \mathcal T=\frac{d^2}{dt^2}+2H\frac{d}{dt}.
+$$ {#eq-cofactor-eom}
+
+Repeated indices are summed. This equation is polynomial in the deformation and its time derivatives: the inverse Jacobian of the Eulerian derivative cancels against $J$. Expand the cofactor and determinant in powers of the initial field and match equal orders. The scalar invariants in @eq-mu2 and @eq-mu3 collect the quadratic and cubic determinant contractions; the resulting inverse Laplacian reconstructs the longitudinal displacement. The equation remains a formal polynomial identity for a truncated map, but its derivation as a single-valued fluid equation assumes $J>0$.
+
+Initially irrotational flow also satisfies the Cauchy invariant
+
+$$
+ \epsilon_{ijk}x_{l,j}\dot x_{l,k}=0.
+$$ {#eq-cauchy-invariant}
+
+Expanding this relation supplies @eq-curl-recursion. A transverse **Lagrangian displacement** is required to preserve zero **Eulerian velocity vorticity**. The two curls are taken in different coordinate systems. Confusing them removes terms beginning at third order and changes the fourth-order longitudinal sources that couple to those terms [@matsubara2015; @rampf2021].
+
+### Coupled time functions in $\Lambda$CDM {#sec-lcdm-recursion}
+
+For a basis term $\mathbf S^\tau(\mathbf q)$ write $\boldsymbol\Psi=\sum_\tau g_\tau(a)\mathbf S^\tau$. Each spatial basis is generated from polarized $\mu_2$, $\mu_3$ or curl sources. Define
+
+$$
+ \mathcal Lg=g''+\left(2+\frac{d\ln H}{d\ln a}\right)g',\qquad
+ \mathcal Q(a)=\frac32\Omega_m(a),
+$$ {#eq-growth-operator}
+
+where primes are $d/d\ln a$ and $\mathcal T g=H^2\mathcal Lg$. For a longitudinal source built from a pair $(\sigma,\tau)$, its forced growth equation is
+
+$$
+ (\mathcal L-\mathcal Q)g_{\mu_2(\sigma,\tau)}
+ =\sum_{\mathrm{ordered\ parents}}
+ \left[\mathcal Q g_\sigma g_\tau-2g_\sigma\mathcal Lg_\tau\right].
+$$ {#eq-lcdm-mu2-growth}
+
+The corresponding triple source is
+
+$$
+ (\mathcal L-\mathcal Q)g_{\mu_3(\sigma,\rho,\tau)}
+ =\sum_{\mathrm{ordered\ parents}}
+ \left[\mathcal Q g_\sigma g_\rho g_\tau-3g_\sigma g_\rho\mathcal Lg_\tau\right].
+$$ {#eq-lcdm-mu3-growth}
+
+The sums include the distinct orderings of that basis's parent multiset. For a transverse pair, the Cauchy invariant gives $h'_{\sigma\tau}=-(g'_\sigma g_\tau-g'_\tau g_\sigma)$, with the growing-mode integration constant. These are the actual coupled equations evaluated by the core {{< src growth::Growth::new_lcdm >}}, rather than fitting a power of the linear growth to every nonlinear term. When $\Omega_m=1$, insert $g_\tau=c_\tau a^{n_\tau}$: $\mathcal L a^n=n(n+1/2)a^n$. The denominator $(n-1)(n+3/2)$ then follows directly, recovering @eq-recursion-coefficients.
+
+For 3D, the unmerged basis contains 1, 1, 3 and 8 terms at orders 1–4. These include longitudinal and transverse sources; individual terms can vanish for a symmetric input. Terms sharing an order are merged in EdS because they have the same $a^n$ time dependence. In $\Lambda$CDM the core retains their separate growth functions. This distinction affects both trajectory evaluation and an initial-field tangent.
+
 ## What “fourth order” does and does not mean
 
 4LPT includes all displacement contributions through fourth order in the initial field. It does not make the density a fourth-degree polynomial: forming $1/\det(I+\nabla\Psi)$ contains nonlinear combinations of those contributions. Nor does it specify the Lagrangian mesh resolution or the Eulerian estimator. Dynamics, interpolation, and measurement each require their own validation.
 
 The inherited tests insert the truncated expansion into the Lagrangian equations and check the predicted residual scaling in both dimensions{{< test lpt_eom_residual_scaling_2d "2D recurrence" >}} {{< test lpt_eom_residual_scaling_3d "3D recurrence" >}}; a separate test checks $\Lambda$CDM growth{{< test lcdm_eom_residual_scaling_2d "ΛCDM growth" >}}. These pin mathematical implementation properties. They do not establish a universal percentage accuracy against N-body.
 
-Products in the recurrence generate modes beyond the original input band. Evaluate them on a sufficiently fine Fourier grid, use padding or a conservative input cutoff, and repeat at higher resolution. The teaching laboratory uses only a small set of resolved low-frequency input modes. Its Gaussian seed is reproducible at fixed resolution; changing resolution does not guarantee an identical random realization. Use deterministic waves for direct resolution comparisons.
+Products in the recurrence generate modes beyond the original input band. Evaluate them on a sufficiently fine Fourier grid, use padding or a conservative input cutoff, and repeat at higher resolution. The Gaussian laboratory now keys its random variates by integer Fourier mode, so fixed seed, box, cutoff, filter and cosmology preserve the same realization under refinement (@sec-stable-modes). The requirement $N_q>8m_{\rm cut}$ conservatively resolves fourth-order products. This does not remove errors from finite Lagrangian interpolation or Eulerian measurement.
 
 ::: {.callout-tip title="Try it: compare successive orders"}
 Keep the initial field and epoch fixed and switch between 1, 2, 3, and 4LPT. In 1D the curves coincide. In 2D and 3D mode coupling produces corrections. The time fraction is referenced to a common crossing estimate for all four orders, so changing the order does not silently change the epoch.
 
-{{< lab "dim=2&n=24&force=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
+{{< lab "v=2&dim=2&n=24&force=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
 :::

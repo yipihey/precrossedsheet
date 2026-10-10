@@ -24,7 +24,7 @@ $$
 \left.\partial_A\mathbf x\right|_{A=1}=\sum_{n=1}^{N}nD^n\boldsymbol\Psi^{(n)}.
 $$ {#eq-amplitude-jvp}
 
-Holding the epoch fixed matters. If a changed amplitude also changed the crossing-time fraction, the experiment would mix a parameter derivative with a moving output time. The crossing guard is a validity check; it is not differentiated.
+Holding the epoch fixed matters. If a changed amplitude also changed the crossing-time fraction, the experiment would mix a parameter derivative with a moving output time. Crossing status is a validity diagnostic; it is not differentiated. Continued output after an inversion does not redefine the fixed-epoch derivative.
 
 ## Differentiate continuous sheet modes {#sec-mode-gradient}
 
@@ -43,7 +43,7 @@ $$ {#eq-power-jvp}
 
 The lab compares that tangent with a centered finite difference in $A$ at fixed time. Its derivative panel uses deterministic first-axis modes and labels the observable explicitly. It does not imply a derivative of the exact clipped cell-average density field.
 
-The PM extension{{< src nbody::force_jvp >}} also propagates tangents through CIC deposition, the linear spectral force solve, CIC force interpolation, and kick–drift–kick updates. CIC weights are piecewise differentiable; at a particle/cell boundary an individual weight's branch changes. Tests use directions away from those boundaries and compare analytic tangents with independent finite differences. The finite PM solver's derivative includes its numerical approximation{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}.
+The PM extension{{< src nbody::force_cosmology_jvp >}} also propagates tangents through CIC deposition, the linear spectral force solve, CIC force interpolation, and kick–drift–kick updates. CIC weights are piecewise differentiable; at a particle/cell boundary an individual weight's branch changes. Tests use directions away from those boundaries and compare analytic tangents with independent finite differences. The finite PM solver's derivative includes its numerical approximation{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}.
 
 ## Which operations still need care?
 
@@ -56,5 +56,17 @@ DiscoDJ [@discodj2026] supplies the implementation lineage for differentiable LP
 ::: {.callout-tip title="Try it: a parameter response"}
 Change the epoch and perturbative order, then inspect $\partial P/\partial A$ against the centered finite difference. Both are evaluated at the same fixed epoch. Near a mode with negligible response, inspect absolute error as well as relative error.
 
-{{< lab "view=gradient&dim=2&ic=waves&f=0.5" "Inspect the amplitude derivative" >}}
+{{< lab "v=2&view=gradient&dim=2&ic=waves&f=0.5" "Inspect the amplitude derivative" >}}
 :::
+
+
+For general $\Lambda$CDM the amplitude response is
+$\partial_A\mathbf x=\sum_\tau n_\tau g_\tau(a)\mathbf S^\tau$,
+with the individual growth functions and the physical output epoch held fixed.
+The PM tangent uses the same cosmological KDK integrals as the primal map.
+Independent finite differences check both the fixed-cosmology trajectory and
+force derivative {{< test lcdm_force_and_kdk_jvp_match_fixed_cosmology_finite_difference "ΛCDM PM tangent" >}},
+and a crossed fixture verifies that making crossing diagnostic does not suppress
+the derivative of the finite numerical map {{< test lcdm_jvp_remains_valid_when_crossing_is_diagnostic_only "crossed-map tangent" >}}.
+These tests establish a derivative of the stated discrete forward model; its
+physical accuracy remains a separate validation question.

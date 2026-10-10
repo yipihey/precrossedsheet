@@ -11,13 +11,22 @@ p_V(r)=\frac{1}{L^d}\int d^dx\,\delta_{\rm D}[r-r(\mathbf x)],\qquad
 p_M(r)=\frac{1}{L^d}\int d^dx\,r(\mathbf x)\delta_{\rm D}[r-r(\mathbf x)].
 $$ {#eq-pdf-measures}
 
-Since $\langle r\rangle_V=1$, both measures normalize to unity and
+The normalization factors are box-volume factors: $p_V$ is normalized by sampled volume, while $p_M$ is normalized by total mass. Since $\langle r\rangle_V=1$, both measures normalize to unity and
 
 $$
 p_M(r)=r\,p_V(r),\qquad \int r\,p_V(r)\,dr=1.
 $$ {#eq-pdf-reweight}
 
-In the pre-crossing regime $d^dx=J\,d^dq$. Uniform Lagrangian sampling therefore gives a **mass-weighted** distribution of $r=1/J$. Weight those samples by $J$ to recover a volume distribution. A histogram of vertex densities with equal weights is not a volume PDF. For the discrete P0 sheet, each simplex has fixed mass $m_T$ and current volume $V_T$: weight its density by $m_T$ for a mass PDF or by $V_T$ for a volume PDF.
+In the pre-crossing regime $d^dx=J\,d^dq$ and $r=1/J$. Changing variables in the two integrals gives
+
+$$
+p_M(r)=\frac{1}{L^d}\int d^dq\,\delta_{\rm D}[r-J(\mathbf q)^{-1}],
+\qquad
+p_V(r)=\frac{1}{L^d}\int J(\mathbf q)\,d^dq\,
+\delta_{\rm D}[r-J(\mathbf q)^{-1}].
+$$ {#eq-pdf-lagrangian}
+
+Uniform Lagrangian sampling therefore gives a **mass-weighted** distribution of $r=1/J$. Weight those samples by $J$ to recover a volume distribution. The factors can be checked directly: $\int p_M(r)dr=L^{-d}\int dq=1$ and $\int p_V(r)dr=L^{-d}\int Jdq=1$, since the periodic map preserves total box volume before crossing. A histogram of vertex densities with equal weights is not a volume PDF. For the discrete P0 sheet, each simplex has fixed mass $m_T$ and current volume $V_T$: weight its density by $m_T$ for a mass PDF or by $V_T$ for a volume PDF.
 
 Dense regions occupy little space but can contain appreciable mass. This explains why the volume PDF emphasizes voids and the mass PDF gives much more prominence to the dense tail. Perturbative predictions for moments provide complementary checks, but their range of validity must be assessed against the smoothed field [@bernardeau2002].
 
@@ -33,6 +42,17 @@ A density histogram in equal $\log_{10}r$ bins estimates $dP/d\log_{10}r$. It is
 
 For bin width $\Delta y$, a volume ordinate is $N_b/(N_{\rm cell}\Delta y)$. A mass ordinate is $\sum_{i\in b}\rho_i/(\sum_i\rho_i\Delta y)$. Their integrals over the plotted range give the captured probability. We report that fraction and do not renormalize omitted tails to make a truncated histogram appear complete. Empty bins are meaningful; a ratio to an empty reference bin is undefined.
 
+The displayed ordinate is a density with respect to $y$, so its discrete integral is $\sum_b p_y(y_b)\Delta y$. In a regular Eulerian mesh with equal cell volumes, the live estimators are
+
+$$
+\widehat p_{V,y}(y_b)=\frac{N_b}{N_{\rm cell}\Delta y},
+\qquad
+\widehat p_{M,y}(y_b)=
+\frac{\sum_{i\in b}\rho_i}{\left(\sum_i\rho_i\right)\Delta y}.
+$$ {#eq-pdf-grid-estimators}
+
+The two estimates use the same density values but different empirical measures. Binning also limits what their ratios mean: $p_M=r p_V$ is a pointwise identity of continuous densities; after finite binning, multiplying a bin average by its center is only an approximation to the mass-bin integral. Quantiles in the archived package are separately stored full-field quantiles and are not recoverable from the finite-range, conditionally normalized PDF arrays.
+
 ## Smoothing the observable {#sec-pdf-smoothing}
 
 Define a normalized filter $W_R$ and $r_R=W_R*r$. The live experiment uses a Gaussian filter, $\widehat W_R=\exp(-k^2R^2/2)$, applied to the Eulerian cell-average field{{< src observables::smooth_density >}}. The archival study instead uses its stated top-hat filters. An initial-condition filter changes the simulated dynamics; an observation filter changes the measured statistic. Their scales must be recorded separately.
@@ -46,20 +66,63 @@ $$ {#eq-mass-environment}
 
 and $p_{M,R}(s)=s\,p_{V,R}(s)$, which uses the smoothed density itself as the weight. The first asks which smoothed **environment actual matter occupies**; the second samples the smoothed mass field. They coincide at $R=0$ but generally differ at finite $R$. The live lab and archived CIC study use the first, with unsmoothed cell mass weights. Consequently, multiplying a displayed smoothed volume PDF by its horizontal coordinate does not reproduce the displayed mass PDF.
 
+In the live finite-volume estimator, the raw cell density $r_i$ determines the mass weight and the Fourier-smoothed value $r_{R,i}$ determines the histogram coordinate. Thus
+
+$$
+\widehat p_{M,\mathrm{env}}(s_b)=
+\frac{\sum_{i:\,r_{R,i}\in b}r_i}{\left(\sum_i r_i\right)\Delta s},
+\qquad
+\widehat p_{V,R}(s_b)=\frac{N_b}{N_{\rm cell}\Delta s}.
+$$ {#eq-smoothed-pdf-estimators}
+
+This preserves the question “what smoothed density environment contains a randomly selected mass element?” The alternative $p_{M,R}$ answers a different question because smoothing redistributes mass before weighting. The difference follows from the noncommutation of smoothing and multiplication by local density.
+
 ## Quantiles, moments, and rare tails
 
 A density quantile $Q(p)$ solves $\int_0^{Q(p)}p_r(r)\,dr=p$. Quantiles are often easier to compare robustly than noisy tail-bin ratios, but extreme quantiles still require resolution and sample-volume checks. The variance $\sigma_R^2=\langle(r_R-1)^2\rangle_V$ and reduced skewness $S_3=\langle\delta_R^3\rangle_V/\sigma_R^4$ probe complementary aspects of the field.
 
 A PDF agreement does not prove that the spatial arrangement of density is correct. The power spectrum measures correlations, and a field comparison checks the realization directly. Use all three when validating a forward model.
 
+Tail precision requires more than a smooth-looking curve. The upper tail has few effectively independent regions, especially when the smoothing radius approaches a significant fraction of the box. Increasing the Eulerian cell count alone does not create new independent volumes. A defensible comparison therefore separates (i) estimator convergence at fixed map and filter, (ii) Lagrangian and force-resolution convergence of the map, and (iii) realization or phase sensitivity across independent or paired initial conditions. A paired phase run diagnoses sensitivity to that chosen realization pair; it is not by itself an ensemble covariance. Quote tail quantiles only with their smoothing scale, box size, weighting measure, crossed-mass diagnostic where available, and reference resolution. The archived study's small nonzero crossed fraction is part of its unconditional PDF sample; the replay preserves this warning, while its finite-range histogram does not supply the missing tail probability.
+
+For a crossed but otherwise specified map, the PDF of its position-space density remains well-defined by the pushforward measure. At each regular point its density sums $1/|J_s|$ over streams, and a cell estimator adds the mass from every covering element. Orientation flips do not remove those elements from the density. They do invalidate the single-stream transformation $r=1/J$ and do not turn an LPT continuation into a validated post-crossing evolution. The pre-crossing derivation above must not be applied to the archival sample as if every element were uncrossed.
+
 ::: {.callout-tip title="Try it: voids, mass, and observation filters"}
 Inspect the volume and mass PDFs of exactly the same pre-crossing sheet. Set the observation filter to zero to test $p_M=r p_V$ within finite bins, then restore smoothing and explain why that identity no longer applies to the environment-weighted curve.
 
-{{< lab "view=pdf&dim=2&n=24&force=24&f=0.55" "Explore both density measures" >}}
+{{< lab "v=2&view=pdf&dim=2&n=24&force=24&f=0.55" "Explore both density measures" >}}
 :::
 
 ::: {.callout-tip title="Try it: the established results"}
-Switch the archival replay between perturbative orders, reference resolutions, filters, and weighting measures. Read the run metadata before interpreting a tail difference. The replay identifies its original estimator and crossing metadata. Its archived PDFs were normalized conditionally over the source density range $0.05<r<20$, and the retained probability outside that range is unavailable. They differ in this respect from the unrenormalized live histograms.
+Switch the archival replay by model, estimator, observation radius, and phase pairing. For a reproducible comparison, record the upstream commit and source estimator; the $300\,h^{-1}\mathrm{Mpc}$ box, Planck18/Eisenstein–Hu initial spectrum, $14\,h^{-1}\mathrm{Mpc}$ initial top-hat, redshift zero, and common $256^3$ analysis mesh; the LPT growth prescription (exact $\Lambda$CDM through third order, EdS time dependence at fourth); the selected $R_s$ and volume or mass weighting; and the run's ever-crossed fraction. The selector includes the original CIC comparison and a distinct native-sheet follow-up. The latter uses a different trajectory source and estimator, so treat each as its own archived analysis. These are packaged outputs, not new high-resolution simulations launched by the browser. The archived PDFs were normalized conditionally over the source density range $0.05<r<20$, and the retained probability outside that range is unavailable; full-field quantiles are stored separately. They differ in this respect from the unrenormalized live histograms.
 
-{{< lab "view=published" "Inspect the archived PDFs" >}}
+{{< lab "v=2&view=published" "Inspect the archived PDFs" >}}
 :::
+
+## Analysis exercises
+
+1. **Change of measure.** Starting from @eq-pdf-measures, derive @eq-pdf-lagrangian. Verify its normalization and show that the mass fraction above a threshold $r_*$ is $\int_{r_*}^{\infty}r p_V(r)dr$, while the corresponding volume fraction is $\int_{r_*}^{\infty}p_V(r)dr$.
+2. **Logarithmic bins.** For an interval $r\in[r_1,r_2]$, transform the probability integral to $y=\log_{10}r$. Explain why the factor $\ln 10$ appears in the differential PDF and why it is absent from a histogram that directly counts equal-width $y$ bins.
+3. **Smoothing and weighting.** Use a periodic two-cell field with raw densities $(r_1,r_2)=(0.2,1.8)$ and a normalized filter matrix $\left(\begin{smallmatrix}0.75&0.25\\0.25&0.75\end{smallmatrix}\right)$. The smoothed values are $(0.6,1.4)$. Compute the mass assigned to each smoothed environment under both $p_{M,\mathrm{env}}$ and $p_{M,R}$. Which question does each measure answer?
+4. **Finite-volume uncertainty.** Explain why doubling the number of analysis cells at fixed box and smoothing scale can stabilize a histogram without doubling its number of independent tail samples. Design a separate phase or volume study that would probe realization uncertainty, and list the metadata needed to compare its 99.9th-percentile mass quantile with the archived result.
+
+
+### Full-field quantiles and reduced cumulants {#sec-live-pdf-summary}
+
+The live summary evaluates quantiles from the complete cell field, independently
+of the displayed histogram range. Volume quantiles invert the uniformly weighted
+empirical CDF; mass quantiles invert the CDF weighted by unsmoothed raw cell mass.
+The reported probabilities are0.1%,1%,10%,50%,90%,99% and99.9%. Their definition
+is the left inverse $Q(p)=\inf\{r:F(r)\ge p\}$, so tied cell densities produce
+steps rather than an invented interpolation {{< src observables::density_summary >}}.
+The weighting and histogram independence have an analytic discrete fixture
+{{< test full_field_quantiles_use_raw_mass_and_moments_ignore_histogram_clipping "full-field PDF summary" >}}.
+
+For the volume-weighted field let $\mu_j=\langle(r-\langle r\rangle)^j\rangle$.
+The lab reports variance $\mu_2$, reduced skewness $S_3=\mu_3/\mu_2^2$, and
+reduced connected kurtosis $S_4=(\mu_4-3\mu_2^2)/\mu_2^3$. These are the
+cosmological reduced cumulants, not the standardized skewness and kurtosis.
+A uniform field has vanishing variance and undefined reduced cumulants, shown
+as missing rather than divided by zero. Together with captured histogram
+probabilities, these full-field summaries distinguish a changed dense tail from
+a normalization artifact in a truncated PDF plot.

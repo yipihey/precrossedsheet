@@ -6,17 +6,17 @@ title: "A continuous description of cold matter"
 
 Cold dark matter starts as a smooth distribution of positions and velocities. We often represent it with particles, but those particles can also be understood as **vertices of a continuous phase-space sheet**. Before shell crossing, the sheet maps each initial position to exactly one current position. Its deformation gives both the density and the velocity field.
 
-This book develops that viewpoint for undergraduate and graduate astrophysics students who know the expanding universe, linear growth, and the density contrast. We derive the map, connect it to Lagrangian perturbation theory through fourth order (4LPT), turn its geometry into conservative density fields and power spectra, and distinguish volume-weighted from mass-weighted density distributions. The browser laboratory evaluates the numerical model in Rust compiled to WebAssembly; each experiment has a shareable address and downloadable figures.
+This report develops the continuous-sheet description for readers familiar with background expansion, linear growth and cosmological density fields. It derives the map, connect it to Lagrangian perturbation theory through fourth order (4LPT), turn its geometry into conservative density fields and power spectra, and distinguish volume-weighted from mass-weighted density distributions. The Rust/WebAssembly laboratory provides controlled experiments with explicit cosmology, resolution, physical epoch and estimator conventions. Complete inputs, results and build provenance can be exported for reproduction.
 
 ::: {.callout-important title="Scope: before shell crossing"}
-All new laboratory experiments stop before detected shell crossing. We study established, filtered pre-crossing results; smaller scales and evolution beyond crossing are future work. A positive Jacobian on a finite set of vertices is a numerical check, not a proof of global smoothness. The laboratory also checks the orientation of every simplex and the N-body trajectory.
+The scientific conclusions concern established, filtered pre-crossing results. The laboratory continues to display computed fields and statistics after detected crossing, with a caution: a crossed LPT map is a formal extrapolation beyond the validated single-stream regime. A positive Jacobian on finitely many vertices is a numerical check, not a proof of global smoothness; affine element orientations and the discrete PM trajectory are also monitored. Smaller-scale extensions remain future work.
 
 The statement “4LPT is accurate to better than 1%” needs an observable, filter, epoch, and converged reference. It is supported for selected smoothed statistics in the existing studies, not for every PDF bin or rare tail. @sec-validation spells out that distinction.
 :::
 
-## How to read this book
+## Structure of the report
 
-Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
+Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-cosmology defines the background, physical initial modes and normalization. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
 
 ```{=html}
 <div class="qd-cta">
@@ -28,6 +28,6 @@ Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explai
 
 The starting points are the author's [Hopf–Cole cosmology study](https://yipihey.github.io/hopf-cole-cosmology/index.html) and [DiscoDJ LPT/PDF study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html). We reuse the former's tested Rust nLPT and geometric integration core under its MIT license. This report follows the [quadrant format](https://github.com/yipihey/quadrant): equations link to numerical functions, local claims link to tests, and experiments link to exact laboratory states.
 
-## Learning goals
+## Questions addressed
 
-After working through the examples, you should be able to derive density from a Jacobian, explain why a three-dimensional cold sheet lives in six-dimensional phase space, distinguish LPT order from sheet resolution, compute a simplex's contribution to a mesh cell or Fourier mode, and design a meaningful comparison with N-body. You should also be able to explain which forward-model operations have useful derivatives and why a histogram needs care in a gradient-based calculation.
+The central questions are how a cold six-dimensional distribution reduces to a three-dimensional sheet, how nLPT evolves its geometry, which errors remain after exact conservative measurement, and how convergence against N-body should be quantified. The report also establishes the derivatives of the implemented computational map, distinguishes density probability measures, and specifies reproducible numerical experiments. Mathematical definitions, source links and tests accompany each implementation claim.

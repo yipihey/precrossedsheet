@@ -6,7 +6,7 @@ title: "Rust implementation and reuse"
 
 The numerical library is independent of the web page. Its FFT, initial-condition, growth, nLPT, sheet, and geometric-clipping modules originate in the MIT-licensed Hopf–Cole cosmology core. The source revision is recorded in [the decisions log](https://github.com/yipihey/precrossedsheet/blob/main/docs/decisions.md), and the original copyright is retained. The historical Rust crate name `hcc_core` is preserved for compatibility with the inherited tests and API links.
 
-The new modules add cosmological PM evolution, initial-field and trajectory tangents, pre-crossing sheet observables, and a checked laboratory request/response facade. The geometry visitor supplies the same periodic connectivity to Jacobian checks and continuous mode integration. This prevents a plotting mesh from silently differing from the sheet whose mass is measured.
+The new modules add cosmological PM evolution, initial-field and trajectory tangents, conservative sheet observables, and a checked laboratory request/response facade. The geometry visitor supplies the same periodic connectivity to Jacobian checks and continuous mode integration. This prevents a plotting mesh from silently differing from the sheet whose mass is measured.
 
 | Layer | Responsibility | Reuse boundary |
 |---|---|---|
@@ -15,7 +15,7 @@ The new modules add cosmological PM evolution, initial-field and trajectory tang
 | Sheet and R3D | Conservative overlap integrals | Supplied unwrapped positions and optional P1 weights |
 | Observables | Interval deposition, PDF measures, fixed-mass modes | Independent of how trajectories were generated |
 | PM and tangents | Discrete cosmological evolution and JVPs | Supplied initial positions, momenta, directions |
-| Laboratory facade | Validate inputs, guard the regime, serialize results | Native Rust and Wasm use the same function |
+| Laboratory facade | Validate inputs, report orientation, serialize reproducible results | Native Rust and Wasm use the same function |
 | Browser worker | Load Wasm and cancel obsolete computation | No independent implementation of the physics |
 
 ## Build and inspect
@@ -53,18 +53,35 @@ assert!(sim.lpt_ref().min_jacobian(d, 4) > 0.0);
 let density = sim.sheet_density_exact(d, 4, 32, false, 1e4);
 ```
 
-For production use also check the affine simplex orientations and the resolution dependence. The high-level teaching facade performs these checks automatically, but direct low-level callers remain responsible for input dimensions, field lengths, and validity.
+For production use also check the affine simplex orientations and the resolution dependence. The high-level laboratory facade performs these checks automatically, but direct low-level callers remain responsible for input dimensions, field lengths, and validity.
 
 ## Numerical limits and derivative scope
 
-The inherited LPT spatial fields and deposited density arrays use `f32`; Fourier arithmetic, clipping moments, PM state, and analytic tangent arithmetic use `f64`. A finite-difference check must choose its step above representation noise and below nonlinear truncation error. The browser's small grids and conservative input bandwidth are deliberate teaching settings, not throughput benchmarks.
+The inherited LPT spatial fields and deposited density arrays use `f32`; Fourier arithmetic, clipping moments, PM state, and analytic tangent arithmetic use `f64`. A finite-difference check must choose its step above representation noise and below nonlinear truncation error. The facade bounds allocations before building the field, and requires a conservative Gaussian input bandwidth. The recorded native benchmarks distinguish measured peak RSS from the conservative memory estimate.
 
 The differentiable route carries an initial-condition JVP through nLPT, or supplied phase-space directions through PM, to continuous P0 Fourier modes and power. It supports directional derivatives at fixed cosmology and clocks. It does not provide cosmological growth derivatives, a reverse-mode adjoint, or exact-clipped-density shape derivatives. Those are separate implementation tasks; they should not be implied by the word “differentiable.”
 
-The browser uses Wasm and Canvas2D/SVG as the portable capability tier. There is no unvalidated GPU physics path. The worker keeps large calculations off the page thread; the 3D controls cap mesh sizes to keep memory and render time manageable. The same Rust library can support larger native calculations outside the browser.
+The browser uses Wasm and Canvas2D/SVG as the portable capability tier. There is no unvalidated GPU physics path. The worker keeps large calculations off the page thread; the resource envelope permits lattice 64³ and observation/force grids up to 128³ when their combined estimate fits 1 GiB, while 1D and 2D ceilings are 1024 and 256². Invalid requests return explicit errors without replacing the requested grid. The same low-level Rust library supports caller-managed larger allocations outside the facade. The facade intentionally uses the same limits in native and Wasm runs so one manifest denotes one experiment.
 
 ## Data lineage and adaptation
 
 The archival replay consists of extracted summary arrays, not entire simulation snapshots. Its manifest records repository, revision, source paths, checksums, and the extraction recipe. To substitute another dataset, preserve the estimator, filter, normalization, weighting, epoch, and crossing metadata. The original archival PDF histograms are conditional on their finite display range and do not report retained tail probabilities; the live PDF histograms preserve those probabilities separately. A new curve without those conventions cannot support a quantitative comparison.
 
 To add a new observable, first derive its measure and normalization, test an analytic or independent reference, expose it through the Wasm facade, then add a URL state and a labeled plot. To change the gravitational model, keep the sheet's mass bookkeeping independent from the trajectory generator. This separation makes the continuous-sheet estimator useful for other forward models without treating a different trajectory as an LPT result.
+
+
+## Reusing the cosmology and diagnostic policies
+
+The physical initial-spectrum module is independent of the trajectory and geometric modules. `cosmological::gaussian_hat` returns grid FFT coefficients with an explicit physical box, $\sigma_8$ normalization, initial Gaussian filter, integer cutoff and early-normalized growth conversion. It keys Gaussian draws by integer mode so refinement preserves the same realization. A project can instead supply a verified tabulated spectrum while retaining the same mode-pairing and sheet measurement conventions.
+
+`nbody::evolve_cosmology` accepts a `Cosmology`, state, optional tangent direction and an orientation policy. With `allow_crossing=true`, it records the first crossed drift bracket and continues the discrete evolution; with `false`, it returns an error. The strict `evolve_eds` wrapper preserves the original pre-crossing API. The orientation policy is separate from gravity and observation: it controls validity reporting, not the mass sign or force. All parameter derivatives currently hold cosmology and clocks fixed.
+
+The checked `laboratory::run_json` facade accepts exported manifests as well as plain requests. Its `request` field is the executed numerical specification, independent of camera angle and selected panel. The appendix's lower-level examples deliberately expose more responsibility: callers must enforce conservative input bandwidth, compatible meshes, finite geometry and measured conservation themselves. Reuse of an exact overlap routine establishes exact integration of a supplied affine element; it does not certify the supplied trajectories.
+
+## GPU acceleration is a measured follow-up
+
+The current `app/js/viz/gpu.js` is a canvas-sizing helper, not a WebGPU compute backend. A scratch-instrumented native profile of 3D32 and 3D64 wave requests found the combined continuous Fourier-mode, tangent, and finite-difference stage consumed 93.0% and 92.8% of summed pre-serialization stage time, respectively. Each profile was one run; the group is not yet separated internally. The first investigation should therefore split and measure simplex-mode integration, analytic JVP propagation, and the finite-difference self-check. Batched simplex/mode work with a fixed reduction order is a candidate if repeated profiles confirm the cost. A request to reduce self-check latency must preserve an explicit finite-difference validation route.
+
+The continuous affine-simplex Fourier integral and its coincident-phase limits define the observable; a GPU implementation must not replace them with center sampling. Native Fourier/tangent paths use `f64`, while baseline WGSL arithmetic is `f32`, so establish tolerances against analytic fixtures and CPU convergence before claiming equivalence. Keep exact clipping on CPU unless a separately tested GPU geometric algorithm meets positivity and global-conservation contracts. The PM and LPT paths remain candidates if finer timing shows they dominate other workloads.
+
+Any future compute backend should be optional, queried against actual adapter/device capabilities, and retain Rust CPU as oracle and fallback. Validate analytic fixtures and full outputs in 1D–3D, including Hermitian modes, periodic boundaries, crossing diagnostics, mass conservation, and fixed-time tangent-versus-finite-difference checks. Carry analytic tangents explicitly; GPU acceleration does not supply automatic differentiation or the currently absent exact-clipped-density shape derivative. Report end-to-end timing including startup, compilation, transfers, and readback. See the [detailed timing and validation assessment](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-assessment.md) and the official [WebGPU](https://www.w3.org/TR/webgpu/) and [WGSL](https://www.w3.org/TR/WGSL/) specifications. No GPU scientific kernel is implemented by this report.
