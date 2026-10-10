@@ -45,7 +45,7 @@ def extract(root):
             crossing = {"ever_mass_fraction": float(meta["cross_ever"]),
                         "final_mass_fraction": float(meta["cross_final"]),
                         "source_path": rel,
-                        "belongs_to": "original NumPy study run; native follow-up agrees within reported numerical uncertainty"}
+                        "belongs_to": "original NumPy run for this model; not remeasured from the native follow-up"}
             for estimator in ("sheet", "cic"):
                 tag = f"{model['id']}_N256{suffix}|{estimator}"
                 source = stats["runs"][tag]

@@ -5,3 +5,16 @@
   overflow-y: hidden;
   padding-block: 0.35rem 0.5rem;
 }
+
+@media (max-width: 600px) {
+  /* Place equation numbers below long formulas instead of over their text. */
+  #quarto-document-content .katex-tag {
+    position: static;
+    display: block;
+    margin-top: 0.5rem;
+    text-align: right;
+  }
+  #quarto-document-content .katex-tag > .katex-strut {
+    display: none;
+  }
+}

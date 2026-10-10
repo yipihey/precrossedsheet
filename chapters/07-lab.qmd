@@ -22,7 +22,7 @@ The live model uses a unit periodic box and EdS $D=a$. Its input is a determinis
 ::: {.callout-tip title="Start with a gentle three-dimensional field"}
 The small grid deliberately keeps the computation short. Increase the resolution only after identifying which approximation you want to test. Use the SVG/CSV controls on quantitative plots and PNG download on field panels.
 
-{{< lab "dim=3&n=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
+{{< lab "dim=3&n=16&force=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
 :::
 
 ## Exercises with checks
@@ -31,7 +31,7 @@ The small grid deliberately keeps the computation short. Increase the resolution
 2. **Simplex mass.** For a triangle stretched by a diagonal deformation with factors $(b_1,b_2)$, compute $J_T$ and its density. Repeat for a tetrahedron with $(b_1,b_2,b_3)$. Check that a uniform translation changes neither density nor power.
 3. **Measurement windows.** Predict the suppression from @eq-cell-window for a mode with $k\Delta x=\pi/2$. Compare raw cell-average power to the continuous mode estimator. Explain why a window correction alone does not validate Nyquist-scale power.
 4. **Probability measures.** Starting from $d^dx=Jd^dq$, derive both PDFs from uniformly sampled labels. Explain what changes when density is first smoothed and the mass weights remain unsmoothed.
-5. **Numerical reference.** Double the PM steps at a fixed force mesh. Then refine the force mesh at fixed observation filter. Which diagnostic changes most? Can a sub-percent variance error coexist with a larger tail-quantile error?
+5. **Numerical reference.** Double the PM steps at fixed particle and force grids. Then refine the particle and force grids together at a fixed observation filter. Also try refining only the force grid: does the residual improve monotonically? Which diagnostic changes most? Can a sub-percent variance error coexist with a larger tail-quantile error?
 6. **Parameter derivatives.** Derive @eq-amplitude-jvp by homogeneity. Compare the tangent power response with a centered finite difference. Explain why recomputing a crossing-based output time after changing amplitude would test a different derivative.
 7. **Evidence reading.** In the published replay, choose one density quantile that meets a sub-percent tolerance and one that does not. Write down the initial filter, observation filter, estimator, epoch, and any crossing contamination before stating the result.
 

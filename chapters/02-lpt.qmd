@@ -77,5 +77,5 @@ Products in the recurrence generate modes beyond the original input band. Evalua
 ::: {.callout-tip title="Try it: compare successive orders"}
 Keep the initial field and epoch fixed and switch between 1, 2, 3, and 4LPT. In 1D the curves coincide. In 2D and 3D mode coupling produces corrections. The time fraction is referenced to a common crossing estimate for all four orders, so changing the order does not silently change the epoch.
 
-{{< lab "dim=2&n=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
+{{< lab "dim=2&n=24&force=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
 :::

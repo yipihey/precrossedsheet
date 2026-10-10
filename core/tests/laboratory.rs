@@ -8,6 +8,8 @@ fn checked_lab_conserves_mass_and_has_fixed_time_gradients_in_all_dimensions() {
     for dim in 1..=3 {
         let r = LabRequest {
             dim,
+            n: if dim == 3 { 24 } else { 32 },
+            force_mesh: if dim == 3 { 24 } else { 32 },
             fraction: 0.35,
             ..Default::default()
         };

@@ -2,7 +2,7 @@
 
 ## Native code and browser binary
 
-- `make test`: 41 Rust tests passed, including inherited nLPT/geometry
+- `make test`: 42 Rust tests passed, including inherited nLPT/geometry
   regressions and new PM, arbitrary-IC JVP, Fourier-tangent, PDF, periodic
   mass, input-validation, and pre-crossing-guard tests. The URL-state codec
   checks passed. Rust documentation examples contain no runnable doctests.
@@ -18,6 +18,15 @@ convergence, analytic derivatives against centered differences, simplex
 translation/coincident-phase limits, and a determinant that crosses zero
 inside a drift despite positive endpoint determinants. They do not constitute
 a new full-volume cosmological 4LPT-versus-N-body validation campaign.
+
+An additional mixed-wave regression checks joint particle/force-grid
+refinement at fixed epoch, with 16/32/64 per axis. Relative displacement
+residuals are 0.192672/0.090324/0.036728; fundamental continuous-mode power
+ratios P_PM/P_4LPT are 0.828302/0.948073/0.985744. This pins the reduction
+of finite-resolution PM error in the teaching setup. It does not identify
+4LPT as an exact solution or certify every harmonic. The default was changed
+to matched 32-per-axis grids; the 3D browser tier uses matched 24-per-axis
+grids when switching from that default.
 
 ## Archived evidence and figures
 
@@ -37,6 +46,10 @@ illustrations of the finite represented sheet, not independent validation.
   or cross-reference warnings.
 - Browser review checked rendered mathematics, figures, callouts, source
   links, and laboratory links. Narrow and desktop layouts were inspected.
+- The final matched-grid 2D default and the 3D 24-per-axis transition both
+  completed with positive resolved orientations in the browser. Narrow-screen
+  formulas scroll within the reading column and equation numbers sit below
+  the formula; the introduction uses consistent chapter numbering.
 - The laboratory was checked in its sheet, density, spectra, PDF, gradient,
   and published-replay views, including 3D rotation and URL controls.
   Cached view changes preserved the numerical result. The browser self-test
@@ -54,6 +67,11 @@ gradient is asserted.
 
 ## Deployment
 
-Repository push, GitHub Actions, and the deployed Pages site are checked
-separately from the local build; their final status is recorded below after
-release verification.
+The initial implementation was pushed to `main` as `7cd778f21`. Its
+[GitHub Actions publication](https://github.com/yipihey/precrossedsheet/actions/runs/38080773484)
+passed native tests, Wasm checks, provenance checks, rendering, and Pages
+deployment. The deployed book, live gradient view, archived PDF replay,
+and self-test page were opened in the browser. The matched-grid default,
+joint-refinement regression, and final layout/label fixes are included in
+the follow-up release. CI and deployment status for each revision remain
+available in [Actions](https://github.com/yipihey/precrossedsheet/actions).

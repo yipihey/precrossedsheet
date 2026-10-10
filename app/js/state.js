@@ -5,7 +5,7 @@ export const SCHEMA = {
   view: ['sheet', 'density', 'spectra', 'pdf', 'gradient', 'published'], weight: ['volume', 'mass'], rotate: [-180, 180], tilt: [-80, 80],
   pubmodel: ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody'], pubest: ['sheet', 'cic'], pubr: [7, 42], paired: [true, false],
 };
-const DEFAULTS = Object.freeze({ dim: 2, n: 16, fraction: 0.5, order: 4, seed: 7, ic: 'waves', smoothing: 0.03, steps: 64, mesh: 32, forceMesh: 32, view: 'sheet', weight: 'volume', rotate: 35, tilt: 25, pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true });
+const DEFAULTS = Object.freeze({ dim: 2, n: 32, fraction: 0.5, order: 4, seed: 7, ic: 'waves', smoothing: 0.03, steps: 64, mesh: 32, forceMesh: 32, view: 'sheet', weight: 'volume', rotate: 35, tilt: 25, pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true });
 export const HASH_SCHEMA = Object.freeze([
   ['dim', 'dim', 'num', [1, 3]], ['n', 'n', 'num', [16, 32]], ['fraction', 'f', 'num', [.1, .85]],
   ['order', 'order', 'num', [1, 4]], ['seed', 'seed', 'num', [0, 9999]], ['ic', 'ic', 'enum', ['waves', 'gaussian']],
@@ -38,7 +38,10 @@ function normalize(key, value) {
 export function normalizeState(state = {}) {
   const out = makeDefaults();
   for (const key of Object.keys(DEFAULTS)) if (key in state) out[key] = normalize(key, state[key]);
-  if (out.dim === 3 && out.n > 24) out.n = 24;
+  if (out.dim === 3 && out.n > 24) {
+    out.n = 24;
+    if(out.forceMesh===32)out.forceMesh=24;
+  }
   if (out.dim === 3 && out.mesh > 32) out.mesh = 32;
   if (out.dim === 3 && out.forceMesh > 32) out.forceMesh = 32;
   return out;

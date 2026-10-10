@@ -63,7 +63,7 @@ Linear interpolation of the map is not the same as linear interpolation of densi
 ::: {.callout-tip title="Try it: projections in two and three dimensions"}
 Rotate the 3D mesh to see how its tetrahedra fill the volume. The 2D mesh provides a simpler view of neighboring elements. Both display connectivity that a scatter plot of particles hides.
 
-{{< lab "dim=3&n=16&view=sheet&f=0.45" "Inspect the tetrahedral sheet" >}}
+{{< lab "dim=3&n=16&force=16&view=sheet&f=0.45" "Inspect the tetrahedral sheet" >}}
 :::
 
 ![A three-dimensional patch of the sheet and its deformed position projection. The colored cell is split into six Kuhn tetrahedra. The full cold sheet has three intrinsic dimensions inside six-dimensional phase space.](figures/sheet-3d.svg){#fig-sheet3}

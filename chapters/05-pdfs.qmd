@@ -55,7 +55,7 @@ A PDF agreement does not prove that the spatial arrangement of density is correc
 ::: {.callout-tip title="Try it: voids, mass, and observation filters"}
 Inspect the volume and mass PDFs of exactly the same pre-crossing sheet. Set the observation filter to zero to test $p_M=r p_V$ within finite bins, then restore smoothing and explain why that identity no longer applies to the environment-weighted curve.
 
-{{< lab "view=pdf&dim=2&n=24&f=0.55" "Explore both density measures" >}}
+{{< lab "view=pdf&dim=2&n=24&force=24&f=0.55" "Explore both density measures" >}}
 :::
 
 ::: {.callout-tip title="Try it: the established results"}

@@ -415,3 +415,102 @@ fn one_dimensional_general_lpt_reduces_to_exact_zeldovich() {
     assert!(rms(&difference(&high.2, &za.2)) < 1e-15);
     assert!(rms(&difference(&high.3, &za.3)) < 1e-15);
 }
+
+/// Jointly refine the particle lattice and its force mesh. A finer force mesh
+/// alone need not improve a sparsely sampled particle representation. Here the
+/// reference is fourth-order LPT at a fixed pre-crossing epoch, not an assertion
+/// that either finite-resolution PM or fourth-order LPT is the exact solution.
+#[test]
+fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
+    use hcc_core::{ics::Preset, observables::sheet_mode_jvp, Cosmo};
+    fn evaluate(c: &Cosmo, a: f64) -> (Vec<f64>, Vec<f64>) {
+        let g = &c.grid;
+        let mut x = lattice(g, 0.0);
+        let mut v = vec![0.0; x.len()];
+        for (t, term) in c.lpt_ref().terms.iter().enumerate() {
+            let (growth, derivative) = c.lpt_ref().growth.g_and_dg(t, a);
+            for i in 0..g.size {
+                for axis in 0..g.dim {
+                    x[i * g.dim + axis] += growth * term.psi[axis][i] as f64;
+                    v[i * g.dim + axis] += derivative * term.psi[axis][i] as f64;
+                }
+            }
+        }
+        (x, v)
+    }
+    let mut displacement_errors = Vec::new();
+    let mut fundamental_power_ratios = Vec::new();
+    for n in [16, 32, 64] {
+        let mut c = Cosmo::new(2, n, 1.0);
+        c.keep_tensors = Some(true);
+        c.set_ic_preset(
+            Preset::PlaneWaves {
+                modes: vec![
+                    ([1, 0, 0], 0.5, 0.17),
+                    ([0, 1, 0], 0.35, 0.43),
+                    ([1, 1, 0], 0.15, 0.7),
+                ],
+            },
+            0.0,
+            0.0,
+        );
+        c.build_lpt(4);
+        let a_start = 0.03_f64;
+        let a_end = 0.7;
+        let (x0, v0) = evaluate(&c, a_start);
+        let p0 = v0.iter().map(|v| a_start.powf(1.5) * v).collect();
+        let pm = evolve_eds(
+            &c.grid,
+            &c.grid,
+            PmState {
+                x: x0,
+                p: p0,
+                a: a_start,
+            },
+            None,
+            a_end,
+            128,
+        )
+        .unwrap();
+        let (lpt_x, _) = evaluate(&c, a_end);
+        assert!(hcc_core::observables::minimum_simplex_jacobian(&c.grid, &lpt_x) > 0.0);
+        assert!(pm.min_jacobian > 0.0);
+        let q = lattice(&c.grid, 0.0);
+        let displacement_error =
+            rms(&difference(&pm.state.x, &lpt_x)) / rms(&difference(&lpt_x, &q));
+        let zero = vec![0.0; lpt_x.len()];
+        let k = [c.grid.kf(), 0.0, 0.0];
+        let lpt_mode = sheet_mode_jvp(&c.grid, &lpt_x, &zero, k).0;
+        let pm_mode = sheet_mode_jvp(&c.grid, &pm.state.x, &zero, k).0;
+        let power_ratio = pm_mode.norm_sqr() / lpt_mode.norm_sqr();
+        println!("n=forceMesh={n}: displacementRelativeRms={displacement_error:.9}, fundamentalPowerRatio={power_ratio:.9}");
+        displacement_errors.push(displacement_error);
+        fundamental_power_ratios.push(power_ratio);
+    }
+    // Require substantial refinement improvements rather than incidental small
+    // changes. Leave room for legitimate small compiler and FFT differences.
+    for errors in displacement_errors.windows(2) {
+        assert!(
+            errors[1] < 0.6 * errors[0],
+            "displacement residuals: {displacement_errors:?}"
+        );
+    }
+    assert!(
+        displacement_errors[0] > 0.15 && displacement_errors[2] < 0.05,
+        "displacement residuals: {displacement_errors:?}"
+    );
+    let power_errors: Vec<f64> = fundamental_power_ratios
+        .iter()
+        .map(|ratio| (ratio - 1.0).abs())
+        .collect();
+    for errors in power_errors.windows(2) {
+        assert!(
+            errors[1] < 0.5 * errors[0],
+            "fundamental ratios: {fundamental_power_ratios:?}"
+        );
+    }
+    assert!(
+        power_errors[0] > 0.1 && power_errors[2] < 0.03,
+        "fundamental ratios: {fundamental_power_ratios:?}"
+    );
+}

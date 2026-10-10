@@ -52,3 +52,22 @@ there is no curl in plane symmetry, so higher orders vanish and the exact
 Zeldovich solution is recovered. The native/wasm all-dimensions facade tests
 pin this behavior. PM checks polynomial determinant extrema during each drift,
 not only endpoints; an interior-fold regression covers that distinction.
+
+## PM convergence and defaults
+
+A release sanity check found substantial finite-load errors when the force
+grid was refined at fixed particle count. These were insensitive to doubling
+the timestep count. An independent instantaneous-force probe and joint
+particle/force refinement identified lattice/CIC response as the main cause.
+The solver's equations and integrator were retained; no precision claim is
+made for the small browser PM grid. The default 2D experiment now uses matched
+32-per-axis particle and force grids. Switching that default to 3D uses the
+matched 24-per-axis tier. Guided links specify matched grids explicitly.
+
+The mixed-wave regression refines both grids at fixed a=0.7, early epoch 0.03,
+and 128 steps, with counts 16/32/64. Displacement residuals decrease from
+0.193 to 0.090 to 0.037 and fundamental P_PM/P_4LPT from 0.828 to 0.948 to 0.986.
+These test numerical convergence relative to a fixed LPT approximation, not
+exact equality to the fluid solution or uniform accuracy across harmonics.
+The UI labels the worst first-four-bin FFT power ratio and relative position
+RMS explicitly, expresses them as percentages, and explains their denominators.

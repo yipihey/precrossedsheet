@@ -29,7 +29,7 @@ impl Default for LabRequest {
     fn default() -> Self {
         Self {
             dim: 2,
-            n: 16,
+            n: 32,
             fraction: 0.5,
             order: 4,
             seed: 7,
@@ -177,7 +177,7 @@ pub fn run(r: &LabRequest) -> Result<Value, String> {
     let mut minj = f64::INFINITY;
     let mut mins = f64::INFINITY;
     // Resolved time-history check; positivity only at sampled times is not a
-    // continuum guarantee. PM additionally checks every drift endpoint.
+    // continuum guarantee. PM additionally checks each full linear drift.
     for t in 0..=16 {
         let at = a * t as f64 / 16.;
         minj = minj.min(c.lpt_ref().min_jacobian(at, r.order));

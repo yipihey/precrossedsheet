@@ -13,7 +13,10 @@ const roundTrip = state.decodeHash(state.encodeHash(experiment));
 assert.deepEqual(roundTrip, { ...state.normalizeState(experiment), fraction: .623457 });
 
 const untrusted = state.decodeHash('#dim=4&n=99&f=NaN&order=99&ic=bogus&view=unknown&smoothing=-5&extra=1');
-assert.deepEqual(untrusted, { ...defaults, n: 16, order: 4, smoothing: 0 });
+assert.deepEqual(untrusted, { ...defaults, order: 4, smoothing: 0 });
+const default3d=state.decodeHash('#dim=3');
+assert.equal(default3d.n,24);
+assert.equal(default3d.forceMesh,24);
 const capped3d = state.normalizeState({ ...defaults, dim: 3, n: 32, mesh: 64, forceMesh: 64 });
 assert.equal(capped3d.n, 24);
 assert.equal(capped3d.mesh, 32);

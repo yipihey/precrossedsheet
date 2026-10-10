@@ -41,6 +41,10 @@ A drift from $a_0$ to $a_1$ multiplies momentum by $2(a_0^{-1/2}-a_1^{-1/2})$; a
 
 The live solver is a teaching reference, not a precision replacement for the original converged $\Lambda$CDM simulation. Increase the number of steps and the force mesh separately; use deterministic initial waves when increasing the Lagrangian resolution. Keep observation smoothing fixed in box units. A discrepancy that stops changing with timesteps may still come from the force grid.
 
+A finer force grid at fixed particle count need not improve this point-particle PM reference. The lattice and CIC assignment have a finite-resolution response, and starting very early can amplify particle discreteness errors [@michaux2021]. Start with matched particle and force grids, then refine them together. For the native mixed-wave regression at fixed $a=0.7$, increasing both from 16 to 32 to 64 per axis reduces the displacement residual relative to the LPT displacement RMS from approximately 0.193 to 0.090 to 0.037. The fundamental continuous-mode power ratio $P_{\rm PM}/P_{\rm 4LPT}$ moves from 0.828 to 0.948 to 0.986{{< test mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt "joint PM refinement" >}}. This checks the numerical convergence of a teaching comparison; 4LPT remains an approximation, and higher harmonics can differ more.
+
+The default 2D lab uses matched 32-per-axis grids. Its displayed power residual is the maximum $|P_{\rm LPT}/P_{\rm PM}-1|$ over the first four populated FFT bins. It is not an aggregate power error: a weak denominator can make this statistic large even when the dominant mode agrees reasonably well. Inspect the spectra and mode counts alongside that number.
+
 ::: {.callout-tip title="Try it: compare trajectories before crossing"}
 Use the plane-wave experiment as an independent exact growing-mode benchmark. Then repeat with coupled 2D waves, where the nonlinear LPT terms matter. Inspect displacement residuals and density statistics; neither alone proves full convergence.
 

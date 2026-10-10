@@ -49,11 +49,11 @@ selectControl('dim', 'Spatial dimension', [['1','1D curve'],['2','2D sheet'],['3
 selectControl('n', 'Lattice resolution', [[16,'16 per axis'],[24,'24 per axis'],[32,'32 per axis']], '3D runs are limited to 24 points per axis.');
 rangeControl('fraction', 'Growth fraction', .1, .85, .01, 'Move toward the first shell crossing; the guard ends an invalid run.');
 selectControl('order', 'LPT order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Compare smoothness and accuracy as the perturbative order changes.');
-selectControl('ic', 'Initial conditions', [['waves','Single waves'],['gaussian','Gaussian field']], 'Gaussian fields are low-band filtered teaching initial conditions.');
+selectControl('ic', 'Initial conditions', [['waves','Deterministic waves'],['gaussian','Gaussian field']], 'Gaussian fields are low-band filtered teaching initial conditions.');
 rangeControl('smoothing', 'Smoothing scale', 0, .15, .005, 'Box units. This is an observation scale applied to the measured field.');
 selectControl('steps', 'Evolution steps', [[32,'32'],[64,'64'],[128,'128']]);
 selectControl('mesh', 'Observation mesh', [[32,'32 cells'],[48,'48 cells'],[64,'64 cells']], 'Controls the grid used to measure density and PDFs. 3D runs use 32 cells per axis.');
-selectControl('forceMesh', 'Force mesh', [[16,'16 cells'],[24,'24 cells'],[32,'32 cells'],[48,'48 cells'],[64,'64 cells']], 'Controls the force resolution during evolution. It is independent of the observation mesh; 3D runs cap at 32 cells per axis.');
+selectControl('forceMesh', 'Force mesh', [[16,'16 cells'],[24,'24 cells'],[32,'32 cells'],[48,'48 cells'],[64,'64 cells']], 'Start with a force mesh matching the particle lattice. Refine both together: a finer force grid alone can increase particle-load artifacts. 3D caps at 32 cells per axis.');
 rangeControl('seed', 'Random seed', 0, 9999, 1, 'Used only by Gaussian initial conditions.', (v) => String(Math.round(v)));
 const controls = { sync() { for (const [k, h] of Object.entries(controlHandles)) h.set(S[k]); } };
 
@@ -116,7 +116,7 @@ function guarded() {
   if (!current) { setNotice('Waiting for the calculation to finish.'); return false; }
   if (current.guard?.ok === false) { const why = current.guard.reason || 'A simplex changed orientation.'; setNotice(`Stopped before drawing scientific results: ${why} Minimum Jacobian: ${num(current.guard.minimumJacobian,4)}. Lower the growth fraction to return to the guarded regime.`, 'guard'); return false; }
   if (current.error) { setNotice(current.error, 'error'); return false; }
-  setNotice('Guard passed: simplex Jacobians stayed positive at the integration drift samples.', 'success'); return true;
+  setNotice('Guard passed: resolved LPT orientations and all PM drift orientations stayed positive.', 'success'); return true;
 }
 function render() {
   explain(); clearHost();
@@ -189,11 +189,28 @@ function addPlot(parent,title,x,seriesDefs,axes,d) {
 function renderSpectra(d) {const p=panel('Power spectrum comparison','The first chart compares isotropically binned FFT estimates. The second compares direct first-axis modes on their own deterministic k grid.');addPlot(p,'Isotropic FFT-bin power',d.spectra?.k,[{key:'sheet',label:'Exact sheet'},{key:'cic',label:'CIC particles'},{key:'pm',label:'PM trajectories'}],{xlabel:'wavenumber k',ylabel:'P(k)',xlog:true,ylog:true},d);addPlot(p,'Direct first-axis modes',d.spectra?.directK,[{key:'direct',label:'Direct sheet LPT'},{key:'directPM',label:'Direct PM'}],{xlabel:'first-axis wavenumber k',ylabel:'P(k)',xlog:true,ylog:true},d);}
 function renderPdfs(d) {const p=panel('Density probability distributions','Both weighting conventions are shown. The selected convention is marked in its chart title.');$('p','panel-note',p,`Selected weighting: ${S.weight}. Mass weights use unsmoothed raw density; volume weighting uses the density at the selected observation scale.`);addPlot(p,`Volume-weighted PDF${S.weight==='volume'?' · selected':''}`,d.pdf?.logrho,[{key:'volume',label:'Sheet volume'},{key:'pmVolume',label:'PM volume'}],{xlabel:'log₁₀ ρ',ylabel:'probability density',ylim:[0,undefined]},d);addPlot(p,`Mass-weighted PDF${S.weight==='mass'?' · selected':''}`,d.pdf?.logrho,[{key:'mass',label:'Sheet mass'},{key:'pmMass',label:'PM mass'}],{xlabel:'log₁₀ ρ',ylabel:'mass probability',ylim:[0,undefined]},d);}
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the sheet-LPT tangent; the PM tangent is shown as its own response.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM tangent'}],{xlabel:'wavenumber k',ylabel:'P₀ response',xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}
-function showDiagnostics(d) {if(!d)return;const g=d.guard||{},m=d.diagnostics||{},p=$('div','metric-strip',diagnostics);for(const [label,val] of [['Minimum Jacobian',num(g.minimumJacobian,4)],['Simplex Jacobian',num(g.minimumSimplexJacobian,4)],['Position RMS',num(m.positionRms,4)],['Position relative RMS',num(m.positionRelativeRms,4)],['Power error',num(m.powerRelativeError,3)]]){const item=$('div','metric',p);$('span','metric-label',item,label);$('strong','metric-value',item,val);}}
+function showDiagnostics(d) {
+  if(!d)return;
+  const g=d.guard||{},m=d.diagnostics||{},p=$('div','metric-strip',diagnostics);
+  const percent=v=>Number.isFinite(v)?`${num(100*v,3)}%`:'—';
+  for(const [label,val] of [
+    ['Minimum Jacobian',num(g.minimumJacobian,4)],
+    ['Simplex Jacobian',num(g.minimumSimplexJacobian,4)],
+    ['LPT mass ratio',num(m.mass,8)],
+    ['PM mass ratio',num(m.pmMass,8)],
+    ['Position RMS (box units)',num(m.positionRms,4)],
+    ['Relative position RMS',percent(m.positionRelativeRms)],
+    ['Max low-bin power residual',percent(m.powerRelativeError)],
+  ]) {
+    const item=$('div','metric',p);
+    $('span','metric-label',item,label);$('strong','metric-value',item,val);
+  }
+  if(d.diagnostics)$('p','panel-note',diagnostics,'Mass ratios compare deposited with initial mass. Relative position RMS is normalized by the LPT displacement RMS. The power residual is max |P_LPT/P_PM − 1| over the first four populated FFT bins; weak-power bins can give large ratios. This finite-resolution PM run requires a convergence check.');
+}
 function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'What to notice');const text={sheet:'Before shell crossing, the Lagrangian map is one-to-one. A positive Jacobian means neighboring mass elements have not flipped orientation.',density:'Both maps use exact cell integration of the P₀ sheet: one follows LPT trajectories and the other follows PM trajectories. CIC particle assignment is shown separately in the spectrum view.',spectra:'The high-k end is where resolution, assignment, and perturbation order differences become clearest.',pdf:'Mass weighting uses unsmoothed raw density. At R > 0, volume weighting uses smoothed density, so ρ pV is not a simple transform between these PDFs.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The replayed run provides the stated publication reference. The browser calculation uses simplified EdS growth and should not be read as a new ΛCDM inference.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
 async function loadPublished(){if(publishedData){current={published:publishedData};renderPublished();return;}status.textContent='Loading published replay…';notice.textContent='Loading packaged reference data.';try{if(!publishedPromise)publishedPromise=fetch('./data/published-results.json').then((res)=>{if(!res.ok)throw Error(`HTTP ${res.status}`);return res.json();});const data=await publishedPromise;if(S.view!=='published')return;publishedData=data;current={published:data};status.textContent='Published data ready';renderPublished();}catch(e){if(S.view!=='published')return;publishedPromise=null;current={publishedError:String(e.message||e)};status.textContent='Published data unavailable';renderPublished();}}
 function renderPublished(){
-  explain();clearHost();const data=current?.published;
+  explain();clearHost();renderTheory();const data=current?.published;
   if(!data){setNotice(`Published replay is unavailable: ${current?.publishedError||'Loading packaged reference data.'}`,current?.publishedError?'error':'');return;}
   setNotice('Published reference replay loaded. Its archive and single-stream restrictions are listed below.','success');
   const p=panel(data.title||'Published density replay','Reported density PDFs and moments from the packaged simulation archive. This package contains no published power-spectrum curves.');

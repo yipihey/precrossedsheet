@@ -72,5 +72,5 @@ Exact deposition removes density **integration** noise. Finite-element error, FF
 ::: {.callout-tip title="Try it: same dynamics, different measurement"}
 Compare the exact cell-average sheet spectrum and the CIC spectrum of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step.
 
-{{< lab "view=spectra&dim=2&n=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
+{{< lab "view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
 :::
