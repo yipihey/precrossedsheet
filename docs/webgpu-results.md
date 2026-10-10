@@ -54,14 +54,20 @@ relative precision for an arbitrarily weak Fourier mode.
 
 The laboratory additionally retains its stricter amplitude-power derivative
 check against centered CPU finite differences at `h=1e-4`. Its maximum relative
-discrepancy must be at most `1e-5`, with the existing `1e-9` denominator floor.
+discrepancy must be at most `1e-5`. Specifically, the gate is
+`|dp - dp_fd| / max(|dp|, 1e-9)`, where `dp` is the analytic power tangent from
+the candidate channels and `dp_fd` is the CPU centered finite difference.
+Both use the internal unit-volume box before multiplication by physical
+volume `L^d`; the denominator floor is in those raw derivative units and the
+ratio is dimensionless.
 CPU finite differences use the value-only f64 integral and are cached in the
 prepared run. Independently reduced GPU powers at `A±h` are not substituted.
 If an LPT mode fails this gate, both its value and analytic direction are
 recomputed from the retained CPU state. The result is labeled `hybrid`, with
 the LPT and PM backend recorded for every integer mode. PM and passing LPT
-channels remain GPU-derived. This policy also avoids comparing a GPU value
-with a CPU derivative of a different arithmetic representation.
+channels remain GPU-derived and are checked against the f64 CPU difference.
+For recovered modes, replacing the value and direction together avoids
+forming a power tangent from a GPU value combined with a CPU direction.
 
 The PM JVP is compared with the CPU analytic reference in the harness; this
 release does not add a per-request PM finite-difference computation. A missing
