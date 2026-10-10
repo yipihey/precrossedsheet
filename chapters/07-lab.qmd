@@ -1,0 +1,42 @@
+---
+title: "A guide to the laboratory"
+---
+
+## Reproducible experiments {#sec-lab}
+
+The laboratory shares the book's numerical core. Controls are encoded in the URL; “Copy link” preserves the realization, epoch, order, estimator resolution, and selected panel. Calculations run in a background worker so rotating or exporting a plot does not interrupt the page. When a new physical state is requested, obsolete work is cancelled. The lab does not substitute a JavaScript approximation when Wasm fails.
+
+The live model uses a unit periodic box and EdS $D=a$. Its input is a deterministic low-frequency wave combination or a reproducible Gaussian field with a conservative input-mode cutoff. The displayed fraction is measured against a common estimated first crossing of orders one through four. The output includes vertex and simplex Jacobian checks; the PM trajectory is checked throughout every discrete drift. A rejected state produces a reason instead of density or power plots. The checks concern the resolved model, not an unobserved continuum between vertices.
+
+| Experiment | What to vary | What it isolates |
+|---|---|---|
+| 1D phase-space curve | Time fraction | Exact plane-symmetric compression and the approach to $J=0$ |
+| 2D triangles, 3D tetrahedra | Dimension and viewing angle | Sheet connectivity and its position projection |
+| Orders 1–4 | LPT order at fixed epoch | Contributions of nonlinear dynamics |
+| Exact deposit vs CIC | Eulerian mesh at fixed Lagrangian grid | Assignment and cell averaging |
+| LPT vs PM | Steps and mesh separately | Approximation error versus numerical-reference error |
+| Volume vs mass PDF | Observation filter and measure | Different sampling questions on the same density |
+| Amplitude tangent | Order and epoch | A fixed-time derivative of continuous Fourier power |
+| Archival replay | Filter, order, weighting, dataset | Published statistics with their original provenance |
+
+::: {.callout-tip title="Start with a gentle three-dimensional field"}
+The small grid deliberately keeps the computation short. Increase the resolution only after identifying which approximation you want to test. Use the SVG/CSV controls on quantitative plots and PNG download on field panels.
+
+{{< lab "dim=3&n=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
+:::
+
+## Exercises with checks
+
+1. **Jacobian and density.** Derive @eq-plane-wave from $\nabla^2\varphi=\delta_0$. Identify the first-crossing location. Explain why a 4LPT curve equals 1LPT in this experiment. Check that integrating the displayed cell-average density gives the box mass.
+2. **Simplex mass.** For a triangle stretched by a diagonal deformation with factors $(b_1,b_2)$, compute $J_T$ and its density. Repeat for a tetrahedron with $(b_1,b_2,b_3)$. Check that a uniform translation changes neither density nor power.
+3. **Measurement windows.** Predict the suppression from @eq-cell-window for a mode with $k\Delta x=\pi/2$. Compare raw cell-average power to the continuous mode estimator. Explain why a window correction alone does not validate Nyquist-scale power.
+4. **Probability measures.** Starting from $d^dx=Jd^dq$, derive both PDFs from uniformly sampled labels. Explain what changes when density is first smoothed and the mass weights remain unsmoothed.
+5. **Numerical reference.** Double the PM steps at a fixed force mesh. Then refine the force mesh at fixed observation filter. Which diagnostic changes most? Can a sub-percent variance error coexist with a larger tail-quantile error?
+6. **Parameter derivatives.** Derive @eq-amplitude-jvp by homogeneity. Compare the tangent power response with a centered finite difference. Explain why recomputing a crossing-based output time after changing amplitude would test a different derivative.
+7. **Evidence reading.** In the published replay, choose one density quantile that meets a sub-percent tolerance and one that does not. Write down the initial filter, observation filter, estimator, epoch, and any crossing contamination before stating the result.
+
+The first exercise has $J=1-AD\cos(kq)$ and $D_{\rm sc}=1/A$. The second gives $J_T=\prod_jb_j$. For the third, each affected axis contributes $\operatorname{sinc}(\pi/4)$ to amplitude. The remaining exercises are investigations: save the links and exported data that support your conclusions.
+
+## Browser checks
+
+[Run the self-check page](../app/selftest.html) to verify that the generated Wasm package loads, a guarded model conserves mass, and the tangent agrees with a finite difference. This supplements the native Rust tests; it does not replace the scientific convergence study. Results and failures are displayed directly, so a missing binary cannot masquerade as a passing demonstration.

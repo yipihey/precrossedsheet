@@ -1,0 +1,54 @@
+---
+title: "What the N-body comparison establishes"
+---
+
+## Start with the question, not the percentage {#sec-validation}
+
+A comparison has meaning only when the initial conditions, gravitational model, output epoch, and estimator are matched. “4LPT agrees within 1%” could refer to a displacement, a power bin, a variance, a density quantile, or a PDF ordinate. Those quantities respond differently to errors. A visually indistinguishable density slice is useful intuition but does not replace a numerical metric.
+
+For fields on a common mesh define $\Delta\rho=\rho_{\rm LPT}-\rho_{\rm NB}$. Useful diagnostics include a displacement RMS, $\mathrm{RMS}(\Delta\mathbf x)$; the relative field residual $\sigma(\Delta\rho)/\sigma(\rho_{\rm NB}-1)$; a power ratio $P_{\rm LPT}/P_{\rm NB}-1$; and a quantile shift $Q_{\rm LPT}(p)/Q_{\rm NB}(p)-1$. PDF ratios are particularly unstable in bins with very little probability. Always report the reference resolution and uncertainty alongside them.
+
+## The existing filtered-cosmology evidence {#sec-published-evidence}
+
+The [DiscoDJ study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html) [@discodjstudy2026] uses a $300\,h^{-1}\mathrm{Mpc}$ periodic box and a strongly filtered initial field with top-hat scale $R_f=14\,h^{-1}\mathrm{Mpc}$. It compares smoothed density statistics at $R_s=7,14,28,42\,h^{-1}\mathrm{Mpc}$. Its archived metadata, density quantiles, and histograms are packaged in the replay panel, with the source revision and extraction recipe. These are existing results, not large simulations rerun in your browser.
+
+The broad conclusion is that increasing LPT order substantially improves selected pre-crossing dominated statistics, and that 4LPT is a useful fast forward model for the stated filtered setup. The following examples explain the scope of the sub-percent claim:
+
+| Observation filter $R_s$ | Reported 4LPT behavior relative to N-body | Interpretation |
+|---|---|---|
+| $7\,h^{-1}\mathrm{Mpc}$ | Variance about $2.6\%$ low; mass-weighted 99.9th density quantile about $13.7\%$ low | Rare dense environments are not sub-percent accurate |
+| $14\,h^{-1}\mathrm{Mpc}$ | Extreme quantile shifts can remain at roughly $2$–$3\%$ | A single tolerance does not describe the full PDF |
+| $28\,h^{-1}\mathrm{Mpc}$ | Largest tabulated quantile shifts are roughly $0.5\%$ | Selected tabulated quantiles meet a sub-percent criterion |
+| $42\,h^{-1}\mathrm{Mpc}$ | Largest tabulated quantile shifts are roughly $0.1\%$ | The filtered large-scale agreement is especially strong |
+
+These figures are rounded from the original report. The replay contains the separately archived native-sheet follow-up, whose reference trajectories and estimator differ slightly; it must not be read as the raw data behind this table. They are not guarantees for another cosmology, realization, epoch, or estimator. The archival simulations also contain a small nonzero fraction of ever-crossed mass (approximately $0.5$–$0.8\%$ in the cited setup), so they are **predominantly** pre-crossing evidence, not a globally crossing-free theorem. We retain this qualification when using the study to motivate a strictly pre-crossing tool.
+
+The separate exact-sheet analysis tests reconstruction and estimator convergence. It must not be silently substituted for the original CIC-based dynamical comparison. Likewise, an unsmoothed distribution of individual tetrahedron densities measures element/stream density; it is an Eulerian total-density PDF only where the map remains one-to-one.
+
+## A live, controlled N-body experiment {#sec-pm}
+
+The browser adds a periodic particle-mesh (PM) solver{{< src nbody::evolve_eds >}} that evolves the same labels as nLPT. It uses EdS growth, matched CIC assignment and force interpolation, a spectral Poisson solve, and a kick–drift–kick integrator. We initialize it from growing-mode 4LPT at an early scale factor rather than from an arbitrary zero-velocity load. At the output, we attach the original connectivity to the PM vertices and deposit that sheet with the same conservative estimator used for the LPT vertices. Thus the sheet-vs-sheet field comparison isolates the trajectories more cleanly than using different density estimators for the two models.
+
+In units $H_0=1$, use canonical momentum $\mathbf p=a^2\dot{\mathbf x}$ and a rescaled potential $\widetilde\phi=a\phi$, with $\nabla^2\widetilde\phi=(3/2)\delta$. Then
+
+$$
+\frac{d\mathbf x}{da}=a^{-3/2}\mathbf p,\qquad
+\frac{d\mathbf p}{da}=a^{-1/2}\mathbf F,\qquad
+\mathbf F=-\nabla\widetilde\phi.
+$$ {#eq-pm-clocks}
+
+A drift from $a_0$ to $a_1$ multiplies momentum by $2(a_0^{-1/2}-a_1^{-1/2})$; a kick multiplies the held force by $2(\sqrt{a_1}-\sqrt{a_0})$. The force is re-evaluated after each drift. Finite force resolution and assignment smoothing remain, even though the observation deposit is exact.
+
+The live solver is a teaching reference, not a precision replacement for the original converged $\Lambda$CDM simulation. Increase the number of steps and the force mesh separately; use deterministic initial waves when increasing the Lagrangian resolution. Keep observation smoothing fixed in box units. A discrepancy that stops changing with timesteps may still come from the force grid.
+
+::: {.callout-tip title="Try it: compare trajectories before crossing"}
+Use the plane-wave experiment as an independent exact growing-mode benchmark. Then repeat with coupled 2D waves, where the nonlinear LPT terms matter. Inspect displacement residuals and density statistics; neither alone proves full convergence.
+
+{{< lab "dim=1&ic=waves&view=density&f=0.5&steps=128" "Compare the analytic plane wave and PM" >}}
+:::
+
+## A validation ladder
+
+First check mass conservation{{< test checked_lab_conserves_mass_and_has_fixed_time_gradients_in_all_dimensions "live model contract" >}} and the uniform solution{{< test uniform_particles_remain_stationary "uniform PM" >}}. Then test the exact plane wave{{< test plane_mode_follows_eds_growth_and_converges_in_step_count "PM growing mode" >}} and the LPT equation residuals. Next refine time integration, force resolution, Lagrangian sampling, and observation meshing independently. Only then compare physical approximations using the same initial modes and estimator. At every stage, record the epoch, filters, minimum Jacobians, and the tolerance on the particular observable.
+
+The repository keeps the mathematical core tests, PM/tangent tests, browser self-checks, and provenance checks together. @sec-status states what has actually been run. Replaying an archived dataset is evidence preservation; passing a local implementation test is evidence about the code. They answer different questions.

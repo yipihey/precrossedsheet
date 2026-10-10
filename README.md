@@ -1,0 +1,41 @@
+# Pre-crossed sheet
+
+A pedagogical Quarto book and Rust/WebAssembly laboratory for the cold phase-space
+sheet **before shell crossing**. Built from [yipihey/quadrant](https://github.com/yipihey/quadrant),
+with the MIT-licensed nLPT and exact-deposition core from
+[Hopf–Cole cosmology](https://github.com/yipihey/hopf-cole-cosmology).
+
+The book covers 1D–3D sheet geometry, nLPT through fourth order, conservative
+meshing and continuous Fourier modes, qualified validation against N-body,
+volume/mass PDFs, and directional derivatives for forward modeling. The live
+lab uses an EdS teaching model; the published replay preserves the original
+DiscoDJ filtered-cosmology results and their limitations. Smaller scales and
+post-crossing evolution are future work.
+
+## Build
+
+Requires Rust, wasm-pack, the wasm32-unknown-unknown target, Python 3, Node.js,
+and Quarto 1.6 or newer.
+
+```sh
+make test
+make wasm api check site
+python3 scripts/serve.py 8790 _site
+```
+
+Open `http://localhost:8790`, or `app/index.html` through that HTTP server.
+The browser needs the generated Wasm package; it has no numerical JS fallback.
+Plots export SVG/CSV and field panels export PNG. All controls live in the URL.
+
+## Verification and reuse
+
+See [the verification record](docs/verification.md), [evidence audit](docs/evidence-audit.md),
+and [decisions](docs/decisions.md). The Rust API is generated with `make api`.
+Use a Cargo path dependency on `core/` to reuse the numerical library without
+the web interface. Retained crate name: `hcc_core`.
+
+The exact clipped-deposit path and the differentiable continuous Fourier path
+are distinct. Arbitrary IC JVPs and PM tangents are at fixed cosmology; no
+reverse adjoint or cosmological growth gradient is claimed.
+
+MIT license; upstream copyright retained. `CITATION.cff` describes this project.

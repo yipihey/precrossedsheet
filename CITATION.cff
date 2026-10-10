@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Cite this teaching implementation and the primary papers for scientific claims."
+title: "The pre-shell-crossing phase-space sheet"
+type: software
+authors:
+  - family-names: Abel
+    given-names: Tom
+repository-code: "https://github.com/yipihey/precrossedsheet"
+url: "https://yipihey.github.io/precrossedsheet/"
+license: MIT

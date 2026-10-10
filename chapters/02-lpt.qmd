@@ -1,0 +1,81 @@
+---
+title: "Building the sheet with nLPT"
+---
+
+## The expanding-universe equations {#sec-lpt}
+
+For pressureless, cold matter before crossing, the comoving equation of motion and Poisson equation are
+
+$$
+\ddot{\mathbf x}+2H\dot{\mathbf x}=-\frac{1}{a^2}\nabla_x\phi,\qquad
+\nabla_x^2\phi=4\pi G a^2\bar\rho(a)\,\delta.
+$$ {#eq-comoving-eom}
+
+The expansion produces the Hubble drag. Gravity couples the deformation at one position to the mass distribution everywhere else. Linear perturbation theory solves this coupling for a small density contrast; LPT instead expands the displacement of the initially uniform labels [@bouchet1995; @matsubara2015].
+
+In Einstein–de Sitter (EdS), normalize the growing mode as $D=a$. The displacement{{< src lpt::Lpt >}} is
+
+$$
+\boldsymbol\Psi(\mathbf q,D)=\sum_{n=1}^{N}D^n\boldsymbol\Psi^{(n)}(\mathbf q),\qquad
+\boldsymbol\Psi^{(1)}=-\nabla_q\varphi,\quad \nabla_q^2\varphi=\delta_0.
+$$ {#eq-lpt-expansion}
+
+Thus $\widehat{\boldsymbol\Psi}^{(1)}=i\mathbf k\widehat\delta_0/k^2$ for the Fourier convention of @sec-fourier. A positive cosine overdensity produces a displacement toward its maximum. In a flat $\Lambda$CDM universe, write the expansion as $\sum_\tau g_\tau(a)\mathbf S^\tau(\mathbf q)$: terms of equal perturbative order can have different time functions. Replacing them all by $D^n$ is an approximation, not an identity. The inherited core supports both EdS coefficients and coupled $\Lambda$CDM growth equations{{< src growth::Growth >}}. The new live N-body comparison uses EdS so its time integration and derivative tests have an unambiguous common convention.
+
+## The recurrence, without a list of memorized kernels {#sec-recursion}
+
+Set $M^{(n)}_{ij}=\partial_j\Psi_i^{(n)}$. The invariant building blocks are the polarized determinant terms{{< src lpt::mu2 >}} {{< src lpt::mu3 >}}
+
+$$
+\mu_2(A,B)=\tfrac12[\operatorname{tr}A\operatorname{tr}B-\operatorname{tr}(AB)],
+$$ {#eq-mu2}
+
+$$
+\begin{split}
+6\mu_3(A,B,C)={}&\operatorname{tr}A\operatorname{tr}B\operatorname{tr}C
+-\operatorname{tr}A\operatorname{tr}(BC)-\operatorname{tr}B\operatorname{tr}(AC)\\
+&-\operatorname{tr}C\operatorname{tr}(AB)+\operatorname{tr}(ABC)+\operatorname{tr}(ACB).
+\end{split}
+$$ {#eq-mu3}
+
+The second expression is used in 3D; $\mu_3(M,M,M)=\det M$. The determinant identity is $\det(I+M)=1+\operatorname{tr}M+\mu_2(M,M)+\mu_3(M,M,M)$.
+
+Taking the Eulerian divergence of @eq-comoving-eom and transforming derivatives to Lagrangian coordinates produces an order-by-order longitudinal equation. Conservation of initially zero Eulerian vorticity supplies the curl equation [@rampf2021; @matsubara2015]. In EdS, for $n\ge2$,
+
+$$
+\begin{split}
+\nabla_q\cdot\boldsymbol\Psi^{(n)}={}&
+\sum_{a+b=n}c_2(n;a,b)\mu_2(M^{(a)},M^{(b)})\\
+&+\sum_{a+b+c=n}c_3(n;a,b,c)\mu_3(M^{(a)},M^{(b)},M^{(c)}).
+\end{split}
+$$ {#eq-longitudinal-recursion}
+
+$$
+c_2=\frac{(3-n)/2-a^2-b^2}{(n-1)(n+3/2)},\qquad
+c_3=\frac{(3-n)/2-a^2-b^2-c^2}{(n-1)(n+3/2)},
+$$ {#eq-recursion-coefficients}
+
+$$
+(\nabla_q\times\boldsymbol\Psi^{(n)})_i=
+-\frac{1}{n}\sum_{m=1}^{n-1}m\,\epsilon_{ijk}M^{(m)}_{lj}M^{(n-m)}_{lk}.
+$$ {#eq-curl-recursion}
+
+The sums run over **ordered** tuples of positive lower orders. An implementation with unordered parents must include their multiplicities; the core does this{{< src growth::term_specs >}}. Given divergence $S$ and curl $\mathbf T$, the periodic zero-mean solution is $\widehat\Psi=-i\mathbf k\widehat S/k^2+i\mathbf k\times\widehat{\mathbf T}/k^2$.
+
+At second order, @eq-recursion-coefficients gives $c_2(2;1,1)=-3/7$, recovering the familiar 2LPT solution{{< test lpt_2lpt_closed_form "2LPT closed form" >}}. At third order the displacement develops a transverse component, even though the Eulerian velocity remains irrotational. Dropping that component is not full 3LPT, and propagates errors into 4LPT. The recurrence includes it.
+
+The 2D demonstration assumes translational symmetry along the third axis of an otherwise 3D universe. $\mu_3$ vanishes, but the growth coefficients and Poisson normalization remain those of the cosmological 3D equations. It is not a separate two-dimensional gravitational cosmology.
+
+## What “fourth order” does and does not mean
+
+4LPT includes all displacement contributions through fourth order in the initial field. It does not make the density a fourth-degree polynomial: forming $1/\det(I+\nabla\Psi)$ contains nonlinear combinations of those contributions. Nor does it specify the Lagrangian mesh resolution or the Eulerian estimator. Dynamics, interpolation, and measurement each require their own validation.
+
+The inherited tests insert the truncated expansion into the Lagrangian equations and check the predicted residual scaling in both dimensions{{< test lpt_eom_residual_scaling_2d "2D recurrence" >}} {{< test lpt_eom_residual_scaling_3d "3D recurrence" >}}; a separate test checks $\Lambda$CDM growth{{< test lcdm_eom_residual_scaling_2d "ΛCDM growth" >}}. These pin mathematical implementation properties. They do not establish a universal percentage accuracy against N-body.
+
+Products in the recurrence generate modes beyond the original input band. Evaluate them on a sufficiently fine Fourier grid, use padding or a conservative input cutoff, and repeat at higher resolution. The teaching laboratory uses only a small set of resolved low-frequency input modes. Its Gaussian seed is reproducible at fixed resolution; changing resolution does not guarantee an identical random realization. Use deterministic waves for direct resolution comparisons.
+
+::: {.callout-tip title="Try it: compare successive orders"}
+Keep the initial field and epoch fixed and switch between 1, 2, 3, and 4LPT. In 1D the curves coincide. In 2D and 3D mode coupling produces corrections. The time fraction is referenced to a common crossing estimate for all four orders, so changing the order does not silently change the epoch.
+
+{{< lab "dim=2&n=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
+:::

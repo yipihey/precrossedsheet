@@ -1,0 +1,19 @@
+/core/target
+/_site
+/.quarto
+/app/pkg
+/api
+/_variables.yml
+/app/css/brand.css
+.DS_Store
+
+/.quarto/
+**/*.quarto_ipynb
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12

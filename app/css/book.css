@@ -1,0 +1,7 @@
+/* Keep wide mathematical expressions inside the reading column on phones. */
+#quarto-document-content .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.35rem 0.5rem;
+}

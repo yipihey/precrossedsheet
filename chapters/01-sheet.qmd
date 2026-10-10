@@ -1,0 +1,71 @@
+---
+title: "What is the phase-space sheet?"
+---
+
+## Labels, positions, and velocities {#sec-sheet}
+
+Let $\mathbf q$ label a fluid element in a periodic comoving box of side $L$. Choose these Lagrangian labels so the mass measure is uniform, $dm=\bar\rho_{\rm com}\,d^3q$. The element's comoving position is $\mathbf x(\mathbf q,a)=\mathbf q+\boldsymbol\Psi(\mathbf q,a)$. Its physical peculiar velocity is $\mathbf u=a\dot{\mathbf x}$, where dots denote cosmic time. The laboratory displays $\mathbf v_D=\partial\mathbf x/\partial D$; it is a growth derivative, not $\mathbf u$.
+
+The cold phase-space distribution can be written as
+
+$$
+f(\mathbf x,\mathbf u,a)=\bar\rho_{\rm com}\int d^3q\,
+\delta_{\rm D}^{(3)}[\mathbf x-\mathbf x(\mathbf q,a)]\,
+\delta_{\rm D}^{(3)}[\mathbf u-\mathbf u(\mathbf q,a)].
+$$ {#eq-cold-sheet}
+
+A three-dimensional set of labels therefore specifies a three-dimensional manifold inside six-dimensional phase space. “Sheet” refers to this lower-dimensional manifold, not to a physically thin plane in ordinary space [@abel2012; @hahn2013]. The distribution has negligible primordial velocity dispersion in this idealization.
+
+In one spatial dimension, draw the curve $(x(q),u(q))$ in a two-dimensional plot. In two dimensions, the sheet has two coordinates and lives in four-dimensional phase space; our triangular mesh is its **projection into position space**. In three dimensions, the tetrahedral mesh likewise displays the position-space projection of a three-dimensional sheet, rather than the full six-dimensional embedding. These projections make the deformation visible without pretending to show all phase-space coordinates at once.
+
+![A one-dimensional plane-symmetric flow: the position map, its phase-space curve, and conservative interval density. Points identify sheet vertices; lines connect the same labels. All panels use a guarded native Rust output.](figures/sheet-1d.svg){#fig-sheet1}
+
+## Density is geometry {#sec-jacobian}
+
+Define the deformation matrix $F_{ij}=\partial x_i/\partial q_j=\delta_{ij}+\Psi_{i,j}$ and its signed determinant $J=\det F$. Before first crossing, the map is one-to-one. Integrating @eq-cold-sheet over velocity, and changing variables from $\mathbf q$ to $\mathbf x$, then gives
+
+$$
+1+\delta[\mathbf x(\mathbf q,a),a]=\frac{1}{J(\mathbf q,a)}.
+$$ {#eq-jacobian-density}
+
+The determinant{{< src lpt::det_i_plus >}} measures the ratio of current to initial comoving volume. Expansion of a patch gives a void; contraction gives an overdensity. Mass conservation is $[1+\delta(\mathbf x)]\,d^3x=d^3q$. There is no need to count randomly sampled particles to obtain this density.
+
+The **first shell crossing** occurs when the map first loses local invertibility, $J=0$. After that event, different labels can reach the same position and the single-stream fluid equations cease to describe the full dynamics. A mathematical LPT series need not lose convergence at precisely that instant; its analytic singularities can occur later [@rampf2021]. Here, shell crossing is a physical stopping condition. We do not evolve a continuation of the pre-crossing fluid model.
+
+For a finite mesh, the relevant discrete counterpart is the signed ratio $J_T=V_T/V_{T,0}$ for every simplex. We require $J_T>0$ as well as positive spectral vertex Jacobians. These checks sample different representations of the map and should not be conflated.
+
+## An exactly solvable one-dimensional example {#sec-plane-wave}
+
+For $\delta_0(q)=A\cos(kq)$, the growing plane-symmetric solution is
+
+$$
+x(q,D)=q-\frac{AD}{k}\sin(kq),\quad
+\frac{\partial x}{\partial D}=-\frac{A}{k}\sin(kq),\quad
+J(q,D)=1-AD\cos(kq).
+$$ {#eq-plane-wave}
+
+Zel'dovich's map [@zeldovich1970] is exact before crossing for plane-symmetric gravitational dynamics. Its first crossing is $D_{\rm sc}=1/A$ for $A>0$. Higher LPT terms vanish: a one-dimensional demonstration cannot validate the nonlinear 3D terms of 4LPT. Its value is that it provides an independent analytic benchmark for density, phase space, mass conservation, and N-body convergence.
+
+::: {.callout-tip title="Try it: a curve that compresses"}
+Open the 1D experiment, vary the fraction of the crossing time, and compare the slope of $x(q)$ with the density. The phase-space curve is still unfolded in position. Verify that the high-density part corresponds to a small positive Jacobian.
+
+{{< lab "dim=1&ic=waves&view=sheet&f=0.65" "Explore the 1D sheet" >}}
+:::
+
+![The same two-dimensional Lagrangian triangulation before and after deformation. Colors preserve the initial labels, and each triangle retains its mass. This is a position projection of a sheet in four-dimensional phase space.](figures/sheet-2d.svg){#fig-sheet2}
+
+## From elements to a finite sheet
+
+Connect neighboring Lagrangian vertices with intervals (1D), two triangles per square (2D), or six consistently oriented Kuhn tetrahedra per cube (3D). Interpolate the **position and velocity maps** linearly in each simplex. An element then carries the fixed mass $m_T=\bar\rho_{\rm com}V_{T,0}$, and its pushforward density is constant: $\rho_T=m_T/|V_T|$. Before crossing the orientation agrees with its initial orientation.
+
+Linear interpolation of the map is not the same as linear interpolation of density. The latter is an optional conservative reconstruction discussed in @sec-meshing. Keeping these two approximations distinct prevents an apparent improvement in interpolation from being mistaken for a change in gravitational dynamics.
+
+::: {.callout-tip title="Try it: projections in two and three dimensions"}
+Rotate the 3D mesh to see how its tetrahedra fill the volume. The 2D mesh provides a simpler view of neighboring elements. Both display connectivity that a scatter plot of particles hides.
+
+{{< lab "dim=3&n=16&view=sheet&f=0.45" "Inspect the tetrahedral sheet" >}}
+:::
+
+![A three-dimensional patch of the sheet and its deformed position projection. The colored cell is split into six Kuhn tetrahedra. The full cold sheet has three intrinsic dimensions inside six-dimensional phase space.](figures/sheet-3d.svg){#fig-sheet3}
+
+These illustrations are reproducible with `scripts/render_figures.py` from the native laboratory response. They visualize the represented affine sheet; the mathematical density identity concerns the underlying one-to-one map. Open the full-resolution [1D](figures/sheet-1d.svg), [2D](figures/sheet-2d.svg), or [3D](figures/sheet-3d.svg) illustration to inspect the labels.

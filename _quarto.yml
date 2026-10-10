@@ -1,0 +1,84 @@
+project:
+  type: book
+  output-dir: _site
+  pre-render:
+    - scripts/build_info.py
+    - scripts/brand_to_css.py
+  # copied verbatim into _site: the standalone laboratory with its WebAssembly package, and the API documentation
+  resources:
+    - app/**
+    - api/**
+
+# quadrant: where the provenance shortcodes look things up
+quadrant:
+  crate: hcc_core
+  api: api
+  tests: core/tests
+  app: app/index.html
+
+book:
+  title: "The pre-shell-crossing phase-space sheet"
+  subtitle: "From Lagrangian dynamics to conservative observables"
+  author: "Tom Abel"
+  date: today
+  site-url: https://yipihey.github.io/precrossedsheet/
+  repo-url: https://github.com/yipihey/precrossedsheet
+  repo-branch: main
+  repo-actions: [edit, source, issue]
+  search: true
+  navbar:
+    right:
+      - text: "Laboratory"
+        href: app/index.html
+      - icon: github
+        href: https://github.com/yipihey/precrossedsheet
+        aria-label: GitHub
+  sidebar:
+    style: docked
+  chapters:
+    - index.qmd
+    - chapters/01-sheet.qmd
+    - chapters/02-lpt.qmd
+    - chapters/03-meshing.qmd
+    - chapters/04-validation.qmd
+    - chapters/05-pdfs.qmd
+    - chapters/06-inference.qmd
+    - chapters/07-lab.qmd
+    - chapters/references.qmd
+  appendices:
+    - chapters/notation.qmd
+    - chapters/implementation.qmd
+    - chapters/status.qmd
+  page-footer:
+    left: "Pre-crossed sheet · MIT License"
+    right: "build {{< var build.sha >}} · {{< var build.date >}}"
+
+bibliography: chapters/references.bib
+
+citation:
+  type: book
+  author: "Tom Abel"
+  issued: 2026
+  url: https://yipihey.github.io/precrossedsheet/
+appendix-cite-as: [display, bibtex]
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    css:
+      - app/css/quadrant.css
+      - app/css/book.css
+    toc: true
+    number-sections: true
+    number-depth: 2
+    code-fold: true
+    code-tools: true
+    html-math-method: katex
+    include-in-header: includes/head.html
+    date-modified: last-modified
+    comments:
+      hypothesis:
+        theme: clean
+        openSidebar: false

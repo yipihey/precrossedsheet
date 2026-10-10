@@ -1,0 +1,76 @@
+---
+title: "Exact meshing and continuous Fourier modes"
+---
+
+## Two approximations to keep separate {#sec-meshing}
+
+Once nLPT gives the vertices, linear interpolation defines an affine map on each simplex. For fixed initial simplex mass $m_T$, its pushforward density is $m_T/|V_T|$, a piecewise constant field, commonly called P0. This construction is exact for the **discrete affine sheet**, not for the unresolved smooth cosmological map.
+
+An optional P1 density reconstruction uses vertex weights $w_i>0$ and barycentric coordinates $\lambda_i(\mathbf x)$:
+
+$$
+\rho_T(\mathbf x)=\frac{m_T}{|V_T|}\,
+\frac{\sum_{i=0}^{d}\lambda_i(\mathbf x)w_i}{\bar w_T},\qquad
+\bar w_T=\frac{1}{d+1}\sum_{i=0}^{d}w_i.
+$$ {#eq-p1-reconstruction}
+
+The normalization follows from $\int_T\lambda_i\,d^dx=|V_T|/(d+1)$, so $\int_T\rho_T\,d^dx=m_T$. Choosing $w_i=1/J_i$ represents a local density gradient. P1 density is an additional reconstruction; it is not the exact pushforward of the same linear position map. The new live comparison uses P0 consistently, while the inherited API retains P1{{< src sheet::sheet_density_3d_exact >}} for independent reconstruction studies.
+
+## Deposit an integral, not a sample {#sec-exact-deposit}
+
+For Eulerian cell $C$ of volume $V_C$, exact deposition computes
+
+$$
+\rho_C=\frac{1}{V_C}\sum_T\int_{T\cap C}\rho_T(\mathbf x)\,d^dx.
+$$ {#eq-exact-deposition}
+
+In P0 this is a constant times overlap volume. In P1 it also needs first moments of the clipped simplex. Triangle/polygon and tetrahedron/polyhedron clipping computes these moments directly [@powell2015]. The inherited conservative routines{{< src r3d::voxelize >}} {{< src sheet::sheet_density_2d_exact >}} {{< src sheet::sheet_density_3d_exact >}} use the R3D geometry approach. Local tests compare cell integrals with analytic benchmarks and an independent Julia fixture set{{< test exact_sheet_deposit "conservative deposition" >}} {{< test matches_r3d_jl_fixtures "R3D fixture parity" >}}.
+
+A center sample can miss a small simplex altogether or overcount a sharp feature. Supersampling improves the estimate but leaves integration error. Exact overlap integration eliminates that quadrature problem. It does not repair an inaccurate displacement, an overly coarse Lagrangian tessellation, or a low-resolution force solver.
+
+For periodicity, keep positions unwrapped and lift a neighbor across the Lagrangian boundary by $L$. Clip against unwrapped cell indices, then reduce the deposited cell index modulo the Eulerian mesh size. Wrapping each vertex independently before constructing a simplex can turn a short boundary-crossing element into a spurious box-sized one.
+
+## Fourier conventions and windows {#sec-fourier}
+
+Use the periodic transform
+
+$$
+\delta_{\mathbf k}=\frac{1}{L^d}\int_{[0,L)^d}\delta(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx,
+\quad \mathbf k=\frac{2\pi}{L}\mathbf m,\quad
+P(\mathbf k)=L^d|\delta_{\mathbf k}|^2.
+$$ {#eq-fourier-power}
+
+For nonzero modes, $\delta_{\mathbf k}=L^{-d}\int\rho(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx$ in units with $\bar\rho=1$. The DC mode of the contrast is zero. $P$ has units of volume in $d$ dimensions; a 2D teaching spectrum is not a 3D cosmological power spectrum.
+
+A cell-average mesh has the top-hat window
+
+$$
+W_{\rm cell}(\mathbf k)=\prod_{j=1}^{d}\operatorname{sinc}(k_j\Delta x/2).
+$$ {#eq-cell-window}
+
+An FFT of the cell averages suppresses power by approximately $|W_{\rm cell}|^2$, and sampling that mesh aliases unresolved modes. Deconvolving the window{{< src sheet::tophat_cell_window >}} is useful on well-resolved modes but does not remove aliasing. The comparison test checks agreement with the continuous estimator in a resolved band{{< test tophat_deconvolution_matches_direct_spectrum "resolved Fourier band" >}}. Near Nyquist, dividing by a window alone is not a convergence argument [@jing2005].
+
+## Direct sheet transforms {#sec-direct-modes}
+
+The continuous sheet also admits a transform without an Eulerian deposit. Let $s_i=-i\mathbf k\cdot\mathbf x_i$ for the vertices of a $d$-simplex. The Hermite–Genocchi identity gives its normalized P0 mass contribution{{< src direct::exp_divided_difference >}}:
+
+$$
+\int_T\rho_T e^{-i\mathbf k\cdot\mathbf x}\,d^dx
+=m_T\,d!\,\exp[s_0,\ldots,s_d].
+$$ {#eq-simplex-fourier}
+
+The brackets denote a divided difference. When all phases coincide, $\exp[s,\ldots,s]=e^s/d!$, so the zero-mode contribution is exactly $m_T$. This provides a valuable mass-normalization check. Repeated phases must be evaluated with a stable confluent expression rather than division by nearly zero phase differences.
+
+Sum @eq-simplex-fourier over all elements to obtain the unnormalized integral $I(\mathbf k)$; divide by $L^d$ to obtain $\delta_{\mathbf k}$ for nonzero modes, and use $P=|I|^2/L^d$. The resulting modes{{< src direct::direct_spectrum >}} have no Eulerian assignment window or mesh aliasing. They still describe a **finite simplex approximation**. An average over a subset of lattice modes has mode-selection variance; it is not point-deposition noise. The teaching gradient plot uses deterministic modes along the first axis, while the general inherited spectrum routine samples lattice modes in bins.
+
+## What happened to shot noise?
+
+For independently sampled equal-mass points, the familiar white Poisson contribution is $P_{\rm shot}=L^d/N_p$. A connected sheet represents continuous mass, so this independent-point term is absent from its density estimator [@abel2012]. Cosmological N-body particles started on a lattice or glass are correlated; subtracting $L^d/N_p$ is not automatically justified for them. In the lab, CIC illustrates assignment and discreteness effects; we do not blindly subtract a Poisson floor.
+
+Exact deposition removes density **integration** noise. Finite-element error, FFT windows, aliasing, force resolution, and time integration remain measurable error sources. Convergence is demonstrated by varying these separately, not by calling every residual “shot noise.”
+
+::: {.callout-tip title="Try it: same dynamics, different measurement"}
+Compare the exact cell-average sheet spectrum and the CIC spectrum of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step.
+
+{{< lab "view=spectra&dim=2&n=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
+:::

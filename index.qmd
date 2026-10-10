@@ -1,0 +1,31 @@
+---
+title: "A continuous description of cold matter"
+---
+
+Cold dark matter starts as a smooth distribution of positions and velocities. We often represent it with particles, but those particles can also be understood as **vertices of a continuous phase-space sheet**. Before shell crossing, the sheet maps each initial position to exactly one current position. Its deformation gives both the density and the velocity field.
+
+This book develops that viewpoint for undergraduate and graduate astrophysics students who know the expanding universe, linear growth, and the density contrast. We derive the map, connect it to Lagrangian perturbation theory through fourth order (4LPT), turn its geometry into conservative density fields and power spectra, and distinguish volume-weighted from mass-weighted density distributions. The browser laboratory evaluates the numerical model in Rust compiled to WebAssembly; each experiment has a shareable address and downloadable figures.
+
+::: {.callout-important title="Scope: before shell crossing"}
+All new laboratory experiments stop before detected shell crossing. We study established, filtered pre-crossing results; smaller scales and evolution beyond crossing are future work. A positive Jacobian on a finite set of vertices is a numerical check, not a proof of global smoothness. The laboratory also checks the orientation of every simplex and the N-body trajectory.
+
+The statement “4LPT is accurate to better than 1%” needs an observable, filter, epoch, and converged reference. It is supported for selected smoothed statistics in the existing studies, not for every PDF bin or rare tail. @sec-validation spells out that distinction.
+:::
+
+## How to read this book
+
+Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
+
+```{=html}
+<div class="qd-cta">
+<a class="qd-btn" href="app/index.html">Open the laboratory</a>
+<a class="qd-btn" href="chapters/04-validation.html">Inspect the validation evidence</a>
+<a class="qd-btn" href="app/selftest.html">Run browser self-checks</a>
+</div>
+```
+
+The starting points are the author's [Hopf–Cole cosmology study](https://yipihey.github.io/hopf-cole-cosmology/index.html) and [DiscoDJ LPT/PDF study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html). We reuse the former's tested Rust nLPT and geometric integration core under its MIT license. This report follows the [quadrant format](https://github.com/yipihey/quadrant): equations link to numerical functions, local claims link to tests, and experiments link to exact laboratory states.
+
+## Learning goals
+
+After working through the examples, you should be able to derive density from a Jacobian, explain why a three-dimensional cold sheet lives in six-dimensional phase space, distinguish LPT order from sheet resolution, compute a simplex's contribution to a mesh cell or Fourier mode, and design a meaningful comparison with N-body. You should also be able to explain which forward-model operations have useful derivatives and why a histogram needs care in a gradient-based calculation.

@@ -1,0 +1,32 @@
+---
+title: "Notation and conventions"
+---
+
+## Coordinates, clocks, and units {#sec-notation}
+
+| Symbol | Meaning and convention |
+|---|---|
+| $\mathbf q$ | Uniform-mass Lagrangian comoving label |
+| $\mathbf x=\mathbf q+\boldsymbol\Psi$ | Current comoving position; kept unwrapped in geometry |
+| $a$ | Scale factor, the PM integration clock |
+| $D$ | Linear growth, equal to $a$ in the live EdS lab; early-time $D\sim a$ convention in the inherited $\Lambda$CDM core |
+| $\mathbf u=a\dot{\mathbf x}$ | Physical peculiar velocity; dot here denotes cosmic time |
+| $\mathbf v_D=\partial\mathbf x/\partial D$ | Quantity displayed in the phase-space plot; not physical peculiar velocity |
+| $\mathbf p=a^2\dot{\mathbf x}$ | Canonical momentum; $a^{3/2}\mathbf v_D$ in EdS with $H_0=1$ |
+| $F_{ij}=\delta_{ij}+\Psi_{i,j}$ | Deformation gradient |
+| $J=\det F$, $J_T$ | Spectral-vertex Jacobian and affine-simplex signed volume ratio |
+| $r=1+\delta=\rho/\bar\rho$ | Dimensionless density; positivity required before crossing |
+| $L,N_q,N_e$ | Box side, vertices per axis, Eulerian cells per axis |
+| $R_f,R_s$ | Initial-condition filter scale and observable filter scale |
+| $A$ | Amplitude multiplier of the initial field; tangent at $A=1$ |
+| $y=\log_{10}r$ | PDF coordinate; ordinate is probability per unit $y$ |
+
+The live lab uses $L=1$ and $H_0=1$, with no implied calibration to $h^{-1}\mathrm{Mpc}$. The published replay preserves the original $h^{-1}\mathrm{Mpc}$ units and filters. The Gaussian observation filter in the live lab is not the archival top-hat filter.
+
+## Fourier and finite-element conventions
+
+The forward FFT is unnormalized, the inverse FFT includes $1/N_e^d$, and a Fourier integral mode includes $1/L^d$. Reported power uses @eq-fourier-power. The zero density-contrast mode is zero. Odd spectral derivative operators suppress an even-grid Nyquist component to retain a real derivative field; the Poisson magnitude retains its full wavevector norm.
+
+Array storage is row major with the last spatial index fastest; positions and velocities are interleaved by component. Every square is split along the same diagonal; every cube has six Kuhn tetrahedra. A boundary neighbor receives a periodic lift before constructing an element. The term “P0” refers to a constant density inside the affine simplex; “P1” refers to an additional normalized linear density reconstruction.
+
+Mass-weighted smoothed PDFs use unsmoothed mass weights as defined in @eq-mass-environment. Hard histogram ranges are finite; captured probabilities are reported. The continuous derivative panel is P0 Fourier power, not a histogram or an exact-clipping derivative.

@@ -1,0 +1,417 @@
+use hcc_core::{
+    fft::FftEngine,
+    grid::Grid,
+    growth::Cosmology,
+    lpt::Lpt,
+    nbody::{cic_density_jvp, evolve_eds, force_jvp, PmState, PmTangent},
+    tangent::{
+        lpt_amplitude_jvp, simplex_mass_transform_jvp, simplex_mass_transform_p1_jvp, LptJvp,
+    },
+};
+use num_complex::Complex64 as C64;
+
+fn lattice(g: &Grid, offset: f64) -> Vec<f64> {
+    (0..g.size)
+        .flat_map(|i| {
+            let ijk = g.unravel(i);
+            (0..g.dim).map(move |a| (ijk[a] as f64 + offset) * g.dx())
+        })
+        .collect()
+}
+fn rms(x: &[f64]) -> f64 {
+    (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
+}
+fn difference(a: &[f64], b: &[f64]) -> Vec<f64> {
+    a.iter().zip(b).map(|(x, y)| x - y).collect()
+}
+
+#[test]
+fn cic_mass_and_tangent_conserve_in_all_dimensions() {
+    for dim in 1..=3 {
+        let g = Grid::new(dim, 8, 1.0);
+        let mut x = lattice(&g, 0.37);
+        let dx: Vec<_> = (0..x.len())
+            .map(|i| 0.03 * ((i * 17 + 3) as f64).sin())
+            .collect();
+        for (i, v) in x.iter_mut().enumerate() {
+            *v += 0.015 * ((i * 11 + 1) as f64).cos();
+        }
+        let (rho, drho) = cic_density_jvp(&g, &x, Some(&dx));
+        assert!((rho.iter().sum::<f64>() - g.size as f64).abs() < 1e-10);
+        assert!(drho.iter().sum::<f64>().abs() < 1e-10);
+        assert!(rho.iter().all(|v| *v >= 0.0));
+        let eps = 1e-6;
+        let xp: Vec<_> = x.iter().zip(&dx).map(|(v, d)| v + eps * d).collect();
+        let xm: Vec<_> = x.iter().zip(&dx).map(|(v, d)| v - eps * d).collect();
+        let rp = cic_density_jvp(&g, &xp, None).0;
+        let rm = cic_density_jvp(&g, &xm, None).0;
+        for i in 0..g.size {
+            assert!(((rp[i] - rm[i]) / (2.0 * eps) - drho[i]).abs() < 2e-8);
+        }
+    }
+}
+#[test]
+fn uniform_particles_remain_stationary() {
+    for dim in 1..=3 {
+        let g = Grid::new(dim, 8, 1.0);
+        let x = lattice(&g, 0.37);
+        let p = vec![0.0; x.len()];
+        let r = evolve_eds(
+            &g,
+            &g,
+            PmState {
+                x: x.clone(),
+                p,
+                a: 0.1,
+            },
+            None,
+            0.5,
+            12,
+        )
+        .unwrap();
+        assert!(rms(&difference(&r.state.x, &x)) < 1e-14);
+        assert!(rms(&r.state.p) < 1e-14);
+        assert!((r.min_jacobian - 1.0).abs() < 1e-12);
+    }
+}
+fn plane_run(steps: usize) -> (Grid, Vec<f64>, hcc_core::nbody::PmRun) {
+    let g = Grid::new(1, 128, 1.0);
+    let q = lattice(&g, 0.37);
+    let a0: f64 = 0.1;
+    let vel: Vec<_> = q
+        .iter()
+        .map(|x| -0.002 * (g.kf() * x).sin() / g.kf())
+        .collect();
+    let x: Vec<_> = q.iter().zip(&vel).map(|(q, v)| q + a0 * v).collect();
+    let p: Vec<_> = vel.iter().map(|v| a0.powf(1.5) * v).collect();
+    let r = evolve_eds(&g, &g, PmState { x, p, a: a0 }, None, 0.4, steps).unwrap();
+    (g, q, r)
+}
+#[test]
+fn plane_mode_follows_eds_growth_and_converges_in_step_count() {
+    let (g, q, r) = plane_run(128);
+    let disp = difference(&r.state.x, &q);
+    let expected: Vec<_> = q
+        .iter()
+        .map(|x| -0.4 * 0.002 * (g.kf() * x).sin() / g.kf())
+        .collect();
+    assert!(
+        rms(&difference(&disp, &expected)) / rms(&expected) < 0.004,
+        "growth mismatch"
+    );
+    let x16 = plane_run(16).2.state.x;
+    let x32 = plane_run(32).2.state.x;
+    let x64 = plane_run(64).2.state.x;
+    let e16 = rms(&difference(&x16, &r.state.x));
+    let e32 = rms(&difference(&x32, &r.state.x));
+    let e64 = rms(&difference(&x64, &r.state.x));
+    assert!(
+        e16 / e32 > 3.5 && e32 / e64 > 3.5,
+        "errors {e16} {e32} {e64}"
+    );
+}
+#[test]
+fn complete_force_and_kdk_jvp_match_finite_difference() {
+    for dim in 1..=3 {
+        let g = Grid::new(dim, 8, 1.0);
+        let mut x = lattice(&g, 0.37);
+        let mut p = vec![0.0; x.len()];
+        let dx: Vec<_> = (0..x.len())
+            .map(|i| 0.013 * ((i * 17 + 3) as f64).sin())
+            .collect();
+        let dp: Vec<_> = (0..x.len())
+            .map(|i| 0.0002 * ((i * 13 + 7) as f64).cos())
+            .collect();
+        for i in 0..x.len() {
+            x[i] += 0.008 * ((i * 11 + 1) as f64).cos();
+            p[i] = 0.0001 * ((i * 3 + 5) as f64).cos();
+        }
+        let (_, df) = force_jvp(&g, &x, Some(&dx));
+        let eps = 1e-5;
+        let plus = |sign: f64| PmState {
+            x: x.iter().zip(&dx).map(|(v, d)| v + sign * eps * d).collect(),
+            p: p.iter().zip(&dp).map(|(v, d)| v + sign * eps * d).collect(),
+            a: 0.2,
+        };
+        let fp = force_jvp(&g, &plus(1.).x, None).0;
+        let fm = force_jvp(&g, &plus(-1.).x, None).0;
+        let fd: Vec<_> = fp
+            .iter()
+            .zip(fm)
+            .map(|(a, b)| (a - b) / (2. * eps))
+            .collect();
+        assert!(rms(&difference(&df, &fd)) < 2e-8);
+        let primal = evolve_eds(
+            &g,
+            &g,
+            PmState {
+                x: x.clone(),
+                p: p.clone(),
+                a: 0.2,
+            },
+            Some(PmTangent {
+                dx: dx.clone(),
+                dp: dp.clone(),
+            }),
+            0.28,
+            7,
+        )
+        .unwrap();
+        let rp = evolve_eds(&g, &g, plus(1.), None, 0.28, 7).unwrap();
+        let rm = evolve_eds(&g, &g, plus(-1.), None, 0.28, 7).unwrap();
+        let t = primal.tangent.unwrap();
+        let fd: Vec<_> = rp
+            .state
+            .x
+            .iter()
+            .zip(rm.state.x)
+            .map(|(a, b)| (a - b) / (2. * eps))
+            .collect();
+        assert!(rms(&difference(&t.dx, &fd)) < 3e-8);
+        let fd: Vec<_> = rp
+            .state
+            .p
+            .iter()
+            .zip(rm.state.p)
+            .map(|(a, b)| (a - b) / (2. * eps))
+            .collect();
+        assert!(rms(&difference(&t.dp, &fd)) < 3e-8);
+    }
+}
+#[test]
+fn pre_crossing_guard_rejects_inverted_initial_and_drift_endpoint() {
+    let g = Grid::new(1, 8, 1.0);
+    let x = lattice(&g, 0.37);
+    let mut bad = x.clone();
+    bad[2] = bad[1] - 0.01;
+    assert!(evolve_eds(
+        &g,
+        &g,
+        PmState {
+            x: bad,
+            p: vec![0.; 8],
+            a: 0.2
+        },
+        None,
+        0.3,
+        1
+    )
+    .is_err());
+    let mut p = vec![0.; 8];
+    p[2] = -1.;
+    assert!(evolve_eds(&g, &g, PmState { x, p, a: 0.2 }, None, 0.3, 1).is_err());
+}
+fn ic_fields(g: &Grid) -> (Vec<C64>, Vec<C64>) {
+    let f: Vec<_> = (0..g.size)
+        .map(|i| {
+            let j = g.unravel(i);
+            let x = j[0] as f64 * g.dx();
+            let y = j[1] as f64 * g.dx();
+            let z = j[2] as f64 * g.dx();
+            0.3 * (g.kf() * x).cos()
+                + 0.19 * (g.kf() * (x + y)).sin()
+                + if g.dim == 3 {
+                    0.12 * (g.kf() * (y + z)).cos()
+                } else {
+                    0.
+                }
+        })
+        .collect();
+    let df: Vec<_> = (0..g.size)
+        .map(|i| {
+            let j = g.unravel(i);
+            let x = j[0] as f64 * g.dx();
+            let y = j[1] as f64 * g.dx();
+            let z = j[2] as f64 * g.dx();
+            0.17 * (g.kf() * y).sin()
+                + 0.13 * (g.kf() * (x - y)).cos()
+                + if g.dim == 3 {
+                    0.08 * (g.kf() * (x + z)).sin()
+                } else {
+                    0.
+                }
+        })
+        .collect();
+    let mut eng = FftEngine::new(g);
+    (eng.forward_real(&f), eng.forward_real(&df))
+}
+#[test]
+fn arbitrary_ic_jvp_matches_fourth_order_finite_difference_eds_and_lcdm() {
+    for dim in 2..=3 {
+        for cosmo in [Cosmology::eds(), Cosmology { omega_m: 0.3 }] {
+            let g = Grid::new(dim, 8, 1.0);
+            let (delta, dir) = ic_fields(&g);
+            let l = LptJvp::new(&g, &delta, &dir, 4, cosmo);
+            let (x, v, dx, dv) = l.evaluate(0.5, 4);
+            let eps = 1e-5;
+            let dp: Vec<_> = delta.iter().zip(&dir).map(|(a, b)| a + eps * b).collect();
+            let dm: Vec<_> = delta.iter().zip(&dir).map(|(a, b)| a - eps * b).collect();
+            let zero = vec![C64::new(0., 0.); g.size];
+            let plus = LptJvp::new(&g, &dp, &zero, 4, cosmo).evaluate(0.5, 4);
+            let minus = LptJvp::new(&g, &dm, &zero, 4, cosmo).evaluate(0.5, 4);
+            let fd: Vec<_> = plus
+                .0
+                .iter()
+                .zip(minus.0)
+                .map(|(a, b)| (a - b) / (2. * eps))
+                .collect();
+            assert!(rms(&difference(&dx, &fd)) < 1e-10);
+            let fd: Vec<_> = plus
+                .1
+                .iter()
+                .zip(minus.1)
+                .map(|(a, b)| (a - b) / (2. * eps))
+                .collect();
+            assert!(rms(&difference(&dv, &fd)) < 1e-10);
+            let mut eng = FftEngine::new(&g);
+            let reference = Lpt::new(&g, &mut eng, &delta, 4, cosmo, true);
+            let mut xr = vec![0f32; x.len()];
+            let mut vr = xr.clone();
+            reference.positions(0.5, 4, &mut xr);
+            reference.velocities(0.5, 4, &mut vr);
+            assert!(
+                rms(&difference(
+                    &x,
+                    &xr.iter().map(|v| *v as f64).collect::<Vec<_>>()
+                )) < 3e-8
+            );
+            assert!(
+                rms(&difference(
+                    &v,
+                    &vr.iter().map(|v| *v as f64).collect::<Vec<_>>()
+                )) < 3e-8
+            );
+        }
+    }
+}
+#[test]
+fn homogeneous_amplitude_jvp_matches_general_direction() {
+    for dim in 2..=3 {
+        let g = Grid::new(dim, 8, 1.0);
+        let (delta, _) = ic_fields(&g);
+        let general = LptJvp::new(&g, &delta, &delta, 4, Cosmology::eds()).evaluate(0.5, 4);
+        let mut eng = FftEngine::new(&g);
+        let l = Lpt::new(&g, &mut eng, &delta, 4, Cosmology::eds(), true);
+        let (dx, dv) = lpt_amplitude_jvp(&l, 0.5, 4);
+        assert!(rms(&difference(&dx, &general.2)) < 3e-9);
+        assert!(rms(&difference(&dv, &general.3)) < 1e-8);
+    }
+}
+#[test]
+fn simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference() {
+    for dim in 1..=3 {
+        let v: Vec<_> = (0..=dim)
+            .map(|i| {
+                [
+                    0.2 + 0.1 * i as f64,
+                    0.1 + 0.03 * (i * i) as f64,
+                    0.3 - 0.02 * (i * i * i) as f64,
+                ]
+            })
+            .collect();
+        let dv: Vec<_> = (0..=dim)
+            .map(|i| {
+                [
+                    0.05 * (i as f64 + 1.).sin(),
+                    -0.03 * (i as f64 + 2.).cos(),
+                    0.02,
+                ]
+            })
+            .collect();
+        let k = [6.1, -3.7, 2.4];
+        let mass = 0.17;
+        let eps = 1e-5;
+        let (_, jvp) = simplex_mass_transform_jvp(&v, &dv, dim, k, mass);
+        let mut vp = v.clone();
+        let mut vm = v.clone();
+        for i in 0..v.len() {
+            for a in 0..dim {
+                vp[i][a] += eps * dv[i][a];
+                vm[i][a] -= eps * dv[i][a];
+            }
+        }
+        let fd = (simplex_mass_transform_jvp(&vp, &dv, dim, k, mass).0
+            - simplex_mass_transform_jvp(&vm, &dv, dim, k, mass).0)
+            / (2. * eps);
+        assert!((fd - jvp).norm() < 1e-9);
+        let (zero, dzero) = simplex_mass_transform_jvp(&v, &dv, dim, [0.; 3], mass);
+        assert!((zero.re - mass).abs() < 1e-14 && dzero.norm() == 0.);
+        let shift = [0.07, -0.02, 0.03];
+        let trans = vec![shift; v.len()];
+        let (value, deriv) = simplex_mass_transform_jvp(&v, &trans, dim, k, mass);
+        let phase = C64::new(0., -(0..dim).map(|a| k[a] * shift[a]).sum::<f64>());
+        assert!((deriv - phase * value).norm() < 1e-12);
+        let collapsed = vec![[0.2, 0.2, 0.2]; v.len()];
+        let (cv, cd) = simplex_mass_transform_jvp(&collapsed, &trans, dim, k, mass);
+        assert!((cd - phase * cv).norm() < 1e-12);
+        let w: Vec<_> = (0..v.len()).map(|i| 1. + 0.2 * i as f64).collect();
+        let dw: Vec<_> = (0..v.len()).map(|i| 0.03 * (i as f64 + 1.).cos()).collect();
+        let (_, dj) = simplex_mass_transform_p1_jvp(&v, &dv, &w, &dw, dim, k, mass);
+        let wp: Vec<_> = w.iter().zip(&dw).map(|(a, b)| a + eps * b).collect();
+        let wm: Vec<_> = w.iter().zip(&dw).map(|(a, b)| a - eps * b).collect();
+        let fd = (simplex_mass_transform_p1_jvp(&vp, &dv, &wp, &dw, dim, k, mass).0
+            - simplex_mass_transform_p1_jvp(&vm, &dv, &wm, &dw, dim, k, mass).0)
+            / (2. * eps);
+        assert!((fd - dj).norm() < 1e-9);
+        let (z, dz) = simplex_mass_transform_p1_jvp(&v, &dv, &w, &dw, dim, [0.; 3], mass);
+        assert!((z.re - mass).abs() < 1e-14 && dz.norm() < 1e-14);
+    }
+}
+
+#[test]
+fn drift_guard_detects_interior_fold_with_positive_endpoint_jacobians() {
+    // A smooth radial twist preserves orientation at both endpoints. Its
+    // straight-line interpolation collapses the inner disk halfway through.
+    let g = Grid::new(2, 256, 1.0);
+    let x = lattice(&g, 0.37);
+    let mut end = x.clone();
+    for i in 0..g.size {
+        let u = x[2 * i] - 0.5;
+        let v = x[2 * i + 1] - 0.5;
+        let r = u.hypot(v);
+        let angle = if r < 0.15 {
+            std::f64::consts::PI
+        } else if r > 0.45 {
+            0.0
+        } else {
+            std::f64::consts::PI * 0.5 * (1.0 + (std::f64::consts::PI * (r - 0.15) / 0.3).cos())
+        };
+        end[2 * i] = 0.5 + angle.cos() * u - angle.sin() * v;
+        end[2 * i + 1] = 0.5 + angle.sin() * u + angle.cos() * v;
+    }
+    let end_min = hcc_core::observables::minimum_simplex_jacobian(&g, &end);
+    assert!(end_min > 0.0, "endpoint min {end_min}");
+    let (a0, a1) = (0.2_f64, 0.3_f64);
+    let drift = 2.0 * (1.0 / a0.sqrt() - 1.0 / a1.sqrt());
+    let kick = 2.0 * ((0.5 * (a0 + a1)).sqrt() - a0.sqrt());
+    let force = force_jvp(&g, &x, None).0;
+    let p = end
+        .iter()
+        .zip(&x)
+        .zip(force)
+        .map(|((end, start), force)| (end - start) / drift - kick * force)
+        .collect();
+    assert!(evolve_eds(&g, &g, PmState { x, p, a: a0 }, None, a1, 1).is_err());
+}
+
+#[test]
+fn one_dimensional_general_lpt_reduces_to_exact_zeldovich() {
+    let g = Grid::new(1, 16, 1.0);
+    let mut eng = FftEngine::new(&g);
+    let delta = eng.forward_real(
+        &(0..g.n)
+            .map(|i| 0.3 * (g.kf() * i as f64 * g.dx()).cos())
+            .collect::<Vec<_>>(),
+    );
+    let direction = eng.forward_real(
+        &(0..g.n)
+            .map(|i| 0.2 * (2.0 * g.kf() * i as f64 * g.dx()).sin())
+            .collect::<Vec<_>>(),
+    );
+    let high = LptJvp::new(&g, &delta, &direction, 4, Cosmology::eds()).evaluate(0.5, 4);
+    let za = LptJvp::new(&g, &delta, &direction, 1, Cosmology::eds()).evaluate(0.5, 1);
+    assert!(rms(&difference(&high.0, &za.0)) < 1e-15);
+    assert!(rms(&difference(&high.1, &za.1)) < 1e-15);
+    assert!(rms(&difference(&high.2, &za.2)) < 1e-15);
+    assert!(rms(&difference(&high.3, &za.3)) < 1e-15);
+}

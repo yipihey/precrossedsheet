@@ -1,0 +1,60 @@
+---
+title: "A differentiable forward model"
+---
+
+## Fast dynamics, continuous observables {#sec-inference}
+
+At fixed cosmology and initial field, nLPT builds its spatial terms once and evaluates them at many epochs. Before crossing, this can make it a useful forward model when a converged filtered comparison supports the desired accuracy. A continuous sheet estimator also avoids injecting random point-deposition noise into every evaluation. These are useful ingredients for simulation-based inference [@cranmer2020], but neither by itself establishes an accurate posterior.
+
+An inference pipeline maps parameters $\boldsymbol\theta$ through initial modes, dynamics, observables, and an observation model to a loss or likelihood. The observation model must include the relevant survey selection, bias, noise, and model discrepancy. A differentiable simulator supplies derivatives of the computational map; it does not guarantee that this map captures every physical effect.
+
+## Directional derivatives {#sec-jvp}
+
+For a perturbation $\dot{\boldsymbol\theta}$, the Jacobian-vector product (JVP) is
+
+$$
+\dot{\mathbf y}=\left.\frac{d}{d\epsilon}\mathbf y(\boldsymbol\theta+\epsilon\dot{\boldsymbol\theta})\right|_{\epsilon=0}.
+$$ {#eq-jvp}
+
+Dots in this section denote a parameter direction, not cosmic time. The Rust extension{{< src tangent::LptJvp >}} propagates arbitrary initial Fourier-field directions through the nLPT spatial recurrence at fixed cosmology. Bilinearity gives $\dot\mu_2=\mu_2(\dot A,B)+\mu_2(A,\dot B)$; trilinearity gives the analogous three terms for $\dot\mu_3$. Fourier differentiation and the Poisson solve are linear operations. Thus the same recurrence can carry primal fields and tangents together.
+
+The lab illustrates a particularly transparent parameter: $\delta_0\mapsto A\delta_0$, with $A=1$ at the displayed realization. Each perturbative order is homogeneous of degree $n$, so at a **fixed output epoch**,
+
+$$
+\left.\partial_A\mathbf x\right|_{A=1}=\sum_{n=1}^{N}nD^n\boldsymbol\Psi^{(n)}.
+$$ {#eq-amplitude-jvp}
+
+Holding the epoch fixed matters. If a changed amplitude also changed the crossing-time fraction, the experiment would mix a parameter derivative with a moving output time. The crossing guard is a validity check; it is not differentiated.
+
+## Differentiate continuous sheet modes {#sec-mode-gradient}
+
+For fixed simplex masses, the density/volume factors cancel in @eq-simplex-fourier. Since $\dot s_i=-i\mathbf k\cdot\dot{\mathbf x}_i$, the confluent divided-difference identity gives
+
+$$
+\dot I_T(\mathbf k)=m_Td!\sum_{i=0}^{d}\dot s_i\,
+\exp[s_0,\ldots,s_d,s_i].
+$$ {#eq-mode-jvp}
+
+This provides an analytic directional derivative{{< src tangent::simplex_mass_transform_jvp >}} of the P0 **continuous** sheet mode, checked against independent finite differences{{< test simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference "simplex mode JVP" >}}. The power derivative follows as
+
+$$
+\dot P(\mathbf k)=2L^d\operatorname{Re}[\delta_{\mathbf k}^{*}\dot\delta_{\mathbf k}].
+$$ {#eq-power-jvp}
+
+The lab compares that tangent with a centered finite difference in $A$ at fixed time. Its derivative panel uses deterministic first-axis modes and labels the observable explicitly. It does not imply a derivative of the exact clipped cell-average density field.
+
+The PM extension{{< src nbody::force_jvp >}} also propagates tangents through CIC deposition, the linear spectral force solve, CIC force interpolation, and kick–drift–kick updates. CIC weights are piecewise differentiable; at a particle/cell boundary an individual weight's branch changes. Tests use directions away from those boundaries and compare analytic tangents with independent finite differences. The finite PM solver's derivative includes its numerical approximation{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}.
+
+## Which operations still need care?
+
+Exact cell clipping changes intersection topology when a vertex or face crosses a cell boundary. A shape derivative can be constructed piecewise, but the inherited clipping code is not an automatic-differentiation implementation. This report's end-to-end differentiable observation path is the continuous P0 Fourier transform, with nLPT or PM trajectory tangents. General cosmological parameter gradients, reverse-mode adjoints, and exact clipped-density derivatives are not supplied by this implementation.
+
+Hard histogram counts are not useful smooth objectives. A smooth PDF summary can replace a bin indicator with a kernel $K_h$, $p_h(y)=\sum_iw_iK_h(y-y_i)/\sum_iw_i$, and propagate derivatives through both $y_i$ and any parameter-dependent weights. Choosing the bandwidth is part of defining the inference statistic, not a license to hide discrepancies. The lab's hard histograms are diagnostic displays; its differentiability check uses Fourier modes.
+
+DiscoDJ [@discodj2026] supplies the implementation lineage for differentiable LPT and sampled sheet deposition. Its native sampled-deposit AD path and the study's exact-overlap path are different code paths; the evidence audit records their scope. We validate the new Rust tangents directly rather than infer their correctness from a Julia API name.
+
+::: {.callout-tip title="Try it: a parameter response"}
+Change the epoch and perturbative order, then inspect $\partial P/\partial A$ against the centered finite difference. Both are evaluated at the same fixed epoch. Near a mode with negligible response, inspect absolute error as well as relative error.
+
+{{< lab "view=gradient&dim=2&ic=waves&f=0.5" "Inspect the amplitude derivative" >}}
+:::

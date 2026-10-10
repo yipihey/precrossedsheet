@@ -1,0 +1,65 @@
+---
+title: "Which density PDF?"
+---
+
+## Two measures on the same density field {#sec-pdfs}
+
+Write $r=\rho/\bar\rho=1+\delta>0$. A randomly chosen point in space and a randomly chosen element of mass do not see the same density distribution. For an unsmoothed field in a periodic box,
+
+$$
+p_V(r)=\frac{1}{L^d}\int d^dx\,\delta_{\rm D}[r-r(\mathbf x)],\qquad
+p_M(r)=\frac{1}{L^d}\int d^dx\,r(\mathbf x)\delta_{\rm D}[r-r(\mathbf x)].
+$$ {#eq-pdf-measures}
+
+Since $\langle r\rangle_V=1$, both measures normalize to unity and
+
+$$
+p_M(r)=r\,p_V(r),\qquad \int r\,p_V(r)\,dr=1.
+$$ {#eq-pdf-reweight}
+
+In the pre-crossing regime $d^dx=J\,d^dq$. Uniform Lagrangian sampling therefore gives a **mass-weighted** distribution of $r=1/J$. Weight those samples by $J$ to recover a volume distribution. A histogram of vertex densities with equal weights is not a volume PDF. For the discrete P0 sheet, each simplex has fixed mass $m_T$ and current volume $V_T$: weight its density by $m_T$ for a mass PDF or by $V_T$ for a volume PDF.
+
+Dense regions occupy little space but can contain appreciable mass. This explains why the volume PDF emphasizes voids and the mass PDF gives much more prominence to the dense tail. Perturbative predictions for moments provide complementary checks, but their range of validity must be assessed against the smoothed field [@bernardeau2002].
+
+## Logarithmic axes change the PDF ordinate {#sec-logpdf}
+
+Set $y=\log_{10}r$. Probability is invariant, $p_y(y)\,dy=p_r(r)\,dr$, hence
+
+$$
+p_y(y)=(\ln 10)\,10^y p_r(10^y).
+$$ {#eq-logpdf-jacobian}
+
+A density histogram in equal $\log_{10}r$ bins estimates $dP/d\log_{10}r$. It is not $dP/dr$ drawn on a logarithmic horizontal axis. The laboratory uses the former{{< src observables::density_pdf >}}; its CSV export preserves this convention.
+
+For bin width $\Delta y$, a volume ordinate is $N_b/(N_{\rm cell}\Delta y)$. A mass ordinate is $\sum_{i\in b}\rho_i/(\sum_i\rho_i\Delta y)$. Their integrals over the plotted range give the captured probability. We report that fraction and do not renormalize omitted tails to make a truncated histogram appear complete. Empty bins are meaningful; a ratio to an empty reference bin is undefined.
+
+## Smoothing the observable {#sec-pdf-smoothing}
+
+Define a normalized filter $W_R$ and $r_R=W_R*r$. The live experiment uses a Gaussian filter, $\widehat W_R=\exp(-k^2R^2/2)$, applied to the Eulerian cell-average field{{< src observables::smooth_density >}}. The archival study instead uses its stated top-hat filters. An initial-condition filter changes the simulated dynamics; an observation filter changes the measured statistic. Their scales must be recorded separately.
+
+There are two legitimate mass-weighted questions after smoothing:
+
+$$
+p_{M,\mathrm{env}}(s)=\frac{1}{L^d}\int r(\mathbf x)\,
+\delta_{\rm D}[s-r_R(\mathbf x)]\,d^dx,
+$$ {#eq-mass-environment}
+
+and $p_{M,R}(s)=s\,p_{V,R}(s)$, which uses the smoothed density itself as the weight. The first asks which smoothed **environment actual matter occupies**; the second samples the smoothed mass field. They coincide at $R=0$ but generally differ at finite $R$. The live lab and archived CIC study use the first, with unsmoothed cell mass weights. Consequently, multiplying a displayed smoothed volume PDF by its horizontal coordinate does not reproduce the displayed mass PDF.
+
+## Quantiles, moments, and rare tails
+
+A density quantile $Q(p)$ solves $\int_0^{Q(p)}p_r(r)\,dr=p$. Quantiles are often easier to compare robustly than noisy tail-bin ratios, but extreme quantiles still require resolution and sample-volume checks. The variance $\sigma_R^2=\langle(r_R-1)^2\rangle_V$ and reduced skewness $S_3=\langle\delta_R^3\rangle_V/\sigma_R^4$ probe complementary aspects of the field.
+
+A PDF agreement does not prove that the spatial arrangement of density is correct. The power spectrum measures correlations, and a field comparison checks the realization directly. Use all three when validating a forward model.
+
+::: {.callout-tip title="Try it: voids, mass, and observation filters"}
+Inspect the volume and mass PDFs of exactly the same pre-crossing sheet. Set the observation filter to zero to test $p_M=r p_V$ within finite bins, then restore smoothing and explain why that identity no longer applies to the environment-weighted curve.
+
+{{< lab "view=pdf&dim=2&n=24&f=0.55" "Explore both density measures" >}}
+:::
+
+::: {.callout-tip title="Try it: the established results"}
+Switch the archival replay between perturbative orders, reference resolutions, filters, and weighting measures. Read the run metadata before interpreting a tail difference. The replay identifies its original estimator and crossing metadata. Its archived PDFs were normalized conditionally over the source density range $0.05<r<20$, and the retained probability outside that range is unavailable. They differ in this respect from the unrenormalized live histograms.
+
+{{< lab "view=published" "Inspect the archived PDFs" >}}
+:::

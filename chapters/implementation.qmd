@@ -1,0 +1,70 @@
+---
+title: "Rust implementation and reuse"
+---
+
+## Architecture {#sec-implementation}
+
+The numerical library is independent of the web page. Its FFT, initial-condition, growth, nLPT, sheet, and geometric-clipping modules originate in the MIT-licensed Hopf–Cole cosmology core. The source revision is recorded in [the decisions log](https://github.com/yipihey/precrossedsheet/blob/main/docs/decisions.md), and the original copyright is retained. The historical Rust crate name `hcc_core` is preserved for compatibility with the inherited tests and API links.
+
+The new modules add cosmological PM evolution, initial-field and trajectory tangents, pre-crossing sheet observables, and a checked laboratory request/response facade. The geometry visitor supplies the same periodic connectivity to Jacobian checks and continuous mode integration. This prevents a plotting mesh from silently differing from the sheet whose mass is measured.
+
+| Layer | Responsibility | Reuse boundary |
+|---|---|---|
+| Grid and FFT | Periodic indexing, transforms, spectral operators | Standalone fields on 1D–3D grids |
+| Growth and nLPT | Spatial recurrence and time factors | Fixed input modes, cosmology, perturbative order |
+| Sheet and R3D | Conservative overlap integrals | Supplied unwrapped positions and optional P1 weights |
+| Observables | Interval deposition, PDF measures, fixed-mass modes | Independent of how trajectories were generated |
+| PM and tangents | Discrete cosmological evolution and JVPs | Supplied initial positions, momenta, directions |
+| Laboratory facade | Validate inputs, guard the regime, serialize results | Native Rust and Wasm use the same function |
+| Browser worker | Load Wasm and cancel obsolete computation | No independent implementation of the physics |
+
+## Build and inspect
+
+Install Rust, the `wasm32-unknown-unknown` target, wasm-pack, Python 3, and Quarto. From a checkout:
+
+```sh
+make test
+make wasm
+make api
+make check
+make site
+python3 scripts/serve.py 8790 _site
+```
+
+`make test` runs native numerical and frontend contract tests. `make test-wasm` checks the generated binary in Node after `make wasm`; the browser self-check exercises its worker integration. `make wasm` writes the browser package into `app/pkg/`; `make api` publishes rustdoc into `api/`. The provenance checker resolves each equation's function link, each test badge, and each lab hash key. Quarto copies the standalone app, packaged data, and API documentation into the rendered book.
+
+Open [the API reference](../api/hcc_core/index.html) for types, argument conventions, and implementation details. These pages are generated from the actual source used by the lab. A new project can depend on `core/` with a Cargo path dependency and use the same routines without Quarto or a browser.
+
+```toml
+[dependencies]
+hcc-core = { path = "../precrossedsheet/core" }
+```
+
+```rust
+use hcc_core::{Cosmo, ics::Preset};
+let mut sim = Cosmo::new(2, 24, 1.0);
+sim.keep_tensors = Some(true);
+sim.set_ic_preset(Preset::PlaneWaves {
+    modes: vec![([1, 0, 0], 0.3, 0.0), ([0, 1, 0], 0.2, 0.4)]
+}, 0.0, 0.0);
+sim.build_lpt(4);
+let d = 0.4 * sim.shell_crossing(4);
+assert!(sim.lpt_ref().min_jacobian(d, 4) > 0.0);
+let density = sim.sheet_density_exact(d, 4, 32, false, 1e4);
+```
+
+For production use also check the affine simplex orientations and the resolution dependence. The high-level teaching facade performs these checks automatically, but direct low-level callers remain responsible for input dimensions, field lengths, and validity.
+
+## Numerical limits and derivative scope
+
+The inherited LPT spatial fields and deposited density arrays use `f32`; Fourier arithmetic, clipping moments, PM state, and analytic tangent arithmetic use `f64`. A finite-difference check must choose its step above representation noise and below nonlinear truncation error. The browser's small grids and conservative input bandwidth are deliberate teaching settings, not throughput benchmarks.
+
+The differentiable route carries an initial-condition JVP through nLPT, or supplied phase-space directions through PM, to continuous P0 Fourier modes and power. It supports directional derivatives at fixed cosmology and clocks. It does not provide cosmological growth derivatives, a reverse-mode adjoint, or exact-clipped-density shape derivatives. Those are separate implementation tasks; they should not be implied by the word “differentiable.”
+
+The browser uses Wasm and Canvas2D/SVG as the portable capability tier. There is no unvalidated GPU physics path. The worker keeps large calculations off the page thread; the 3D controls cap mesh sizes to keep memory and render time manageable. The same Rust library can support larger native calculations outside the browser.
+
+## Data lineage and adaptation
+
+The archival replay consists of extracted summary arrays, not entire simulation snapshots. Its manifest records repository, revision, source paths, checksums, and the extraction recipe. To substitute another dataset, preserve the estimator, filter, normalization, weighting, epoch, and crossing metadata. The original archival PDF histograms are conditional on their finite display range and do not report retained tail probabilities; the live PDF histograms preserve those probabilities separately. A new curve without those conventions cannot support a quantitative comparison.
+
+To add a new observable, first derive its measure and normalization, test an analytic or independent reference, expose it through the Wasm facade, then add a URL state and a labeled plot. To change the gravitational model, keep the sheet's mass bookkeeping independent from the trajectory generator. This separation makes the continuous-sheet estimator useful for other forward models without treating a different trajectory as an LPT result.
