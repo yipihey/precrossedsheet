@@ -1,6 +1,43 @@
 # Verification record — 2026-10-10
 
-## Cosmological laboratory revision
+## Hybrid GPU observer revision (engine 0.3.0, schema 3)
+
+- `make test` passed all 60 Rust tests and the URL/state replay checks. Four
+  new laboratory tests cover prepared-run compatibility and channel validation,
+  displacement quantization, selected-mode recovery and schema-3 manifest replay.
+- `make test-wasm` rebuilt engine 0.3.0 and passed 1D–3D conservation and
+  derivative checks, crossed-output retention, and persistent-worker lifecycle
+  checks. `make check` rebuilt the API documentation and resolved every source,
+  test-badge and laboratory-state link.
+- `quarto render` completed all 13 pages without unresolved reference,
+  citation or rendering warnings.
+- Browser inspection verified the GPU/hybrid gradient result, the six-mode
+  precision table and collapsed full metadata. The implementation appendix has
+  no KaTeX errors; both appendix and laboratory have no horizontal page
+  overflow at 390-pixel width. The viewport was restored afterward.
+- The real Chrome/Metal WebGPU runner passed 34 independent primal/JVP fixture
+  comparisons, nine complete cosmological requests, seven forced-failure CPU
+  recoveries, 1D/automatic CPU routing, a GPU/hybrid worker request and shutdown.
+  The benchmark run passed all 53 complete-request/worker checks, including six
+  alternating end-to-end requests. Missing hardware is a skip, never a pass.
+- All complete-request GPU complex channels met the stated absolute/relative
+  budget. Two requests passed the amplitude derivative gate with all LPT
+  channels on GPU; seven needed selective f64 CPU recovery. All recovered
+  outputs passed the unchanged 1e-5 gate. Full requests, errors, mode provenance,
+  shader hashes and timing samples are in [webgpu-results.json](webgpu-results.json).
+- A separate real-GPU layout check passed the same 34 independent comparisons
+  and recorded complete 32³/64³ inputs and three repeats for each layout.
+  The 64-cell layout is the default. Named-device measurements, scope and
+  timing inclusions are explained in [webgpu-results.md](webgpu-results.md).
+- The public prepared-run native profiler was exercised at 2D 16²/32²/64²
+  with one warm-up and three repeats. It records source fingerprints and leaves
+  the core unchanged; this check is separate from the browser timings.
+
+CPU remains the default and automatic selection stays CPU. Device fixtures are
+checked before explicit GPU use. The backend accelerates continuous modes and
+JVPs only; it establishes no new smaller-scale or post-crossing accuracy result.
+
+## Cosmological laboratory revision (historical, engine 0.2.0)
 
 - `make test`: all 56 Rust tests and the JavaScript URL/state checks passed.
   New coverage includes smooth-spectrum normalization, Hermitian and shared
@@ -33,7 +70,7 @@
   32³/64³ groups identify continuous Fourier modes/JVPs/finite-difference checks
   as the priority for GPU investigation. The assessment specifies exact
   integrals, precision, reductions, explicit tangents and a CPU fallback. No
-  GPU compute backend is claimed.
+  GPU compute backend was claimed by that revision.
 
 The current live engine uses explicit flat matter–Λ cosmology and an
 Eisenstein–Hu smooth no-wiggle initial spectrum. The controls distinguish

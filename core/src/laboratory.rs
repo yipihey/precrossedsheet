@@ -11,6 +11,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use num_complex::Complex64;
+use std::sync::OnceLock;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -247,7 +249,39 @@ fn mean(v: &[f32]) -> f64 {
 /// Live PDFs use Gaussian observation smoothing and raw mass weights. Power
 /// spectra use the unsmoothed cell-average field. Derivative modes are first-axis
 /// continuous P0 Fourier modes, at fixed time under an IC amplitude change.
-pub fn run(r: &LabRequest) -> Result<Value, String> {
+pub struct PreparedLabRun {
+    request: LabRequest,
+    result: Value,
+    modes: Vec<[i32; 4]>,
+    h: f64,
+    lpt_displacement: Vec<f32>,
+    lpt_direction: Vec<f32>,
+    pm_displacement: Vec<f32>,
+    pm_direction: Vec<f32>,
+    // Retain the f64 reference state for CPU fallback and finite differences.
+    x: Vec<f64>,
+    dpos: Vec<f64>,
+    xplus: Vec<f64>,
+    xminus: Vec<f64>,
+    pmx: Vec<f64>,
+    pmdpos: Vec<f64>,
+    fd_channels: OnceLock<Vec<f64>>,
+}
+
+fn packed_vec4(grid: &Grid, values: &[f64], displacement: bool) -> Vec<f32> {
+    let mut out = vec![0.0f32; grid.size * 4];
+    for i in 0..grid.size {
+        for a in 0..grid.dim {
+            let q = if displacement { grid.unravel(i)[a] as f64 * grid.dx() } else { 0.0 };
+            out[4 * i + a] = (values[i * grid.dim + a] - q) as f32;
+        }
+    }
+    out
+}
+
+/// Prepare a request once. Expensive physical preparation and CPU reference channels
+/// are shared by the synchronous compatibility wrapper and the split Wasm API.
+pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
     r.validate()?;
     let c = initial_conditions(r);
     let g = &c.grid;
@@ -347,7 +381,6 @@ pub fn run(r: &LabRequest) -> Result<Value, String> {
     let h = 1e-4;
     let (xplus, _) = evaluate(&c, d, r.order, 1. + h);
     let (xminus, _) = evaluate(&c, d, r.order, 1. - h);
-    let zeros = vec![0.; x.len()];
     let mut ks = Vec::new();
     let mut powers = Vec::new();
     let mut derivatives = Vec::new();
@@ -355,26 +388,19 @@ pub fn run(r: &LabRequest) -> Result<Value, String> {
     let mut errs = Vec::new();
     let mut pmpowers = Vec::new();
     let mut pmderivs = Vec::new();
+    let mut mode_records = Vec::new();
     for m in 1..=(r.n / 4).min(6) {
         let k = [g.kf() * m as f64, 0., 0.];
-        let (mode, dm) = observables::sheet_mode_jvp(g, &x, &dpos, k);
-        let vp = observables::sheet_mode_jvp(g, &xplus, &zeros, k)
-            .0
-            .norm_sqr();
-        let vm = observables::sheet_mode_jvp(g, &xminus, &zeros, k)
-            .0
-            .norm_sqr();
-        let deriv = 2. * (mode.conj() * dm).re;
-        let diff = (vp - vm) / (2. * h);
         ks.push(k[0]);
-        powers.push(mode.norm_sqr());
-        derivatives.push(deriv);
-        fd.push(diff);
-        errs.push((deriv - diff).abs() / deriv.abs().max(1e-9));
-        let (pmode, pd) = observables::sheet_mode_jvp(g, pmx, &pm.tangent.as_ref().unwrap().dx, k);
-        pmpowers.push(pmode.norm_sqr());
-        pmderivs.push(2. * (pmode.conj() * pd).re);
+        powers.push(0.);
+        derivatives.push(0.);
+        fd.push(0.);
+        errs.push(0.);
+        pmpowers.push(0.);
+        pmderivs.push(0.);
+        mode_records.push([m as i32, 0, 0, 0]);
     }
+    let pmdpos = pm.tangent.as_ref().unwrap().dx.clone();
     let q: Vec<f64> = (0..g.size)
         .flat_map(|i| {
             let ijk = g.unravel(i);
@@ -422,13 +448,13 @@ pub fn run(r: &LabRequest) -> Result<Value, String> {
         "Shell crossing detected: results remain visible; the single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply. Deposited density sums positive stream masses."
     };
     let dy = 3.6 / 80.;
-    Ok(
+    let result =
         json!({"dim":r.dim,"n":r.n,"mesh":r.mesh,"forceMesh":r.force_mesh,"box":1.,"boxSize":r.box_size,"a":a,"aStart":a_start,"D":d,"dDa":d_da,"redshift":1./a-1.,"growthAtOne":growth.d_of_a(1.),"shellCrossing":sc,"aShellCrossing":a_sc,
-        "request":r,"engineVersion":"0.2.0","schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
+        "request":r,"engineVersion":"0.3.0","schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
         "cosmology":{"omegaM":r.omega_m,"omegaB":r.omega_b,"h":r.h,"ns":r.ns,"sigma8":r.sigma8},
         "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
-        "q":q,"x":x,"v":v,"pmX":pmx,"pmV":pmv,"rho":rs,"pmRho":pms,
+        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,
         "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers)},
         "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"summary":summary,"pmSummary":pm_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},
@@ -439,8 +465,153 @@ pub fn run(r: &LabRequest) -> Result<Value, String> {
         "initialNormalization":"Gaussian spectrum sigma8 at z=0 before Gaussian filtering and radial cutoff; no realization RMS rescaling. Deterministic waves use fixed delta0 amplitudes independent of sigma8.",
         "initialFilter":"Gaussian exp(-k^2 R_initial^2/2) plus fixed radial integer-mode cutoff",
         "modeGenerator":"PSC Fourier mode hash v2, SplitMix64 and xoshiro256** Box-Muller, exact Hermitian pairing",
-        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices"}}),
-    )
+        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices"}});
+    let grid = &c.grid;
+    Ok(PreparedLabRun {
+        request: r.clone(), result, modes: mode_records, h,
+        lpt_displacement: packed_vec4(grid, &x, true),
+        lpt_direction: packed_vec4(grid, &dpos, false),
+        pm_displacement: packed_vec4(grid, pmx, true),
+        pm_direction: packed_vec4(grid, &pmdpos, false),
+        x, dpos, xplus, xminus, pmx: pmx.clone(), pmdpos,
+        fd_channels: OnceLock::new(),
+    })
+}
+
+impl PreparedLabRun {
+    pub fn dim(&self) -> usize { self.request.dim }
+    pub fn n(&self) -> usize { self.request.n }
+    pub fn modes(&self) -> &[[i32; 4]] { &self.modes }
+    pub fn lpt_displacement(&self) -> &[f32] { &self.lpt_displacement }
+    pub fn lpt_direction(&self) -> &[f32] { &self.lpt_direction }
+    pub fn pm_displacement(&self) -> &[f32] { &self.pm_displacement }
+    pub fn pm_direction(&self) -> &[f32] { &self.pm_direction }
+    pub fn direct_cpu(&self) -> Vec<f64> {
+        self.direct_with_fields(&self.x, &self.dpos, &self.pmx, &self.pmdpos)
+    }
+
+    /// Recompute selected LPT channels from retained f64 positions. Each requested
+    /// index addresses a mode record and returns [F.re,F.im,dF.re,dF.im].
+    pub fn direct_lpt_cpu_modes(&self, indices: &[u32]) -> Result<Vec<f64>, String> {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        let mut out = Vec::with_capacity(indices.len() * 4);
+        for &index in indices {
+            let mode = self.modes.get(index as usize)
+                .ok_or_else(|| format!("Direct mode index {index} is out of range (mode count {})", self.modes.len()))?;
+            let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
+            let (f, df) = observables::sheet_mode_jvp(&grid, &self.x, &self.dpos, k);
+            out.extend([f.re, f.im, df.re, df.im]);
+        }
+        Ok(out)
+    }
+
+    /// CPU arithmetic on the exact f32-packed displacement/direction inputs sent
+    /// to the GPU, separating input quantization from GPU kernel arithmetic.
+    pub fn direct_quantized_cpu(&self) -> Vec<f64> {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        let unpack = |packed: &[f32], displacement: bool| {
+            let mut values = vec![0.0; grid.size * grid.dim];
+            for i in 0..grid.size {
+                let ijk = grid.unravel(i);
+                for a in 0..grid.dim {
+                    values[i * grid.dim + a] = packed[4 * i + a] as f64
+                        + if displacement { ijk[a] as f64 * grid.dx() } else { 0.0 };
+                }
+            }
+            values
+        };
+        let x = unpack(&self.lpt_displacement, true);
+        let dx = unpack(&self.lpt_direction, false);
+        let pmx = unpack(&self.pm_displacement, true);
+        let pmdx = unpack(&self.pm_direction, false);
+        self.direct_with_fields(&x, &dx, &pmx, &pmdx)
+    }
+
+    fn direct_with_fields(&self, x: &[f64], dx: &[f64], pmx: &[f64], pmdx: &[f64]) -> Vec<f64> {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        let mut out = Vec::with_capacity(self.modes.len() * 8);
+        for mode in &self.modes {
+            let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
+            let (f, df) = observables::sheet_mode_jvp(&grid, x, dx, k);
+            let (pmf, pmdf) = observables::sheet_mode_jvp(&grid, pmx, pmdx, k);
+            out.extend([f.re, f.im, df.re, df.im, pmf.re, pmf.im, pmdf.re, pmdf.im]);
+        }
+        out
+    }
+
+    /// Finite-difference power derivatives from the retained f64 positions.
+    /// Values are raw-box power derivatives, cached so a GPU fallback can reuse them.
+    pub fn finite_difference_cpu(&self) -> &[f64] {
+        self.fd_channels.get_or_init(|| {
+            let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+            self.modes.iter().map(|mode| {
+                let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
+                (observables::sheet_mode(&grid, &self.xplus, k).norm_sqr()
+                    - observables::sheet_mode(&grid, &self.xminus, k).norm_sqr()) / (2.0 * self.h)
+            }).collect()
+        })
+    }
+
+    pub fn metadata(&self) -> Value {
+        json!({"dim":self.request.dim,"n":self.request.n,"modeCount":self.modes.len(),
+            "modes":self.modes.iter().map(|m| [m[0],m[1],m[2]]).collect::<Vec<_>>(),"h":self.h,
+            "channelScalarsPerMode":8})
+    }
+
+    pub fn finish(&self, channels: &[f64], execution: &str) -> Result<Value, String> {
+        let expected = self.modes.len() * 8;
+        if channels.len() != expected {
+            return Err(format!("Expected {expected} direct channel scalars, got {}", channels.len()));
+        }
+        if channels.iter().any(|v| !v.is_finite()) {
+            return Err("Direct channel values must all be finite".into());
+        }
+        let execution: Value = serde_json::from_str(execution)
+            .map_err(|e| format!("Invalid execution metadata JSON: {e}"))?;
+        let volume = self.request.box_size.powi(self.request.dim as i32);
+        let mut powers = Vec::with_capacity(self.modes.len());
+        let mut derivatives = Vec::with_capacity(self.modes.len());
+        let mut pmpowers = Vec::with_capacity(self.modes.len());
+        let mut pmderivs = Vec::with_capacity(self.modes.len());
+        let mut errors = Vec::with_capacity(self.modes.len());
+        let fd_cpu = self.finite_difference_cpu();
+        let mut fd_values = Vec::with_capacity(self.modes.len());
+        for (i, c) in channels.chunks_exact(8).enumerate() {
+            let f = Complex64::new(c[0], c[1]);
+            let df = Complex64::new(c[2], c[3]);
+            let pmf = Complex64::new(c[4], c[5]);
+            let pmdf = Complex64::new(c[6], c[7]);
+            let p = f.norm_sqr();
+            let dp = 2.0 * (f.conj() * df).re;
+            let pmp = pmf.norm_sqr();
+            let pmdp = 2.0 * (pmf.conj() * pmdf).re;
+            let fdv = fd_cpu[i];
+            fd_values.push(fdv * volume);
+            powers.push(p * volume);
+            derivatives.push(dp * volume);
+            pmpowers.push(pmp * volume);
+            pmderivs.push(pmdp * volume);
+            errors.push((dp - fdv).abs() / dp.abs().max(1e-9));
+        }
+        let mut out = self.result.clone();
+        out["x"] = json!(self.x);
+        out["pmX"] = json!(self.pmx);
+        out["spectra"]["direct"] = json!(powers);
+        out["spectra"]["directPM"] = json!(pmpowers);
+        out["gradient"]["power"] = json!(powers);
+        out["gradient"]["tangent"] = json!(derivatives);
+        out["gradient"]["finiteDifference"] = json!(fd_values);
+        out["gradient"]["pmTangent"] = json!(pmderivs);
+        out["gradient"]["relativeError"] = json!(errors);
+        out["execution"] = execution;
+        Ok(out)
+    }
+}
+
+pub fn run(r: &LabRequest) -> Result<Value, String> {
+    let prepared = prepare(r)?;
+    let channels = prepared.direct_cpu();
+    prepared.finish(&channels, &json!({"backend":"cpu"}).to_string())
 }
 /// Stable JSON facade used by WebAssembly and native integration tests.
 pub fn run_json(request: &str) -> String {
@@ -448,7 +619,7 @@ pub fn run_json(request: &str) -> String {
         .map_err(|e| format!("Invalid laboratory JSON: {e}"))
         .and_then(|v| {
             if let Some(version) = v.get("schemaVersion").and_then(Value::as_u64) {
-                if version != 2 {return Err(format!("Unsupported experiment schema {version}; use the recorded repository revision"));}
+                if version != 2 && version != 3 {return Err(format!("Unsupported experiment schema {version}; use the recorded repository revision"));}
             }
             if v.get("state").and_then(|s|s.get("view")).and_then(Value::as_str)==Some("published") {
                 return Err("An archival replay manifest preserves packaged evidence; it cannot be recomputed by the live engine".into());

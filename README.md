@@ -31,6 +31,8 @@ Plots export SVG/CSV and field panels export PNG. Versioned URLs record every co
 
 See [the verification record](docs/verification.md), [evidence audit](docs/evidence-audit.md),
 and [decisions](docs/decisions.md). The Rust API is generated with `make api`.
+The [WebGPU backend plan](docs/webgpu-backend-plan.md) documents the implemented first
+hybrid observation backend and the reusable Hopf–Cole kernels.
 Use a Cargo path dependency on `core/` to reuse the numerical library without
 the web interface. Retained crate name: `hcc_core`.
 
@@ -39,3 +41,5 @@ are distinct. Arbitrary IC JVPs and PM tangents are at fixed cosmology; no
 reverse adjoint or cosmological growth gradient is claimed.
 
 MIT license; upstream copyright retained. `CITATION.cff` describes this project.
+
+The optional WebGPU observer evaluates continuous 2D/3D sheet modes and JVPs, with selective f64 CPU recovery for weak LPT modes. CPU remains the default; trajectories, exact meshing, PDFs and finite differences use Rust/Wasm. Run `node scripts/test_gpu.mjs --require-gpu --full` after `make wasm`; see [the measurement record](docs/webgpu-results.md).

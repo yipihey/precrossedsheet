@@ -26,7 +26,8 @@ test:
 	cargo test --release --manifest-path core/Cargo.toml
 	node scripts/test_lab.mjs
 
-test-wasm:
+test-wasm: wasm
 	node scripts/test_wasm.mjs
+	node scripts/test_worker.mjs
 
 all: test wasm test-wasm check site

@@ -115,7 +115,7 @@ JSON input parsing enables serde_json float_roundtrip so a serialized f64 return
 the same binary input, complementing full-precision URL serialization. Native
 manifest replay prefers the stored executed result request over UI state.
 
-## WebGPU investigation
+## WebGPU investigation (historical, before engine 0.3.0)
 
 A native stage profile isolates continuous simplex modes, analytic tangents and
 finite-difference verification as the dominant group for the measured 3D wave
@@ -126,4 +126,42 @@ measurement. The exact continuous integral, stable coincident-phase limits and
 JVP are required for any future implementation. Portable WGSL precision differs
 from the CPU f64 path, so numerical equivalence needs explicit tolerances and
 analytic fixtures. Exact clipping and the Rust CPU oracle remain available.
-The current release contains no GPU scientific compute backend.
+That pre-backend release contained no GPU scientific compute backend.
+
+## 2026-10-10 — hybrid GPU observer (engine 0.3.0, schema 3)
+
+The implemented M0–M4 backend accelerates continuous fixed-mass P0 modes and
+their signed analytic JVPs in 2D/3D. Rust/Wasm retains initial conditions,
+growth, nLPT/PM trajectories, orientation, exact deposits, PDFs and gridded
+spectra. `PreparedLabRun` shares physical preparation, supplies packed f32
+displacements formed from f64 positions, retains the f64 oracle and finalizes
+physical units consistently. The original synchronous facade remains available.
+
+WGSL adapts the MIT Hopf–Cole divided-difference and reduction foundations
+with retained notice and pinned source hashes. It preserves periodic lifts,
+coincident-phase limits and signed tangent terms, reports numerical failures,
+and never skips contributions through an amplitude threshold. A 64-cell tile
+and fixed reduction tree replace the upstream flattened schedule for the
+six-mode workload. Both schedules remain independently checked.
+
+The amplitude finite difference stays CPU f64 at the existing step and is
+cached once per prepared run. Weak LPT modes that fail its 1e-5 gate recover
+their value and tangent together on CPU; passing LPT modes and PM channels can
+remain on GPU. Exported per-mode provenance identifies this hybrid result.
+Capability, resource, validation and execution failures recover all direct
+channels from the retained CPU context, without changing physical inputs.
+
+CPU is the default and `auto` stays CPU pending a supported device/workload
+policy. Explicit GPU requests validate the device against independent analytic
+fixtures. The persistent worker owns its device, serializes generations,
+cancels between bounded submissions, frees per-run buffers and acknowledges
+shutdown. Synchronous CPU stages use worker recreation for cancellation.
+Cached-result selection retires obsolete work so a stale result cannot replace it.
+
+Schema 3 records backend policy separately from physical requests. Version-2
+links migrate with unchanged numerical controls and CPU execution. Manifests
+retain stage and mode precision, device limits, shader hashes, validation,
+timings and fallback reasons. Cross-device GPU reproduction uses explicit
+tolerances, rather than a bitwise guarantee. Scope and measurements are in
+[webgpu-results.md](webgpu-results.md); M5 resident physics remains subsequent
+work, with smaller scales still deferred.

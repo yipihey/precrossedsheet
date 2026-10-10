@@ -1,11 +1,11 @@
-import { coreRequest, decodeHash, encodeHash, GRIDS, gridLimit, HASH_SCHEMA, normalizeState, STATE_VERSION, STEPS } from './state.js';
+import { coreRequest, decodeHash, encodeHash, executionPolicy, GRIDS, gridLimit, HASH_SCHEMA, normalizeState, STATE_VERSION, STEPS } from './state.js';
 import { PRESETS, presetState } from './presets.js';
 import { LinePlot } from './viz/plot.js';
 import { copyText, downloadBlob, flash } from './viz/download.js';
 
-function fragmentVersion(hash){const entry=String(hash||'').replace(/^#/,'').split('&').find(p=>p.startsWith('v='));return entry?Number(entry.slice(2)):null;}
-let unsupportedSchema=fragmentVersion(location.hash)!=null&&fragmentVersion(location.hash)!==STATE_VERSION;
-let S = decodeHash(location.hash), worker = null, timer = 0, requestId = 0, current = null, computedFor = '', activeKey = '', publishedPromise = null, publishedData = null, lastResult = null, lastResultKey = '', buildInfoPromise = null, runMilliseconds = null;
+function fragmentVersion(hash){const entry=String(hash||'').replace(/^#/,'').split('&').find(p=>p.startsWith('v='));return entry?entry.slice(2):null;}
+let unsupportedSchema=fragmentVersion(location.hash)!=null&&!(['2',String(STATE_VERSION)].includes(fragmentVersion(location.hash)));
+let S = decodeHash(location.hash), worker = null, timer = 0, requestId = 0, current = null, computedFor = '', activeKey = '', activeRequestId = null, activePhase = '', pendingRun = null, cancelTimer = 0, publishedPromise = null, publishedData = null, lastResult = null, lastResultKey = '', buildInfoPromise = null, runMilliseconds = null, execution = null;
 const root = document.querySelector('#lab'), status = document.querySelector('#run-state');
 const VIEWS = [
   ['sheet', 'Phase-space sheet'], ['density', 'Density'], ['spectra', 'Power spectra'],
@@ -37,7 +37,7 @@ const exportJsonButton=$('button','qd-btn',presets,'Export experiment JSON');exp
 const importLabel=$('label','import-json-button qd-btn',presets,'Import settings JSON');const importInput=$('input','',importLabel);importInput.type='file';importInput.accept='application/json,.json';importInput.setAttribute('aria-label','Import experiment settings from a JSON manifest');
 exportJsonButton.addEventListener('click',()=>exportExperiment());
 importInput.addEventListener('change',async()=>{const file=importInput.files?.[0];if(!file)return;try{const manifest=JSON.parse(await file.text());if(manifest.manifestFormat!=='precrossedsheet-experiment'||manifest.schemaVersion!==STATE_VERSION||!manifest.state)throw new Error(`Expected a precrossedsheet experiment manifest at schema version ${STATE_VERSION}.`);const imported=normalizeState(manifest.state);if(imported.schemaVersion!==STATE_VERSION)throw new Error('The experiment state version is missing or inconsistent.');for(const [key] of HASH_SCHEMA){if(!(key in manifest.state))throw new Error(`The manifest is missing reproducibility field “${key}”.`);const raw=manifest.state[key],value=imported[key];if(typeof raw==='number'&&!Object.is(raw,value)||typeof raw==='string'&&raw!==value||typeof raw==='boolean'&&raw!==value)throw new Error(`The saved value for “${key}” is outside the current experiment schema.`);}clearUnsupportedSchema();S=imported;controls.sync();presetSelect.value='';presetNote.textContent=`Imported experiment settings from ${file.name}.`;selectView(S.view,false);updateURL();run();}catch(error){setNotice(`Could not import settings: ${error?.message||error}`,'error');}finally{importInput.value='';}});
-async function exportExperiment(){if(!current||(!current?.published&&computedFor!==physicsKey())){setNotice('Wait until the result matches the current experiment settings before exporting.');return;}try{const build=await getBuildInfo();const isPublished=S.view==='published',result=isPublished?current?.published:current;const manifest={manifestFormat:'precrossedsheet-experiment',schemaVersion:STATE_VERSION,kind:isPublished?'archiveReplay':'liveNumericalRun',createdAt:new Date().toISOString(),state:{...S},request:isPublished?null:(current?.request||coreRequest(S)),build,run:{durationMilliseconds:runMilliseconds,guard:result?.guard||null,epoch:result?.request?.epoch??S.epoch,scaleFactor:result?.a??S.scaleFactor,growthFactor:result?.D??null,shellCrossingReference:result?.shellCrossing??null},source:isPublished?result?.provenance||null:null,result};const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});downloadBlob(blob,`precrossedsheet-${Date.now()}.json`);flash(exportJsonButton,'JSON saved');}catch(error){setNotice(`Could not export the experiment: ${error?.message||error}`,'error');}}
+async function exportExperiment(){if(!current||(!current?.published&&computedFor!==physicsKey())){setNotice('Wait until the result matches the current experiment settings before exporting.');return;}try{const build=await getBuildInfo();const isPublished=S.view==='published',result=isPublished?current?.published:current;const manifest={manifestFormat:'precrossedsheet-experiment',schemaVersion:STATE_VERSION,kind:isPublished?'archiveReplay':'liveNumericalRun',createdAt:new Date().toISOString(),state:{...S},request:isPublished?null:(current?.request||coreRequest(S)),execution:isPublished?null:(result?.execution||execution||null),build,run:{durationMilliseconds:runMilliseconds,guard:result?.guard||null,epoch:result?.request?.epoch??S.epoch,scaleFactor:result?.a??S.scaleFactor,growthFactor:result?.D??null,shellCrossingReference:result?.shellCrossing??null},source:isPublished?result?.provenance||null:null,result};const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});downloadBlob(blob,`precrossedsheet-${Date.now()}.json`);flash(exportJsonButton,'JSON saved');}catch(error){setNotice(`Could not export the experiment: ${error?.message||error}`,'error');}}
 function getBuildInfo(){if(!buildInfoPromise)buildInfoPromise=fetch('./data/build-info.json').then(r=>{if(!r.ok)throw new Error(`build metadata HTTP ${r.status}`);return r.json();}).catch(()=>({engineVersion:'unknown',gitRevision:'unavailable',buildTime:null}));return buildInfoPromise;}
 
 const layout = $('div', 'lab-layout', root), sidebar = $('aside', 'lab-sidebar', layout), main = $('section', 'lab-main', layout);
@@ -79,6 +79,7 @@ numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed se
 selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of time steps in the particle-mesh trajectory.');
+selectControl('backend', 'Direct-mode observation backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. Automatic selection remains on CPU until a device and workload have passed the GPU validation fixtures. GPU applies only to 2D/3D direct modes; weak LPT modes may use f64 CPU recovery, and 1D remains on CPU.');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Controls density, PDFs, and spectra; this does not change force resolution.');
 selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Independent force resolution. Change it separately to measure force-grid sensitivity.');
 activeControlGroup=controlSection('Density observation');
@@ -90,6 +91,7 @@ function updateGridOptions(){for(const key of ['n','mesh','forceMesh']){const se
 function updateClockControls(){for(const key of ['fraction','scaleFactor']){const field=controlHandles[key]?.el;const active=key==='fraction'?S.epoch==='fraction':S.epoch==='scaleFactor';if(field){field.disabled=!active;field.closest('.control-field')?.classList.toggle('control-disabled',!active);}}}
 const memoryEstimate=$('p','resource-estimate',sidebar);
 function updateMemoryEstimate(){const bytes=estimatePeakBytes(),fits=bytes<=1024**3;memoryEstimate.textContent=`Conservative core allocation estimate: ${(bytes/1048576).toFixed(1)} MiB (budget 1024 MiB; estimate, not a measured peak). ${fits?'The current grid combination is within the estimate.':'This selected combination will be rejected explicitly; grids will not be reduced.'}`;memoryEstimate.classList.toggle('resource-over-limit',!fits);}
+const selftestLink=$('a','chapter-link',sidebar,'Run the GPU self-test ↗');selftestLink.href='./gpu-test.html';
 
 const chapterLink = $('a', 'chapter-link', sidebar, 'Read the chapter behind this view ↗'); chapterLink.href = chapterRefs[S.view];
 const notice = $('div', 'lab-notice', main); notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite');
@@ -99,6 +101,7 @@ for (const [key, label] of VIEWS) { const b = $('button', 'view-tab', tabs, labe
 const viewHelp = $('p', 'view-help', main);
 const viewHost = $('div', 'view-host', main);
 const diagnostics = $('div', 'diagnostics', main);
+const backendMeta = $('aside', 'backend-provenance', main);
 const theory = $('aside', 'lab-theory', root);
 
 function selectView(view, doRun = true) { const changedView = S.view !== view; S.view = view; for (const [k, b] of Object.entries(viewButtons)) b.setAttribute('aria-pressed', String(k === view)); chapterLink.href = chapterRefs[view] || chapterRefs.sheet; updateURL(); if (changedView && doRun) run(); else render(); }
@@ -108,19 +111,38 @@ function physicsKey() { const { view, rotate, tilt, weight, paired, pubmodel, pu
 function run() {
   if (timer) clearTimeout(timer); timer = 0;
   if(unsupportedSchema){S=decodeHash('');controls.sync();status.textContent='Unsupported saved experiment';setNotice('Unknown URL schema. No numerical run was started. Select a new preset or change a control before running.','error');exportJsonButton.disabled=true;clearHost();return;}
-  if (S.view === 'published') { if (worker) worker.terminate(); worker = null; activeKey=''; current = null; exportJsonButton.disabled=true; loadPublished(); return; }
+  if (S.view === 'published') { retireWorker(); activeKey=''; current = null; execution=null; exportJsonButton.disabled=true; loadPublished(); return; }
   const key = physicsKey();
-  if (worker && activeKey !== key) { worker.terminate(); worker = null; activeKey=''; }
-  if (lastResultKey === key && lastResult) { current=lastResult; computedFor=key;exportJsonButton.disabled=false; status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready'; render(); return; }
-  if (computedFor === key && current && !current.published) {exportJsonButton.disabled=false;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready';render(); return; }
-  if (worker && activeKey === key) { status.textContent = 'Computing…'; render(); return; }
-  if (worker) worker.terminate();
-  const id = ++requestId; worker = new Worker('./js/worker.js', { type: 'module' }); activeKey = key;runMilliseconds=null;exportJsonButton.disabled=true;
-  status.textContent = 'Computing…'; notice.textContent = 'Running the ΛCDM Lagrangian calculation in a background worker.';
-  worker.onmessage = ({ data }) => { if (data.requestId !== id) return; worker.terminate(); worker = null; activeKey='';runMilliseconds=data.durationMilliseconds??null; if (data.error) { current = { error: data.error }; computedFor=''; status.textContent = 'Run failed'; } else { current = data.result; lastResult=current;lastResultKey=key;computedFor=key; status.textContent = current?.guard?.ok === false ? 'Post-crossing · interpret cautiously' : current?.error ? 'Run failed' : 'Ready';exportJsonButton.disabled=false; } render(); };
-  worker.onerror = (event) => { worker?.terminate(); worker = null; activeKey=''; computedFor=''; current = { error: event.message || 'Could not start the numerical worker.' }; status.textContent = 'Run failed'; render(); };
-  worker.postMessage({ type: 'run', requestId: id, state: coreRequest(S) });
+  if (lastResultKey === key && lastResult) { cancelObsoleteForCachedResult(); current=lastResult;execution=current.execution||null;computedFor=key;exportJsonButton.disabled=false;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready';render();return; }
+  if (computedFor === key && current && !current.published) {cancelObsoleteForCachedResult();exportJsonButton.disabled=false;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready';render();return;}
+  const job={key,state:{...S},request:coreRequest(S),policy:executionPolicy(S)};
+  if(activeRequestId!=null){pendingRun=job;cancelActiveRun();return;}
+  dispatchRun(job);
 }
+
+function ensureWorker(){
+  if(worker)return worker;
+  worker=new Worker('./js/worker.js',{type:'module'});
+  worker.onmessage=({data})=>{
+    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference-sync':'Checking the CPU finite difference…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
+    if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;status.textContent=`${data.stage||'Evaluating GPU modes'}${data.completed!=null?` (${data.completed}/${data.total})`:''}…`;return;}
+    if(data.type==='cancelled'&&data.requestId===activeRequestId){clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}
+    if(data.type==='shutdown-ack'){hardTerminateWorker();return;}
+    if(data.type!=='result'||data.requestId!==activeRequestId)return;
+    clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';runMilliseconds=data.durationMilliseconds??null;
+    if(data.error){current={error:data.error,execution:data.execution||null};execution=data.execution||null;computedFor='';status.textContent='Run failed';}
+    else{current=data.result;execution=current?.execution||data.execution||null;lastResult=current;lastResultKey=data.key;computedFor=data.key;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':current?.error?'Run failed':'Ready';exportJsonButton.disabled=false;}
+    render();
+    if(pendingRun){const next=pendingRun;pendingRun=null;if(next.key!==data.key)dispatchRun(next);}
+  };
+  worker.onerror=(event)=>{clearTimeout(cancelTimer);cancelTimer=0;worker?.terminate();worker=null;activeRequestId=null;activePhase='';activeKey='';computedFor='';current={error:event.message||'Could not start the numerical worker.'};status.textContent='Run failed';render();};
+  return worker;
+}
+function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;execution=null;exportJsonButton.disabled=true;status.textContent='Preparing…';notice.textContent='Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,state:job.request,policy:job.policy});}
+function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;if(['preparing','preparing-sync','finalizing','finalizing-sync','direct-sync','direct-recovery-sync','finite-difference-sync','queued'].includes(activePhase)){hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}worker.postMessage({type:'cancel',requestId:id});status.textContent='Stopping obsolete GPU work…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},5000);}
+function cancelObsoleteForCachedResult(){if(activeRequestId!=null||pendingRun)retireWorker();}
+function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
+function hardTerminateWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;if(!old)return;old.onmessage=null;old.onerror=null;old.terminate();}
 
 function explain() {
   const messages = {
@@ -140,7 +162,7 @@ function explain() {
 function setNotice(text, kind = '') { notice.textContent = text; notice.className = `lab-notice ${kind}`; }
 function num(v, digits = 3) { return v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toPrecision(digits); }
 function arr(a) { return ArrayBuffer.isView(a) ? a : Array.isArray(a) ? a : []; }
-function clearHost() { viewHost.replaceChildren(); diagnostics.replaceChildren(); }
+function clearHost() { viewHost.replaceChildren(); diagnostics.replaceChildren(); backendMeta.replaceChildren(); }
 function panel(title, description = '') { const p = $('section', 'result-panel', viewHost); $('h3', '', p, title); if (current?.guard?.ok===false) $('p','post-crossing-note',p,'Post-crossing diagnostic. The map has lost positive orientation; the plotted density and perturbative fields are not a single-stream prediction.');if (description) $('p', 'panel-note', p, description); return p; }
 function addPngButton(canvas, name) { const b = $('button', 'export-button', canvas.parentElement, 'Save PNG'); b.type = 'button'; b.setAttribute('aria-label', `Save ${name} image as PNG`); b.addEventListener('click', () => canvas.toBlob((blob) => { if (blob) { downloadBlob(blob, `${name}.png`); flash(b, 'Saved'); } })); }
 function canvasFor(parent, label, wide = false) { const c = $('canvas', `lab-canvas${wide ? ' canvas-wide' : ''}`, parent); c.width = 960; c.height = wide ? 560 : 680; c.setAttribute('role', 'img'); c.setAttribute('aria-label', label); return c; }
@@ -237,6 +259,7 @@ function renderPdfSummaries(parent,pdf){const table=$('table','summary-table',pa
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the sheet-LPT tangent; the PM tangent is shown as its own response.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM tangent'}],{xlabel:'k [h/Mpc]',ylabel:`P₀ and ∂P₀/∂A [(Mpc/h)^${S.dim}]`,xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}
 function showDiagnostics(d) {
   if(!d)return;
+  showExecution(d.execution||execution);
   const g=d.guard||{},m=d.diagnostics||{},p=$('div','metric-strip',diagnostics);
   const percent=v=>Number.isFinite(v)?`${num(100*v,3)}%`:'—';
   for(const [label,val] of [
@@ -260,6 +283,64 @@ function showDiagnostics(d) {
     $('span','metric-label',item,label);$('strong','metric-value',item,val);
   }
   if(d.diagnostics){const crossing=g.firstPmCrossing,first=crossing?` First PM orientation loss occurred during step ${crossing.step} (a=${num(crossing.aStart,5)}–${num(crossing.aEnd,5)}; continuous drift minimum J=${num(crossing.minimumJacobian,5)}).`:'';$('p','panel-note',diagnostics,`Epoch a=${num(d.a,6)} (z=${num(d.redshift,5)}); D(a)=${num(d.D,6)} and D(1)=${num(d.growthAtOne,6)}. The crossing reference is ${d.crossingReference||'a diagnostic estimate'}, with Dsc=${num(d.shellCrossing,6)}${d.aShellCrossing==null?' (not reached within the growth-table range)':`; a_sc=${num(d.aShellCrossing,6)}`}. LPT final inverted-mass fractions count orientation-reversed elements; PM minima use continuous determinant extrema over each drift.${first} Mass ratios compare deposited with initial mass. Relative position RMS is normalized by the LPT displacement RMS. The power residual is max |P_LPT/P_PM − 1| over the first four populated FFT bins; weak-power bins can give large ratios. This finite-resolution PM run requires a convergence check.`);}
+}
+function showExecution(meta){
+  if(!meta)return;
+  backendMeta.replaceChildren();
+  $('h3','control-subheading',backendMeta,'Run backend and precision');
+  const grid=$('div','execution-meta',backendMeta);
+  const compact=(label,value)=>{if(value==null||value==='')return;const item=$('div','execution-meta-item',grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  compact('Requested backend',meta.requestedBackend);
+  compact('Executed backend',meta.executedBackend);
+  compact('Precision',meta.precision);
+  if(meta.fallbackReason){const item=$('p','execution-fallback',backendMeta,meta.fallbackReason);item.setAttribute('role','note');}
+
+  const device=meta.device||meta.gpuAttempt?.device;
+  if(device){
+    const info=device.adapterInfo||{},identity=[info.vendor,info.architecture,info.device||info.description].filter(Boolean).join(' · ');
+    compact('GPU adapter',identity||'Adapter details unavailable');
+    const limits=device.limits||{},limitParts=[];
+    for(const key of ['maxStorageBufferBindingSize','maxBufferSize'])if(Number.isFinite(Number(limits[key])))limitParts.push(`${key==='maxBufferSize'?'buffer':'storage'} ${(Number(limits[key])/1048576).toFixed(0)} MiB`);
+    for(const key of ['maxComputeWorkgroupSizeX','maxComputeWorkgroupsPerDimension'])if(Number.isFinite(Number(limits[key])))limitParts.push(`${key} ${limits[key]}`);
+    if(limitParts.length)compact('Relevant GPU limits',limitParts.join(' · '));
+  }
+
+  const validation=meta.validation||meta.device?.validation||meta.gpuAttempt?.validation||meta.gpuAttempt?.device?.validation;
+  if(validation){
+    const errors=Array.isArray(validation.errors)?validation.errors:[],maxOf=(key)=>errors.reduce((max,row)=>typeof row?.[key]==='number'&&Number.isFinite(row[key])?Math.max(max,row[key]):max,0);
+    const status=validation.status||'unknown',fixtureCount=errors.length;
+    const summary=[status,fixtureCount?`${fixtureCount} fixtures`:'no fixture records',`worst |primal| ${num(maxOf('maxPrimalAbs'),3)}`,`worst |JVP| ${num(maxOf('maxJvpAbs'),3)}`].join(' · ');
+    compact('GPU validation',summary);
+    const budget=validation.budget||{};
+    const budgetText=[budget.status,(budget.primal||budget.jvp)&&'independent f64 quadrature: abs ≤ 1e-6 + rel ≤ 1e-4 (primal/JVP)',budget.amplitudeDerivative&&'full-request amplitude gate < 1e-5 remains separate'].filter(Boolean).join(' · ');
+    if(budgetText)compact('Validation budget',budgetText);
+  }
+
+  const timings=meta.timings||meta.gpuAttempt?.timings||{},stages=timings.stages||{},stageParts=Object.entries(stages).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${k.replace(/Milliseconds$/,'')} ${num(v,3)} ms`);
+  if(typeof timings.kernelMs==='number'&&Number.isFinite(timings.kernelMs))stageParts.unshift(`GPU kernel ${num(timings.kernelMs,3)} ms`);
+  if(typeof timings.totalMs==='number'&&Number.isFinite(timings.totalMs))stageParts.unshift(`GPU total ${num(timings.totalMs,3)} ms`);
+  if(stageParts.length)compact('Timings',stageParts.join(' · '));
+
+  const backends=meta.stageBackends||{};
+  const direct=backends.directPrimal||{};
+  const directSummary=['LPT','PM'].map((name)=>{const item=direct[name.toLowerCase()];return item?`${name} ${item.provenance||item.backend||'unknown'}`:null;}).filter(Boolean);
+  const precisionSummary=[];
+  if(backends.trajectories)precisionSummary.push('nLPT fields f32 → trajectories/tangents f64 → GPU pack f32');
+  if(backends.exactDeposit)precisionSummary.push('deposit f32 positions→f64 geometry/mass→f32 density');
+  if(backends.pdfs)precisionSummary.push('PDF f32 density→f64 stats');
+  if(backends.griddedSpectra)precisionSummary.push('FFT f32 field→f64 transform/bins');
+  if(backends.finiteDifference||backends.finalization)precisionSummary.push('FD/finalization f64');
+  if(precisionSummary.length||directSummary.length)compact('Stage backends',[...precisionSummary,...directSummary].join(' · '));
+
+  if(Array.isArray(meta.modeProvenance)&&meta.modeProvenance.length){
+    const table=$('table','summary-table execution-mode-table',backendMeta),caption=$('caption','',table,'Direct-mode channel precision');
+    const head=$('thead','',table),row=$('tr','',head);for(const label of ['Integer mode','LPT','PM'])$('th','',row,label);
+    const body=$('tbody','',table);
+    for(const mode of meta.modeProvenance){const tr=$('tr','',body),integerMode=Array.isArray(mode.integerMode)?mode.integerMode.join(', '):String(mode.integerMode??'unknown');$('th','',tr,integerMode);$('td','',tr,mode.lpt||'unknown');$('td','',tr,mode.pm||'unknown');}
+  }
+
+  const details=$('details','published-provenance execution-raw',backendMeta);$('summary','',details,'Full execution metadata');
+  const pre=$('pre','execution-raw-json',details);pre.textContent=JSON.stringify(meta,null,2);
 }
 function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and continuous determinant extrema along each PM drift are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'Both maps use exact cell integration of the P₀ sheet: one follows LPT trajectories and the other follows PM trajectories. CIC particle assignment is shown separately in the spectrum view.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare force-grid and observation-grid changes independently.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
 async function loadPublished(){if(publishedData){current={published:publishedData};exportJsonButton.disabled=false;status.textContent='Published data ready';renderPublished();return;}status.textContent='Loading published replay…';notice.textContent='Loading packaged reference data.';try{if(!publishedPromise)publishedPromise=fetch('./data/published-results.json').then((res)=>{if(!res.ok)throw Error(`HTTP ${res.status}`);return res.json();});const data=await publishedPromise;if(S.view!=='published')return;publishedData=data;current={published:data};exportJsonButton.disabled=false;status.textContent='Published data ready';renderPublished();}catch(e){if(S.view!=='published')return;publishedPromise=null;current={publishedError:String(e.message||e)};exportJsonButton.disabled=true;status.textContent='Published data unavailable';renderPublished();}}
@@ -305,5 +386,5 @@ function addMetric(parent,label,value){const item=$('div','metric',parent);$('sp
 
 function setDefaultView(){selectView(S.view, false);}
 controls.sync(); setDefaultView(); updateURL(); run();
-window.addEventListener('hashchange',()=>{const version=fragmentVersion(location.hash);unsupportedSchema=version!=null&&version!==STATE_VERSION;if(unsupportedSchema){if(!document.querySelector('.unsupported-link-note'))$('p','unsupported-link-note',intro,`This URL uses unsupported experiment schema v${version}. The experiment has not been run. Select a preset or edit a control to start a new version-${STATE_VERSION} run; the saved values cannot be safely interpreted.`);S=decodeHash('');controls.sync();run();return;}clearUnsupportedSchema();const next=decodeHash(location.hash);if(encodeHash(next)===encodeHash(S))return;S=next;controls.sync();selectView(S.view,false);run();});
+window.addEventListener('hashchange',()=>{const version=fragmentVersion(location.hash);unsupportedSchema=version!=null&&!(['2',String(STATE_VERSION)].includes(version));if(unsupportedSchema){if(!document.querySelector('.unsupported-link-note'))$('p','unsupported-link-note',intro,`This URL uses unsupported experiment schema v${version}. The experiment has not been run. Select a preset or edit a control to start a new version-${STATE_VERSION} run; the saved values cannot be safely interpreted.`);S=decodeHash('');controls.sync();run();return;}clearUnsupportedSchema();const next=decodeHash(location.hash);if(encodeHash(next)===encodeHash(S))return;S=next;controls.sync();selectView(S.view,false);run();});
 window.labExperimentState = () => ({...S});

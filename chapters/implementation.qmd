@@ -16,7 +16,7 @@ The new modules add cosmological PM evolution, initial-field and trajectory tang
 | Observables | Interval deposition, PDF measures, fixed-mass modes | Independent of how trajectories were generated |
 | PM and tangents | Discrete cosmological evolution and JVPs | Supplied initial positions, momenta, directions |
 | Laboratory facade | Validate inputs, report orientation, serialize reproducible results | Native Rust and Wasm use the same function |
-| Browser worker | Load Wasm and cancel obsolete computation | No independent implementation of the physics |
+| Browser worker | Own Wasm/GPU backends, serialize work and cancel obsolete requests | Shared trajectories and separately validated continuous observables |
 
 ## Build and inspect
 
@@ -61,7 +61,7 @@ The inherited LPT spatial fields and deposited density arrays use `f32`; Fourier
 
 The differentiable route carries an initial-condition JVP through nLPT, or supplied phase-space directions through PM, to continuous P0 Fourier modes and power. It supports directional derivatives at fixed cosmology and clocks. It does not provide cosmological growth derivatives, a reverse-mode adjoint, or exact-clipped-density shape derivatives. Those are separate implementation tasks; they should not be implied by the word “differentiable.”
 
-The browser uses Wasm and Canvas2D/SVG as the portable capability tier. There is no unvalidated GPU physics path. The worker keeps large calculations off the page thread; the resource envelope permits lattice 64³ and observation/force grids up to 128³ when their combined estimate fits 1 GiB, while 1D and 2D ceilings are 1024 and 256². Invalid requests return explicit errors without replacing the requested grid. The same low-level Rust library supports caller-managed larger allocations outside the facade. The facade intentionally uses the same limits in native and Wasm runs so one manifest denotes one experiment.
+The browser uses Wasm and Canvas2D/SVG as the portable capability tier, with an optional checked GPU observer described below. The worker keeps large calculations off the page thread; the resource envelope permits lattice 64³ and observation/force grids up to 128³ when their combined estimate fits 1 GiB, while 1D and 2D ceilings are 1024 and 256². Invalid requests return explicit errors without replacing the requested grid. The same low-level Rust library supports caller-managed larger allocations outside the facade. The facade intentionally uses the same limits in native and Wasm runs so one manifest denotes one experiment.
 
 ## Data lineage and adaptation
 
@@ -78,10 +78,45 @@ The physical initial-spectrum module is independent of the trajectory and geomet
 
 The checked `laboratory::run_json` facade accepts exported manifests as well as plain requests. Its `request` field is the executed numerical specification, independent of camera angle and selected panel. The appendix's lower-level examples deliberately expose more responsibility: callers must enforce conservative input bandwidth, compatible meshes, finite geometry and measured conservation themselves. Reuse of an exact overlap routine establishes exact integration of a supplied affine element; it does not certify the supplied trajectories.
 
-## GPU acceleration is a measured follow-up
+## Hybrid WebGPU observation backend {#sec-gpu-backend}
 
-The current `app/js/viz/gpu.js` is a canvas-sizing helper, not a WebGPU compute backend. A scratch-instrumented native profile of 3D32 and 3D64 wave requests found the combined continuous Fourier-mode, tangent, and finite-difference stage consumed 93.0% and 92.8% of summed pre-serialization stage time, respectively. Each profile was one run; the group is not yet separated internally. The first investigation should therefore split and measure simplex-mode integration, analytic JVP propagation, and the finite-difference self-check. Batched simplex/mode work with a fixed reduction order is a candidate if repeated profiles confirm the cost. A request to reduce self-check latency must preserve an explicit finite-difference validation route.
+The optional compute backend evaluates the continuous fixed-mass sheet modes and their analytic position directions. Rust/Wasm still constructs the initial field, integrates growth, builds nLPT and PM trajectories, checks orientation, clips the sheet onto the observation grid, and computes PDFs and gridded spectra. The backend changes the arithmetic used for selected continuous modes; it does not change the represented sheet, physical epoch, or estimator.
 
-The continuous affine-simplex Fourier integral and its coincident-phase limits define the observable; a GPU implementation must not replace them with center sampling. Native Fourier/tangent paths use `f64`, while baseline WGSL arithmetic is `f32`, so establish tolerances against analytic fixtures and CPU convergence before claiming equivalence. Keep exact clipping on CPU unless a separately tested GPU geometric algorithm meets positivity and global-conservation contracts. The PM and LPT paths remain candidates if finer timing shows they dominate other workloads.
+The prepared-run boundary retains the double-precision trajectory and tangent arrays. A GPU failure therefore reuses the prepared CPU state rather than repeating the physical calculation. Finalization uses the same Rust power normalization and unit conversion as the synchronous facade. The boundary is exposed by {{< src laboratory::prepare >}} and {{< src laboratory::PreparedLabRun >}}, and its compatibility and selective-recovery contracts are pinned by {{< test prepared_run_finishes_identically_and_validates_direct_channels "prepared-run contract" >}}.
 
-Any future compute backend should be optional, queried against actual adapter/device capabilities, and retain Rust CPU as oracle and fallback. Validate analytic fixtures and full outputs in 1D–3D, including Hermitian modes, periodic boundaries, crossing diagnostics, mass conservation, and fixed-time tangent-versus-finite-difference checks. Carry analytic tangents explicitly; GPU acceleration does not supply automatic differentiation or the currently absent exact-clipped-density shape derivative. Report end-to-end timing including startup, compilation, transfers, and readback. See the [detailed timing and validation assessment](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-assessment.md) and the official [WebGPU](https://www.w3.org/TR/webgpu/) and [WGSL](https://www.w3.org/TR/WGSL/) specifications. No GPU scientific kernel is implemented by this report.
+| Stage | Arithmetic and execution |
+|---|---|
+| Initial conditions, growth and trajectory generation | Existing Rust/Wasm implementation |
+| Exact density, PDFs and gridded power | Existing Rust/Wasm implementation |
+| Continuous LPT/PM modes and analytic JVPs | Optional WGSL f32 kernel; CPU reference remains available |
+| Weak LPT mode recovery | Retained CPU f64 trajectory and direction |
+| Centered finite difference | CPU f64, value-only integral, cached per prepared run |
+| Power, derivative and physical units | Rust f64 finalization |
+
+For a fixed-mass simplex, the kernel evaluates the barycentric exponential divided difference and its repeated-knot derivative from @eq-simplex-fourier and @eq-amplitude-jvp. It retains periodic lifts and the same two-triangle or six-tetrahedron connectivity. The port adapts the stable local Taylor/Newton strategy from the MIT-licensed [Hopf–Cole direct kernel](https://github.com/yipihey/hopf-cole-cosmology/blob/3a3a13b9ba817c5b4f8f9f26314715845e13d4ad/app/js/gpu/direct.js). The [reuse manifest](../app/js/gpu/reuse-manifest.json) records original paths and hashes. Contributions are accumulated with an explicit reduction order and numerical diagnostics; no magnitude guard silently removes an element.
+
+Displacements $\boldsymbol\psi=\boldsymbol x-\boldsymbol q$ are extracted in CPU f64 before conversion into packed f32 arrays. Integer lattice coordinates reconstruct the undeformed geometry. Only the exponential phase is reduced modulo $2\pi$; phase gaps in divided-difference denominators retain their full values. This distinction is necessary for both the primal integral and signed tangent coefficients. The four displacement/direction arrays occupy 16 MiB at $64^3$, before partial sums, staging and the retained CPU state.
+
+The first backend covers 2D and 3D, including supported non-power-of-two lattices. One-dimensional requests use the CPU route. GPU resource refusal never changes the requested lattice, force mesh, observation mesh, bandwidth or epoch. A persistent numerical worker serializes requests, yields between bounded GPU submissions, discards obsolete generations, and releases owned buffers. During synchronous Rust preparation or CPU mode work, cancellation recreates the worker; during asynchronous GPU work it waits for submitted work and acknowledges cleanup.
+
+### Precision, validation and reproduction
+
+The portable [WGSL floating-point contract](https://www.w3.org/TR/WGSL/#floating-point-types) supplies f32 rather than an f64 path. The [GPU self-check](../app/gpu-test.html) compares primal and JVP components with independently converged barycentric quadrature. The complete-request harness separately compares full-f64 Rust inputs, f64 kernels on quantized inputs, and GPU arithmetic. Its comparison target is $|\Delta F|\le10^{-6}+10^{-4}|F_{\rm ref}|$ component by component, with the same target for the JVP. This absolute floor makes cancellation-dominated modes interpretable; it does not assert uniform relative accuracy for arbitrarily weak modes.
+
+The existing amplitude derivative gate remains a relative discrepancy of at most $10^{-5}$ against the CPU centered finite difference at $h=10^{-4}$. Separately reduced GPU f32 powers at $A\pm h$ are therefore not used for that check. When an LPT mode exceeds the gate, its value and tangent are recovered together on CPU f64; PM channels and passing LPT modes can remain on GPU. The manifest records the executed backend of each mode. This recovery is a numerical precision policy, independent of the shell-crossing caution.
+
+CPU is the default. Selecting GPU attempts the accelerated observer and reports resource, capability or numerical fallback. Automatic selection remains on CPU until a device/workload policy is supported by accuracy and end-to-end measurements. Rendering uses the existing Canvas2D/SVG tier independently. Device limits, adapter metadata when exposed, shader hashes, reduction layout, stage durations and recovery decisions accompany the numerical results. Cross-device GPU replay uses stated tolerances rather than bitwise equality.
+
+Run the independent kernel, complete cosmological requests, worker failure checks and repeated browser timings with:
+
+```sh
+make test
+make test-wasm
+node scripts/test_gpu.mjs --require-gpu --full --output gpu-checks.json
+node scripts/test_gpu.mjs --require-gpu --benchmark --output gpu-benchmark.json
+python3 scripts/profile_native_stages.py --dim 3 --repeats 3 --output native-profile.json
+```
+
+The browser runner requires Chrome (or `CHROME_PATH`) and has no npm dependencies. A missing adapter is reported as a skip; `--require-gpu` makes that a failing requirement. Normal hosted CI runs the native, Wasm and worker contracts, while GPU checks require a GPU-capable runner. See the [implementation plan](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-backend-plan.md) and [measurement record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-results.md) for the tested requests and device-specific limits.
+
+FFT/LPT residency, a GPU cosmological PM/KDK tangent solver and geometric clipping are subsequent stages. Hopf–Cole provides FFT and LPT foundations; its heat-flow model does not replace this laboratory's gravitational evolution. Extend a resident solver only after profiling the released hybrid path and passing independent trajectory, force, tangent and geometric tests.

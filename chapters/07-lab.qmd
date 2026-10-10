@@ -50,7 +50,7 @@ The first exercise has $J=1-AD\cos(kq)$ and $D_{\rm sc}=1/A$. The second gives $
 [Run the self-check page](../app/selftest.html) to verify that the generated Wasm package loads, a guarded model conserves mass, and the tangent agrees with a finite difference. This supplements the native Rust tests; it does not replace the scientific convergence study. Results and failures are displayed directly, so a missing binary cannot masquerade as a passing demonstration.
 
 
-A version-2 experiment URL writes all numerical and display defaults explicitly, preserving numerical precision rather than rounding parameters to six significant digits. For durable reproduction, save the JSON manifest as well: it records the state, executed request, output epoch, cosmology, engine version, build revision, diagnostics, conventions and result arrays. Figure files alone do not record the simulation specification. Imported settings start a new calculation; a change in implementation can be assessed against the saved outputs.
+A version-3 experiment URL writes all numerical and display defaults explicitly, preserving numerical precision rather than rounding parameters to six significant digits. For durable reproduction, save the JSON manifest as well: it records the state, executed request, output epoch, cosmology, engine version, build revision, diagnostics, conventions and result arrays. It also records the requested observation backend, per-mode execution and precision, shader hashes, device limits and numerical recovery. Version-2 URLs migrate to the CPU reference while preserving their physical controls. Figure files alone do not record the simulation specification. Imported settings start a new calculation; a change in implementation can be assessed against the saved outputs.
 
 The native runner uses the same request/response facade as Wasm. From the repository revision recorded in a manifest:
 
@@ -76,3 +76,6 @@ The runner accepts a plain request, a complete numerical response, or a browser 
 Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
 
 The [browser self-check](../app/selftest.html) verifies worker execution and the generated binary. The native suite checks the physical clocks, equation residuals, Hermitian mode pairing, refinement stability, conservation, and independent finite differences. Record the repository revision with a convergence table; the same seed or a successful self-check alone does not establish scientific convergence.
+
+
+The optional GPU observer accelerates continuous Fourier modes and their analytic JVPs. Select CPU, GPU or automatic policy in the laboratory controls; automatic currently uses CPU. Weak LPT derivatives recover on CPU f64 when required by the unchanged finite-difference gate. See @sec-gpu-backend and [run the GPU self-check](../app/gpu-test.html).

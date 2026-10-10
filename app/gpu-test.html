@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Direct P0 WebGPU checks</title>
+  <style>
+    body{font:16px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17202a}
+    button{font:inherit;padding:.5rem .8rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f7;padding:1rem;border-radius:.4rem}
+    .status{font-weight:700}.budget{border-left:3px solid #697586;padding-left:1rem}
+  </style>
+</head>
+<body>
+  <h1>Direct P0 WebGPU checks</h1>
+  <p>This page compares the fixed-mass Fourier transform and analytic position derivative with independent f64 barycentric quadrature on small 2D and 3D fixtures. Add <code>?schedule-benchmark=1</code> for kernel-only n=32/n=64 prepared-wave schedule timings. A fixture pass does not certify complete laboratory requests or the amplitude finite-difference gate.</p>
+  <p class="budget"><strong>Fixture comparison target:</strong> each primal and JVP component is assessed against absolute error 10⁻⁶ plus relative error 10⁻⁴ on f32-quantized inputs. The full-request amplitude derivative still requires the existing relative error at most 10⁻⁵.</p>
+  <button id="run">Run GPU checks</button>
+  <p id="status" class="status">Ready</p>
+  <pre id="report">Use ?autorun=1 to run automatically.</pre>
+  <script type="module">
+    import { createGpuContext } from './js/gpu/context.js';
+    import { runGpuSelfTests, runScheduleBenchmarks, GPU_ERROR_BUDGET } from './js/gpu/selftest.js';
+    const status=document.querySelector('#status'),report=document.querySelector('#report'),button=document.querySelector('#run');
+    async function run(){
+      button.disabled=true;status.textContent='Running';delete window.gpuTestReport;
+      let context;
+      try{
+        context=await createGpuContext({onDeviceLost:(e)=>console.error('WebGPU device lost',e)});
+        const kernel=await runGpuSelfTests({device:context.device});
+        const params=new URLSearchParams(location.search);
+        const scheduleBenchmark=params.get('schedule-benchmark')==='1'?await runScheduleBenchmarks({device:context.device,onProgress:(p)=>{status.textContent=`${p.stage??'Schedule benchmark'} ${p.caseIndex??''}/${p.cases??''}`;}}):null;
+        let lab=null;
+        if(params.get('full')==='1'||params.get('benchmark')==='1'){
+          const {runLabChecks}=await import('./js/gpu/lab-check.js');
+          lab=await runLabChecks({device:context.device,benchmark:params.get('benchmark')==='1',onProgress:(p)=>{status.textContent=`${p.stage??'Laboratory'} ${p.caseIndex??''}/${p.cases??''}`;}});
+        }
+        const statuses=[kernel.status,...(scheduleBenchmark?[scheduleBenchmark.status]:[]),...(lab?[lab.status]:[])];
+        const combinedStatus=statuses.includes('fail')?'fail':statuses.includes('skip')?'skip':'pass';
+        window.gpuTestReport={status:combinedStatus,rows:[...kernel.rows,...(scheduleBenchmark?.rows??[]),...(lab?.rows??[])],numericalErrors:[...kernel.numericalErrors,...(lab?.numericalErrors??[])],timings:[...kernel.timings,...(scheduleBenchmark?.rows??[]),...(lab?.timings??[])],deviceInfo:{...kernel.deviceInfo,limits:context.limits,features:context.features,adapter:context.adapterInfo,context:context.provenance},budget:GPU_ERROR_BUDGET,kernel,scheduleBenchmark,lab};
+      }catch(error){
+        const skip=/unavailable|no adapter|timed out|not supported/i.test(error?.message??'');
+        window.gpuTestReport={status:skip?'skip':'fail',reason:error?.message??String(error),rows:[],numericalErrors:[],timings:[],deviceInfo:{},budget:GPU_ERROR_BUDGET};
+      }finally{context?.dispose();button.disabled=false;status.textContent=`${window.gpuTestReport.status.toUpperCase()} — ${window.gpuTestReport.reason??`${window.gpuTestReport.rows.length} fixtures`}`;report.textContent=JSON.stringify(window.gpuTestReport,null,2);}
+    }
+    button.addEventListener('click',run);if(new URLSearchParams(location.search).get('autorun')==='1')run();
+  </script>
+</body>
+</html>

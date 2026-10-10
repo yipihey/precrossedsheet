@@ -20,6 +20,11 @@ use std::f64::consts::PI;
 
 /// Divided difference of exp at complex nodes `s` (stable for coincident nodes).
 pub fn exp_divided_difference(s: &[C64]) -> C64 {
+    exp_divided_difference_with_scratch(s, &mut Vec::new(), &mut Vec::new())
+}
+
+/// Reusable-workspace form for repeated value-only sheet observations.
+pub fn exp_divided_difference_with_scratch(s: &[C64], t: &mut Vec<C64>, h: &mut Vec<C64>) -> C64 {
     let n = s.len();
     if n == 1 { return s[0].exp(); }
     // minimum pairwise separation
@@ -27,7 +32,8 @@ pub fn exp_divided_difference(s: &[C64]) -> C64 {
     for i in 0..n { for j in (i + 1)..n { dmin = dmin.min((s[i] - s[j]).norm()); } }
     if dmin > 0.05 {
         // Newton recursion on a table
-        let mut t: Vec<C64> = s.iter().map(|v| v.exp()).collect();
+        t.clear();
+        t.extend(s.iter().map(|v| v.exp()));
         for level in 1..n {
             for i in 0..(n - level) {
                 t[i] = (t[i + 1] - t[i]) / (s[i + level] - s[i]);
@@ -40,13 +46,15 @@ pub fn exp_divided_difference(s: &[C64]) -> C64 {
         let mut mean = C64::new(0.0, 0.0);
         for v in s { mean += v; }
         mean /= n as f64;
-        let d: Vec<C64> = s.iter().map(|v| v - mean).collect();
+        t.clear();
+        t.extend(s.iter().map(|v| v - mean));
         // h_m via the recursion over variables: h_m(x_1..x_k) = h_m(x_1..x_{k-1}) + x_k h_{m-1}(x_1..x_k)
         let mmax = 24;
-        let mut h = vec![C64::new(0.0, 0.0); mmax + 1]; // h for the first k variables
+        h.resize(mmax + 1, C64::new(0.0, 0.0));
+        h.fill(C64::new(0.0, 0.0)); // h for the first k variables
         h[0] = C64::new(1.0, 0.0);
         for k in 0..n {
-            for m in 1..=mmax { h[m] = h[m] + d[k] * h[m - 1]; }
+            for m in 1..=mmax { h[m] = h[m] + t[k] * h[m - 1]; }
         }
         let mut fact = 1.0f64;
         for i in 1..n { fact *= i as f64; } // (n-1)!

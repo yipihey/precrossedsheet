@@ -44,7 +44,9 @@ jobs:
         run: wasm-pack build core --target web --release --out-dir ../app/pkg
 
       - name: Wasm contract checks
-        run: node scripts/test_wasm.mjs
+        run: |
+          node scripts/test_wasm.mjs
+          node scripts/test_worker.mjs
 
       - name: Build Rust API documentation (linked from the text)
         run: |

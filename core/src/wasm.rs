@@ -18,6 +18,45 @@ pub struct CosmoSim {
 }
 
 #[wasm_bindgen]
+pub struct PreparedLabRun {
+    inner: crate::laboratory::PreparedLabRun,
+}
+
+#[wasm_bindgen]
+impl PreparedLabRun {
+    #[wasm_bindgen(constructor)]
+    pub fn new(request: &str) -> Result<PreparedLabRun, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        let inner = crate::laboratory::prepare(&request)
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(Self { inner })
+    }
+    pub fn metadata(&self) -> String { self.inner.metadata().to_string() }
+    /// Flat int4 mode records [m, 0, 0, 0].
+    pub fn mode_records(&self) -> Vec<i32> { self.inner.modes().iter().flat_map(|m| m.iter().copied()).collect() }
+    /// Owned vec4<f32> displacement ψ=x−q, zero-padded to 4 components.
+    pub fn lpt_displacement(&self) -> Vec<f32> { self.inner.lpt_displacement().to_vec() }
+    pub fn lpt_direction(&self) -> Vec<f32> { self.inner.lpt_direction().to_vec() }
+    pub fn pm_displacement(&self) -> Vec<f32> { self.inner.pm_displacement().to_vec() }
+    pub fn pm_direction(&self) -> Vec<f32> { self.inner.pm_direction().to_vec() }
+    /// Flat per-mode [F.re,F.im,dF.re,dF.im,PM.re,PM.im,dPM.re,dPM.im].
+    pub fn direct_cpu(&self) -> Vec<f64> { self.inner.direct_cpu() }
+    /// Selected LPT [F.re,F.im,dF.re,dF.im] channels for CPU recovery.
+    pub fn direct_lpt_cpu_modes(&self, indices: &[u32]) -> Result<Vec<f64>, JsValue> {
+        self.inner.direct_lpt_cpu_modes(indices).map_err(|e| JsValue::from_str(&e))
+    }
+    /// Same channel layout, with CPU f64 arithmetic on quantized packed GPU inputs.
+    pub fn direct_quantized_cpu(&self) -> Vec<f64> { self.inner.direct_quantized_cpu() }
+    /// Raw f64 finite-difference power derivatives, cached after the first call.
+    pub fn finite_difference_cpu(&self) -> Vec<f64> { self.inner.finite_difference_cpu().to_vec() }
+    pub fn finish(&self, channels: &[f64], execution: &str) -> Result<String, JsValue> {
+        self.inner.finish(channels, execution).map(|v| v.to_string())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+}
+
+#[wasm_bindgen]
 impl CosmoSim {
     #[wasm_bindgen(constructor)]
     pub fn new(dim: usize, n: usize, l: f64) -> CosmoSim {

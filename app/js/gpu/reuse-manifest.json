@@ -1,0 +1,32 @@
+{
+  "upstream": {
+    "repository": "https://github.com/yipihey/hopf-cole-cosmology",
+    "revision": "3a3a13b9ba817c5b4f8f9f26314715845e13d4ad",
+    "license": "MIT",
+    "licenseNotice": "UPSTREAM-MIT-NOTICE.txt"
+  },
+  "files": [
+    {
+      "source": "app/js/gpu/direct.js",
+      "sha256": "369d4a1b159b5d971c847db36b0c47fe20e4eda12d036ee2d2b75291c9e5ea09",
+      "reuse": "Stable local Taylor and Newton exponential divided-difference strategy, phase reduction for exponentials, periodic lattice reconstruction and Kuhn simplex connectivity.",
+      "adaptation": "Rewritten as a worker-safe P0 fixed-mass direct-mode kernel; added analytic signed JVPs, original phase-direction association, arbitrary integer modes, bounded chunks, diagnostics, non-power-of-two grids, and resource cleanup. Removed sampled modes, P1 and silent contribution filters."
+    },
+    {
+      "source": "app/js/gpu/util.js",
+      "sha256": "3107866ce4d8f0bc7bbca1e59b6a21b4cb2f5827f156e4f6c7d9c17abdfc3e1b",
+      "reuse": "Small pipeline/bind-group, one-dimensional dispatch and readback helper patterns.",
+      "adaptation": "Reimplemented without rendering imports or process-global WebGPU constants; each staging buffer is locally owned and destroyed."
+    },
+    {
+      "source": "app/js/gpu/reduce.js",
+      "sha256": "474c363418866666c990b2880404a1c02a555c185951335a36a4950ad9f88602",
+      "reuse": "Fixed 64-lane tree-reduction pattern.",
+      "adaptation": "Direct-mode partials use a lane-strided fixed order followed by a 64-lane pairwise tree, with one output per mode and explicit f32 precision."
+    },
+    {
+      "source": "app/js/viz/gpu.js",
+      "reuse": "No source copied. The new context module follows the plan's capability-probe and loss-reporting boundary without a DOM dependency."
+    }
+  ]
+}

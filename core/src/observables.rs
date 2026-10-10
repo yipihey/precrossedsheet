@@ -20,7 +20,7 @@ pub fn for_each_simplex(grid: &Grid, mut visit: impl FnMut(&[(usize, [f64; 3])],
     ];
     for id in 0..grid.size {
         let ijk = grid.unravel(id);
-        let mut vertices = Vec::with_capacity(1 << d);
+        let mut vertices = [(0usize, [0.0; 3]); 8];
         for b in 0..(1 << d) {
             let mut q = ijk;
             let mut lift = [0.0; 3];
@@ -31,10 +31,10 @@ pub fn for_each_simplex(grid: &Grid, mut visit: impl FnMut(&[(usize, [f64; 3])],
                     lift[a] = grid.l;
                 }
             }
-            vertices.push((grid.ravel(q), lift));
+            vertices[b] = (grid.ravel(q), lift);
         }
         match d {
-            1 => visit(&[vertices[0], vertices[1]], cell),
+            1 => visit(&vertices[..2], cell),
             2 => {
                 visit(&[vertices[0], vertices[1], vertices[3]], cell / 2.0);
                 visit(&[vertices[0], vertices[3], vertices[2]], cell / 2.0);
@@ -266,4 +266,27 @@ pub fn sheet_mode_jvp(
         tangent += t;
     });
     (value, tangent)
+}
+
+/// Value-only continuous P0 mode. Reuses all divided-difference workspaces
+/// across simplices, which is the CPU finite-difference path for prepared runs.
+pub fn sheet_mode(grid: &Grid, pos: &[f64], k: [f64; 3]) -> Complex64 {
+    assert_eq!(pos.len(), grid.size * grid.dim);
+    let mut value = Complex64::new(0.0, 0.0);
+    let mut phases = Vec::with_capacity(4);
+    let mut table = Vec::with_capacity(28);
+    let mut series = Vec::with_capacity(25);
+    for_each_simplex(grid, |verts, mass| {
+        phases.clear();
+        for &(id, lift) in verts {
+            let phase = (0..grid.dim)
+                .map(|a| k[a] * (pos[id * grid.dim + a] + lift[a]))
+                .sum::<f64>();
+            phases.push(Complex64::new(0.0, -phase));
+        }
+        let factorial = (1..=grid.dim).product::<usize>() as f64;
+        value += (mass * factorial)
+            * crate::direct::exp_divided_difference_with_scratch(&phases, &mut table, &mut series);
+    });
+    value
 }
