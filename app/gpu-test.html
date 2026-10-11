@@ -12,33 +12,43 @@
 </head>
 <body>
   <h1>WebGPU numerical checks</h1>
-  <p>The direct-mode suite compares continuous sheet Fourier modes with independent f64 quadrature. The resident suite checks FFT roundtrips, periodic PM forces and JVPs, matched Rust PM trajectories, and full-run provenance. Add <code>?resident=1</code> for the resident suite, <code>?resident-worker=1</code> for worker fallback/cancellation checks, or <code>?resident=1&amp;resident-benchmark=1</code> for matched CPU/GPU and worker end-to-end timings.</p>
+  <p>The direct-mode suite compares continuous sheet Fourier modes with independent f64 quadrature. The resident suite checks FFT roundtrips, periodic PM forces and JVPs, matched Rust PM trajectories, and full-run provenance. Finite-difference checks compare GPU centered differences with an independent analytic fixture and the retained Rust f64 request oracle. Add <code>?fd=1</code> or <code>?fd=1&amp;fd-benchmark=1</code> for its numerical suite and matched timings; <code>?fd-repeat=1</code> runs 20 fixed-input repeats each for 3D n=32 waves and Gaussian LCDM, recording raw outputs, delta amplitudes, and SHA-256 hashes. Other options include <code>?resident=1</code>, <code>?resident-worker=1</code>, and <code>?resident=1&amp;resident-benchmark=1</code>.</p>
   <p class="budget"><strong>Direct-mode and isolated force comparison target:</strong> each primal and JVP component is assessed against absolute error 10⁻⁶ plus relative error 10⁻⁴ on f32-quantized inputs. The full-request amplitude derivative still requires the existing relative error at most 10⁻⁵. Resident trajectories have separate component budgets shown in the report; see the <a href="../chapters/implementation.html#sec-gpu-pm">PM implementation and precision contract</a>.</p>
   <button id="run">Run GPU checks</button>
   <button id="run-resident">Run resident FFT/PM checks</button>
   <button id="run-resident-worker">Run resident worker checks</button>
+  <button id="run-fd">Run GPU finite-difference checks</button>
   <p id="status" class="status">Ready</p>
   <pre id="report">Use ?autorun=1 to run automatically.</pre>
   <script type="module">
     import { createGpuContext } from './js/gpu/context.js';
     import { runGpuSelfTests, runScheduleBenchmarks, GPU_ERROR_BUDGET } from './js/gpu/selftest.js';
     import { runResidentChecks, runResidentWorkerChecks } from './js/gpu/resident-check.js';
+    import { runFiniteDifferenceChecks, runFiniteDifferenceRepeatCheck } from './js/gpu/fd-check.js';
     const status=document.querySelector('#status'),report=document.querySelector('#report'),button=document.querySelector('#run');
-    const residentButton=document.querySelector('#run-resident'),workerButton=document.querySelector('#run-resident-worker');
-    async function run(residentOnly=false,workerOnly=false){
-      button.disabled=true;residentButton.disabled=true;workerButton.disabled=true;status.textContent='Running';delete window.gpuTestReport;
+    const residentButton=document.querySelector('#run-resident'),workerButton=document.querySelector('#run-resident-worker'),fdButton=document.querySelector('#run-fd');
+    async function run(residentOnly=false,workerOnly=false,fdOnly=false){
+      button.disabled=true;residentButton.disabled=true;workerButton.disabled=true;fdButton.disabled=true;status.textContent='Running';delete window.gpuTestReport;
       let context;
       try{
         const params=new URLSearchParams(location.search);
-        if(workerOnly||params.get('resident-worker')==='1'){
+        if(workerOnly||(!residentOnly&&!fdOnly&&params.get('resident-worker')==='1')){
           const resident=await runResidentWorkerChecks({onProgress:(p)=>{status.textContent=`${p.stage??p.phase??'Resident worker checks'} ${p.step??p.caseIndex??''}/${p.steps??p.cases??''}`;}});
           window.gpuTestReport={status:resident.status,rows:resident.rows,failures:resident.failures,timings:resident.timings,precision:resident.precision,residentWorker:resident};
           return;
         }
         context=await createGpuContext({onDeviceLost:(e)=>console.error('WebGPU device lost',e)});
-        if(residentOnly||params.get('resident')==='1'){
+        if(params.get('fd-self')==='1'){const {runFiniteDifferenceSelfTest}=await import('./js/gpu/fd-check.js');const check=await runFiniteDifferenceSelfTest({device:context.device});window.gpuTestReport={...check,deviceInfo:{adapter:context.adapterInfo}};return;}
+        if(params.get('fd-probe')==='1'){const {runPrecisionProbe}=await import('./js/gpu/finite-difference.js');const probe=await runPrecisionProbe(context.device);window.gpuTestReport={status:probe.status,rows:probe.rows,probe,deviceInfo:{adapter:context.adapterInfo}};return;}
+        if(params.get('fd-repeat')==='1'){const repeated=await runFiniteDifferenceRepeatCheck({device:context.device,onProgress:(p)=>{status.textContent=`${p.stage??'Finite-difference repeat'} ${p.caseIndex??''}/${p.cases??''}`;}});window.gpuTestReport={status:repeated.status,reason:repeated.reason,rows:repeated.rows,fdRepeat:repeated,deviceInfo:{limits:context.limits,features:context.features,adapter:context.adapterInfo,context:context.provenance}};return;}
+        if(residentOnly||(!workerOnly&&!fdOnly&&params.get('resident')==='1')){
           const resident=await runResidentChecks({device:context.device,benchmark:params.get('benchmark')==='1'||params.get('resident-benchmark')==='1',onProgress:(p)=>{status.textContent=`${p.stage??'Resident checks'} ${p.caseIndex??p.step??''}/${p.cases??p.steps??''}`;}});
           window.gpuTestReport={status:resident.status,rows:resident.rows,failures:resident.failures,timings:resident.timings,precision:resident.precision,budget:resident.budget,deviceInfo:{limits:context.limits,features:context.features,adapter:context.adapterInfo,context:context.provenance},resident};
+          return;
+        }
+        if(fdOnly||(!workerOnly&&!residentOnly&&params.get('fd')==='1')){
+          const fd=await runFiniteDifferenceChecks({device:context.device,benchmark:params.get('fd-benchmark')==='1',onProgress:(p)=>{status.textContent=`${p.stage??'Finite-difference checks'} ${p.caseIndex??p.step??''}/${p.cases??p.steps??''}`;}});
+          window.gpuTestReport={status:fd.status,reason:fd.reason,rows:fd.rows,failures:fd.failures,timings:fd.timings,precision:fd.precision,gate:fd.gate,fullRequestGate:fd.fullRequestGate,deviceInfo:{limits:context.limits,features:context.features,adapter:context.adapterInfo,context:context.provenance},fd};
           return;
         }
         const kernel=await runGpuSelfTests({device:context.device});
@@ -54,9 +64,9 @@
       }catch(error){
         const skip=/unavailable|no adapter|timed out|not supported/i.test(error?.message??'');
         window.gpuTestReport={status:skip?'skip':'fail',reason:error?.message??String(error),rows:[],numericalErrors:[],timings:[],deviceInfo:{},budget:GPU_ERROR_BUDGET};
-      }finally{context?.dispose();button.disabled=false;residentButton.disabled=false;workerButton.disabled=false;status.textContent=`${window.gpuTestReport.status.toUpperCase()} — ${window.gpuTestReport.reason??`${window.gpuTestReport.rows.length} fixtures`}`;report.textContent=JSON.stringify(window.gpuTestReport,null,2);}
+      }finally{context?.dispose();button.disabled=false;residentButton.disabled=false;workerButton.disabled=false;fdButton.disabled=false;status.textContent=`${window.gpuTestReport.status.toUpperCase()} — ${window.gpuTestReport.reason??`${window.gpuTestReport.rows.length} fixtures`}`;report.textContent=JSON.stringify(window.gpuTestReport,null,2);}
     }
-    button.addEventListener('click',()=>run());residentButton.addEventListener('click',()=>run(true));workerButton.addEventListener('click',()=>run(false,true));const params=new URLSearchParams(location.search);if(params.get('resident-worker')==='1')run(false,true);else if(params.get('resident')==='1')run(true);else if(params.get('autorun')==='1')run();
+    button.addEventListener('click',()=>run());residentButton.addEventListener('click',()=>run(true));workerButton.addEventListener('click',()=>run(false,true));fdButton.addEventListener('click',()=>run(false,false,true));const params=new URLSearchParams(location.search);if(params.get('resident-worker')==='1')run(false,true);else if(params.get('resident')==='1')run(true);else if(params.get('fd')==='1')run(false,false,true);else if(params.get('autorun')==='1')run();
   </script>
 </body>
 </html>

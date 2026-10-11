@@ -41,7 +41,19 @@ try {
   assert.equal(displacementReference.length,reference.length);
   assert.ok(displacementReference.every(Number.isFinite));
   prepared=pending.finish_cpu();
-  const result=JSON.parse(prepared.finish(prepared.direct_cpu(),'{}'));
+  const fdPacked=[prepared.finite_difference_plus_hi(),prepared.finite_difference_plus_lo(),prepared.finite_difference_minus_hi(),prepared.finite_difference_minus_lo()];
+  for(const field of fdPacked){assert.ok(field instanceof Float32Array);assert.equal(field.length,16*16*4);assert.ok(field.every(Number.isFinite));}
+  const channels=prepared.direct_cpu(),fd=prepared.finite_difference_cpu();
+  assert.equal(fd.length,4);assert.ok(fd.every(Number.isFinite));
+  const result=JSON.parse(prepared.finish(channels,'{}'));
+  const suppliedFd=Array.from(fd,value=>value+0.125);
+  const externalResult=JSON.parse(prepared.finish_with_finite_difference(channels,suppliedFd,'{"backend":"external-fd"}'));
+  assert.deepEqual(externalResult.gradient.finiteDifference,suppliedFd.map(value=>value*result.boxSize**meta.dim));
+  assert.notDeepEqual(externalResult.gradient.finiteDifference,result.gradient.finiteDifference);
+  assert.equal(externalResult.execution.backend,'external-fd');
+  assert.throws(()=>prepared.finish_with_finite_difference(channels,fd.subarray(1),'{}'),/finite-difference|length/i);
+  const badFd=fd.slice();badFd[0]=Number.NaN;
+  assert.throws(()=>prepared.finish_with_finite_difference(channels,badFd,'{}'),/finite|nonfinite/i);
   assert.equal(result.conventions.pmArithmetic,'f64');
   assert.equal(result.request.forceMesh,meta.forceMesh);
   assert.ok(result.gradient.relativeError.every(e=>Number.isFinite(e)&&e<=1e-5));

@@ -49,6 +49,52 @@ fn divided_differences_and_simplex_transform() {
 }
 
 #[test]
+fn symmetric_repeated_knots_do_not_stop_at_zero_odd_terms() {
+    // For [0, 0, -ia, -ia], the Hermite–Genocchi integral reduces to
+    // ∫₀¹ t(1-t)e^{-iat}dt. Its independent power series includes every
+    // order, so the exactly-zero cubic term cannot mask the nonzero quartic.
+    let exact = |a: f64| {
+        let z = C64::new(0.0, -a);
+        let mut value = C64::new(0.0, 0.0);
+        let mut derivative = C64::new(0.0, 0.0);
+        let mut power = C64::new(1.0, 0.0);
+        let mut factorial = 1.0;
+        for m in 0..48usize {
+            if m > 0 { power *= z; factorial *= m as f64; }
+            let den = factorial * (m + 2) as f64 * (m + 3) as f64;
+            value += power / den;
+            if m > 0 { derivative += power * ((m as f64) / a) / den; }
+        }
+        (value, derivative)
+    };
+    for a in [0.1, 0.3, 0.8] {
+        let value_at = |x: f64| exp_divided_difference(&[
+            C64::new(0.0, 0.0), C64::new(0.0, 0.0),
+            C64::new(0.0, -x), C64::new(0.0, -x),
+        ]);
+        let value = value_at(a);
+        let (truth, derivative) = exact(a);
+        assert!((value - truth).norm() < 3e-15,
+            "span {a}: value {value} vs independent series {truth}");
+        let step = 1e-5;
+        let fd = (value_at(a + step) - value_at(a - step)) / (2.0 * step);
+        assert!((fd - derivative).norm() < 2e-10,
+            "span {a}: centered derivative {fd} vs independent series {derivative}");
+    }
+}
+
+#[test]
+fn very_wide_repeated_knots_reject_unbounded_taylor_tail() {
+    let value = exp_divided_difference(&[
+        C64::new(0.0, 0.0),
+        C64::new(0.0, 0.0),
+        C64::new(0.0, -10_000.0),
+    ]);
+    assert!(!value.re.is_finite() || !value.im.is_finite(),
+        "a truncated Taylor result must not be returned when its tail bound exceeds the cap: {value}");
+}
+
+#[test]
 fn direct_spectrum_matches_exact_deposit_at_low_k() {
     let n = 64usize;
     let mut c = Cosmo::new(2, n, 1.0);

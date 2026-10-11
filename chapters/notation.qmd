@@ -31,3 +31,12 @@ The forward FFT is unnormalized, the inverse FFT includes $1/N_e^d$, and a Fouri
 Array storage is row major with the last spatial index fastest; positions and velocities are interleaved by component. Every square is split along the same diagonal; every cube has six Kuhn tetrahedra. A boundary neighbor receives a periodic lift before constructing an element. The term “P0” refers to a constant density inside the affine simplex; “P1” refers to an additional normalized linear density reconstruction.
 
 Mass-weighted smoothed PDFs use unsmoothed mass weights as defined in @eq-mass-environment. Hard histogram ranges are finite; captured probabilities are reported. The continuous derivative panel is P0 Fourier power, not a histogram or an exact-clipping derivative.
+
+The compensated GPU finite-difference observer in @sec-gpu-fd uses
+$F_\pm=F[\mathbf x(A\pm h)]$, $\Delta F=F_+-F_-$ and $h=10^{-4}$.
+Its auxiliary path parameter $\theta\in[-1,1]$ joins these endpoint geometries:
+$\mathbf c_j$ is the midpoint and $\mathbf b_j$ their half-gap. The symbol $M$
+in that section bounds the absolute phase slope along this path, rather than a
+particle mass. For the local divided-difference series, $c$ is the knot count,
+$\beta_j$ a centered angular phase, and $e_r,h_m,g_m$ are elementary symmetric,
+complete homogeneous and factorial-normalized coefficients, respectively.

@@ -212,3 +212,58 @@ all stages are GPU-resident or that every request is faster. GPU nLPT
 construction, exact clipping, more precise continuous-mode arithmetic,
 cosmological gradients and adjoints remain subsequent work. Smaller scales
 and newly validated post-crossing physics remain deferred.
+
+
+## 2026-10-11 — compensated GPU finite differences (engine 0.5.0)
+
+The existing `h=1e-4` centered initial-amplitude check is a value-only continuous
+sheet observer at two retained LPT geometries. It now has an optional GPU
+path using high/low f32 lattice-relative displacement inputs and compensated
+phase, divided-difference and reduction arithmetic. The few complex endpoint
+amplitudes and their independently integrated delta return to the host for a
+symmetric f64 power difference and the
+existing physical normalization. No analytic tangent is substituted for an
+endpoint value, and the `1e-5` derivative gate is unchanged.
+
+The small endpoint difference is computed through a three-point Gauss integral
+of the exact continuous simplex directional derivative along the line joining
+the retained endpoints. Only their actual coordinate gaps enter; the LPT JVP
+is kept independent. A conservative half-angle bound of 0.005 gives a
+quadrature power-derivative truncation bound below 7.1e-17 at h=1e-4 for unit
+total mass. This is separate from GPU roundoff and device validation. Requests
+above this limit recover CPU FD. The appendix gives the identity and bound.
+
+The Rust boundary accepts validated external FD values without rerunning the
+CPU endpoint observer, while the original API and cached f64 oracle remain
+available. Initial GPU comparisons exposed loss of compensation under shader
+optimization and an unreliable fused-product residual. Runtime rounding
+barriers and split-product compensation are part of the tested kernel, with
+independent device checks required before enabling the stage.
+
+FD, analytic direct modes and PM trajectories recover independently. A failed
+FD stage uses retained CPU geometry; a failed derivative gate after f64 LPT
+mode recovery rechecks CPU FD before requiring complete direct recovery.
+Manifests record FD precision, hashes, checks, timings and recovery reasons.
+The default and automatic policies remain CPU; shell-crossing cautions and
+physical scope remain unchanged. See [webgpu-fd-results.md](webgpu-fd-results.md).
+
+Independent endpoint fixtures also motivated constant-index sorting networks,
+which avoid a dynamic insertion-sort underflow path for negative modes.
+Reduced-phase sine/cosine polynomials retain orders 17/18, and phase spans
+below 3 radians use 40 normalized local series terms held in registers.
+Each cell writes its endpoint expansion to storage before separate fixed-owner
+32-cell block and mode reductions. Evaluation and reduction stages submit
+separately and wait for completion before storage is consumed. Frozen-input
+wave and Gaussian repetitions also check the FD gate;
+endpoint component repeat differences have a separate 1e-12 absolute budget.
+Bitwise output hashes are diagnostic. These
+settings target cancellation in weak finite differences; the gates are not
+relaxed.
+
+The CPU reference series previously stopped after a small individual term.
+Symmetric knots can make an odd coefficient exactly zero while subsequent
+even coefficients remain nonzero. The reference now truncates using a
+conservative factorial-tail bound and normalized coefficient recurrence.
+An unmet tail bound at the resource cap returns nonfinite arithmetic for
+downstream rejection. Independent integral-series tests cover values and
+centered derivatives of symmetric repeated knots.

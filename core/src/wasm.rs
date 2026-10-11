@@ -181,6 +181,22 @@ impl PreparedLabRun {
     pub fn direct_quantized_cpu(&self) -> Vec<f64> {
         self.inner.direct_quantized_cpu()
     }
+    /// High part of f32-expanded vec4 lattice displacement for A+h positions.
+    pub fn finite_difference_plus_hi(&self) -> Vec<f32> {
+        self.inner.finite_difference_plus_hi().to_vec()
+    }
+    /// Low residual of f32-expanded vec4 lattice displacement for A+h positions.
+    pub fn finite_difference_plus_lo(&self) -> Vec<f32> {
+        self.inner.finite_difference_plus_lo().to_vec()
+    }
+    /// High part of f32-expanded vec4 lattice displacement for A-h positions.
+    pub fn finite_difference_minus_hi(&self) -> Vec<f32> {
+        self.inner.finite_difference_minus_hi().to_vec()
+    }
+    /// Low residual of f32-expanded vec4 lattice displacement for A-h positions.
+    pub fn finite_difference_minus_lo(&self) -> Vec<f32> {
+        self.inner.finite_difference_minus_lo().to_vec()
+    }
     /// Raw f64 finite-difference power derivatives, cached after the first call.
     pub fn finite_difference_cpu(&self) -> Vec<f64> {
         self.inner.finite_difference_cpu().to_vec()
@@ -188,6 +204,17 @@ impl PreparedLabRun {
     pub fn finish(&self, channels: &[f64], execution: &str) -> Result<String, JsValue> {
         self.inner
             .finish(channels, execution)
+            .map(|v| v.to_string())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn finish_with_finite_difference(
+        &self,
+        channels: &[f64],
+        finite_difference: &[f64],
+        execution: &str,
+    ) -> Result<String, JsValue> {
+        self.inner
+            .finish_with_finite_difference(channels, finite_difference, execution)
             .map(|v| v.to_string())
             .map_err(|e| JsValue::from_str(&e))
     }

@@ -79,7 +79,7 @@ numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed se
 selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of time steps in the particle-mesh trajectory.');
-selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. GPU attempts validated cosmological PM evolution and continuous sheet modes in 2D/3D. The PM force FFT requires a power-of-two force grid; other grids retain CPU PM. Weak LPT modes may use f64 CPU recovery. Exact sheet deposition and the finite-difference check stay on CPU; 1D and automatic selection use CPU.');
+selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. GPU attempts validated cosmological PM evolution, continuous sheet modes and compensated centered finite differences in 2D/3D. The PM force FFT requires a power-of-two force grid; other grids retain CPU PM. Weak LPT modes may use f64 CPU recovery. Exact sheet deposition stays on CPU; 1D and automatic selection use CPU.');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Controls density, PDFs, and spectra; this does not change force resolution.');
 selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Independent force resolution. Change it separately to measure force-grid sensitivity.');
 activeControlGroup=controlSection('Density observation');
@@ -124,7 +124,7 @@ function ensureWorker(){
   if(worker)return worker;
   worker=new Worker('./js/worker.js',{type:'module'});
   worker.onmessage=({data})=>{
-    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference-sync':'Checking the CPU finite difference…','pm-evolution':'Evolving PM trajectories on GPU…','observations-sync':'Depositing the sheet exactly…','pm-recovery-sync':'Recovering PM trajectories on CPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
+    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','pm-evolution':'Evolving PM trajectories on GPU…','observations-sync':'Depositing the sheet exactly…','pm-recovery-sync':'Recovering PM trajectories on CPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
     if(data.type==='cancelled'&&data.requestId===activeRequestId){clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}
     if(data.type==='shutdown-ack'){hardTerminateWorker();return;}
@@ -289,7 +289,7 @@ function showExecution(meta){
   backendMeta.replaceChildren();
   $('h3','control-subheading',backendMeta,'Run backend and precision');
   const grid=$('div','execution-meta',backendMeta);
-  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','PM evolution','PM validation','PM timings','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','PM evolution','PM validation','PM timings','Finite difference','FD validation','FD timings','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
   compact('Requested backend',meta.requestedBackend);
   compact('Executed backend',meta.executedBackend);
   compact('Precision',meta.precision);
@@ -298,6 +298,12 @@ function showExecution(meta){
     compact('PM evolution',`${pm.backend} · ${pm.precision}${pm.fallbackReason?` · ${pm.fallbackReason}`:''}`);
     if(pm.validation)compact('PM validation',`${pm.validation.status} · ${pm.validation.rows?.length||0} FFT/force/trajectory checks`);
     if(pm.timings){const labels={compileMs:'setup',uploadMs:'upload',kernelMs:'force/KDK',diagnosticMs:'initial orientation',cpuCheckMs:'CPU orientation rechecks',readbackMs:'final readback',totalMs:'total'};compact('PM timings',Object.entries(pm.timings).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${labels[k]||k} ${num(v,3)} ms`).join(' · '));}
+  }
+  const fd=meta.finiteDifference;
+  if(fd){
+    compact('Finite difference',`${fd.backend} · h=${fd.h} · ${fd.precision}${fd.fallbackReason?` · ${fd.fallbackReason}`:''}`);
+    if(fd.validation)compact('FD validation',`${fd.validation.status} · ${fd.validation.rows?.length||0} endpoint/finite-difference checks`);
+    if(fd.timings)compact('FD timings',Object.entries(fd.timings).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${k.replace(/Ms$/,'')} ${num(v,3)} ms`).join(' · '));
   }
   if(meta.fallbackReason){const item=$('p','execution-fallback',backendMeta,meta.fallbackReason);item.setAttribute('role','note');}
 
@@ -323,7 +329,7 @@ function showExecution(meta){
   }
 
   const timings=meta.timings||meta.gpuAttempt?.timings||{},stages=timings.stages||{};
-  const stageLabels={preparationMilliseconds:'preparation',directMilliseconds:device?'direct/setup':'CPU direct',finiteDifferenceMilliseconds:'CPU finite difference',cpuRecoveryMilliseconds:'CPU recovery',finalizationMilliseconds:stages.cpuRecoveryMilliseconds>0?'finalization (includes recovery)':'finalization'};
+  const stageLabels={preparationMilliseconds:'preparation',directMilliseconds:device?'direct/setup':'CPU direct',finiteDifferenceMilliseconds:`${fd?.backend==='gpu'?'GPU':'CPU'} finite difference`,cpuRecoveryMilliseconds:'CPU recovery',finalizationMilliseconds:stages.cpuRecoveryMilliseconds>0?'finalization (includes recovery)':'finalization'};
   const stageParts=Object.entries(stages).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${stageLabels[k]||k.replace(/Milliseconds$/,'')} ${num(v,3)} ms`);
   if(typeof timings.kernelMs==='number'&&Number.isFinite(timings.kernelMs))stageParts.unshift(`GPU kernel ${num(timings.kernelMs,3)} ms`);
   if(typeof timings.totalMs==='number'&&Number.isFinite(timings.totalMs))stageParts.unshift(`GPU total ${num(timings.totalMs,3)} ms`);
@@ -337,7 +343,8 @@ function showExecution(meta){
   if(backends.exactDeposit)precisionSummary.push('deposit f32 positions→f64 geometry/mass→f32 density');
   if(backends.pdfs)precisionSummary.push('PDF f32 density→f64 stats');
   if(backends.griddedSpectra)precisionSummary.push('FFT f32 field→f64 transform/bins');
-  if(backends.finiteDifference||backends.finalization)precisionSummary.push('FD/finalization f64');
+  if(backends.finiteDifference)precisionSummary.push(`FD ${backends.finiteDifference.backend} · ${backends.finiteDifference.precision}`);
+  if(backends.finalization)precisionSummary.push('finalization f64');
   if(precisionSummary.length||directSummary.length)compact('Stage backends',[...precisionSummary,...directSummary].join(' · '));
 
   if(Array.isArray(meta.modeProvenance)&&meta.modeProvenance.length){

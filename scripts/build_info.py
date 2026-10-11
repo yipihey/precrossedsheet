@@ -22,6 +22,6 @@ now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"
 print("build:", sha + dirty, date)
 
 (ROOT / "app/data/build-info.json").write_text(json.dumps({
-    "gitRevision": full, "buildTime": now, "engineVersion": "0.4.0",
+    "gitRevision": full, "buildTime": now, "engineVersion": "0.5.0",
     "dirty": bool(dirty), "schemaVersion": 3,
 }, indent=2) + "\n")

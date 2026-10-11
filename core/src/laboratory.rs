@@ -266,6 +266,8 @@ pub struct PreparedLabRun {
     pmx: Vec<f64>,
     pmdpos: Vec<f64>,
     fd_channels: OnceLock<Vec<f64>>,
+    fd_plus_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
+    fd_minus_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
 }
 
 /// Shared f64 physical preparation before the final PM evolution. The PM seed,
@@ -896,6 +898,8 @@ fn assemble_prepared(
         pmx: pmx.clone(),
         pmdpos,
         fd_channels: OnceLock::new(),
+        fd_plus_expansion: OnceLock::new(),
+        fd_minus_expansion: OnceLock::new(),
     })
 }
 
@@ -999,6 +1003,47 @@ impl PreparedLabRun {
         })
     }
 
+    fn finite_difference_expansion(&self, plus: bool) -> &(Vec<f32>, Vec<f32>) {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        let values = if plus { &self.xplus } else { &self.xminus };
+        let cache = if plus {
+            &self.fd_plus_expansion
+        } else {
+            &self.fd_minus_expansion
+        };
+        cache.get_or_init(|| {
+            let mut hi = vec![0.0f32; grid.size * 4];
+            let mut lo = vec![0.0f32; grid.size * 4];
+            for i in 0..grid.size {
+                let q = grid.unravel(i);
+                for axis in 0..grid.dim {
+                    let displacement = values[i * grid.dim + axis] - q[axis] as f64 * grid.dx();
+                    let high = displacement as f32;
+                    hi[i * 4 + axis] = high;
+                    lo[i * 4 + axis] = (displacement - high as f64) as f32;
+                }
+            }
+            (hi, lo)
+        })
+    }
+
+    /// High part of the f32 expansion of x(A+h)−q, packed as zero-padded vec4.
+    pub fn finite_difference_plus_hi(&self) -> &[f32] {
+        &self.finite_difference_expansion(true).0
+    }
+    /// Low residual of the f32 expansion of x(A+h)−q, packed as zero-padded vec4.
+    pub fn finite_difference_plus_lo(&self) -> &[f32] {
+        &self.finite_difference_expansion(true).1
+    }
+    /// High part of the f32 expansion of x(A−h)−q, packed as zero-padded vec4.
+    pub fn finite_difference_minus_hi(&self) -> &[f32] {
+        &self.finite_difference_expansion(false).0
+    }
+    /// Low residual of the f32 expansion of x(A−h)−q, packed as zero-padded vec4.
+    pub fn finite_difference_minus_lo(&self) -> &[f32] {
+        &self.finite_difference_expansion(false).1
+    }
+
     pub fn metadata(&self) -> Value {
         json!({"dim":self.request.dim,"n":self.request.n,"modeCount":self.modes.len(),
             "modes":self.modes.iter().map(|m| [m[0],m[1],m[2]]).collect::<Vec<_>>(),"h":self.h,
@@ -1006,6 +1051,17 @@ impl PreparedLabRun {
     }
 
     pub fn finish(&self, channels: &[f64], execution: &str) -> Result<Value, String> {
+        self.finish_with_finite_difference(channels, self.finite_difference_cpu(), execution)
+    }
+
+    /// Finalize with caller-supplied raw-box finite-difference power derivatives.
+    /// This path does not invoke the retained CPU finite-difference calculation.
+    pub fn finish_with_finite_difference(
+        &self,
+        channels: &[f64],
+        finite_difference: &[f64],
+        execution: &str,
+    ) -> Result<Value, String> {
         let expected = self.modes.len() * 8;
         if channels.len() != expected {
             return Err(format!(
@@ -1016,6 +1072,16 @@ impl PreparedLabRun {
         if channels.iter().any(|v| !v.is_finite()) {
             return Err("Direct channel values must all be finite".into());
         }
+        if finite_difference.len() != self.modes.len() {
+            return Err(format!(
+                "Expected {} finite-difference channel scalars, got {}",
+                self.modes.len(),
+                finite_difference.len()
+            ));
+        }
+        if finite_difference.iter().any(|v| !v.is_finite()) {
+            return Err("Finite-difference channel values must all be finite".into());
+        }
         let execution: Value = serde_json::from_str(execution)
             .map_err(|e| format!("Invalid execution metadata JSON: {e}"))?;
         let volume = self.request.box_size.powi(self.request.dim as i32);
@@ -1024,7 +1090,6 @@ impl PreparedLabRun {
         let mut pmpowers = Vec::with_capacity(self.modes.len());
         let mut pmderivs = Vec::with_capacity(self.modes.len());
         let mut errors = Vec::with_capacity(self.modes.len());
-        let fd_cpu = self.finite_difference_cpu();
         let mut fd_values = Vec::with_capacity(self.modes.len());
         for (i, c) in channels.chunks_exact(8).enumerate() {
             let f = Complex64::new(c[0], c[1]);
@@ -1035,7 +1100,7 @@ impl PreparedLabRun {
             let dp = 2.0 * (f.conj() * df).re;
             let pmp = pmf.norm_sqr();
             let pmdp = 2.0 * (pmf.conj() * pmdf).re;
-            let fdv = fd_cpu[i];
+            let fdv = finite_difference[i];
             fd_values.push(fdv * volume);
             powers.push(p * volume);
             derivatives.push(dp * volume);

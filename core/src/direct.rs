@@ -48,24 +48,62 @@ pub fn exp_divided_difference_with_scratch(s: &[C64], t: &mut Vec<C64>, h: &mut 
         mean /= n as f64;
         t.clear();
         t.extend(s.iter().map(|v| v - mean));
-        // h_m via the recursion over variables: h_m(x_1..x_k) = h_m(x_1..x_{k-1}) + x_k h_{m-1}(x_1..x_k)
-        let mmax = 24;
-        h.resize(mmax + 1, C64::new(0.0, 0.0));
-        h.fill(C64::new(0.0, 0.0)); // h for the first k variables
+        // Bound |h_m(δ)| by R^m, R = Σ|δ_j|. Pick a truncation from the
+        // resulting factorial tail bound; a single small term is not enough,
+        // since symmetry can make an odd h_m exactly zero before a nonzero
+        // even term. Compute h_m/(m+n-1)! directly below to avoid overflow
+        // from the unscaled h_m at larger phase spans.
+        let radius: f64 = t.iter().map(|v| v.norm()).sum();
+        let mut base = 1.0;
+        for i in 1..n { base /= i as f64; } // 1/(n-1)!
+        let target_log = (1e-18 * base).ln();
+        let mut log_bound = base.ln();
+        let mut mmax = 0usize;
+        let mut tail_bounded = radius == 0.0;
+        if radius > 0.0 {
+            loop {
+                let next = mmax + 1;
+                log_bound += radius.ln() - ((next + n - 1) as f64).ln();
+                mmax = next;
+                let ratio = radius / (mmax + n) as f64;
+                if ratio < 1.0 {
+                    let log_tail = log_bound - (1.0 - ratio).ln();
+                    if log_tail <= target_log {
+                        tail_bounded = true;
+                        break;
+                    }
+                }
+                // Limit work for pathological wide spans containing a repeated
+                // pair. An unmet bound at the cap is rejected below.
+                if mmax >= 4096 { break; }
+            }
+        }
+        if !tail_bounded {
+            return C64::new(f64::NAN, f64::NAN);
+        }
+        // Scaled complete-homogeneous recurrence. With k variables,
+        // g_m=h_m/(m+k-1)! obeys
+        // g_m^k = (g_m^(k-1) + δ_k g_(m-1)^k)/(m+k-1).
+        let stride = mmax + 1;
+        h.resize(2 * stride, C64::new(0.0, 0.0));
+        h.fill(C64::new(0.0, 0.0));
         h[0] = C64::new(1.0, 0.0);
-        for k in 0..n {
-            for m in 1..=mmax { h[m] = h[m] + t[k] * h[m - 1]; }
+        for m in 1..=mmax { h[m] = h[m - 1] * t[0] / m as f64; }
+        let mut src = 0usize;
+        for k in 1..n {
+            let dst = 1 - src;
+            let off_src = src * stride;
+            let off_dst = dst * stride;
+            let mut inv_fact = 1.0;
+            for i in 1..=k { inv_fact /= i as f64; }
+            h[off_dst] = C64::new(inv_fact, 0.0);
+            for m in 1..=mmax {
+                h[off_dst + m] = (h[off_src + m] + t[k] * h[off_dst + m - 1]) / (m + k) as f64;
+            }
+            src = dst;
         }
-        let mut fact = 1.0f64;
-        for i in 1..n { fact *= i as f64; } // (n-1)!
         let mut sum = C64::new(0.0, 0.0);
-        let mut f = fact;
-        for m in 0..=mmax {
-            if m > 0 { f *= (m + n - 1) as f64; }
-            let term = h[m] / f;
-            sum += term;
-            if term.norm() < 1e-18 * sum.norm().max(1e-300) && m > 2 { break; }
-        }
+        for m in 0..=mmax { sum += h[src * stride + m]; }
         mean.exp() * sum
     }
 }

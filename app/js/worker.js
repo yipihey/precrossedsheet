@@ -184,22 +184,63 @@ async function execute(task) {
   if (cancelled(task)) return {};
   if (channels.length !== metadata.modeCount * 8 || !allFinite(channels)) throw new Error('Direct-mode channels were malformed or non-finite.');
 
-  phase(task, 'finite-difference', 'Evaluating the f64 CPU finite-difference check.', false);
   const fdStarted = performance.now();
-  if (typeof prepared.finite_difference_cpu === 'function') {
-    const fd = copyF64(prepared.finite_difference_cpu());
-    if (fd.length !== metadata.modeCount || !allFinite(fd)) throw new Error('CPU finite-difference channels were malformed or non-finite.');
-    stageTimes.finiteDifferenceMilliseconds = performance.now() - fdStarted;
+  let fdValues = null;
+  let fdExecution = { backend: 'cpu', provenance: 'cpu-f64', precision: 'f64', h: metadata.h };
+  const cpuFd = (reason = null, attempt = null) => {
+    phase(task, 'finite-difference', 'Evaluating the retained f64 CPU finite-difference check.', false);
+    if (typeof prepared.finite_difference_cpu === 'function') {
+      fdValues = copyF64(prepared.finite_difference_cpu());
+      if (fdValues.length !== metadata.modeCount || !allFinite(fdValues)) throw new Error('CPU finite-difference channels were malformed or non-finite.');
+    }
+    fdExecution = { backend: 'cpu', provenance: 'cpu-f64', precision: 'f64', h: metadata.h, fallbackReason: reason, ...(attempt ? { gpuAttempt: attempt } : {}) };
+  };
+  if (execMeta.executedBackend === 'gpu' && !task.policy.disableFd && typeof prepared.finish_with_finite_difference === 'function') {
+    let attempt = null;
+    try {
+      phase(task, 'finite-difference', 'Evaluating both centered sheet endpoints with compensated GPU arithmetic.', true);
+      const context = await getGpuContext(task);
+      const validation = await validateFdContext(context, task);
+      attempt = { device: deviceMetadata(context), validation };
+      if (validation.status !== 'pass' || task.policy.forceFdFailure === 'validation') throw new Error('The GPU centered finite-difference self-check did not pass.');
+      if (cancelled(task)) return {};
+      if (task.policy.forceFdFailure === 'device-loss') { context.device.destroy(); throw new Error('Forced finite-difference device loss.'); }
+      const { runFiniteDifference } = await import('./gpu/finite-difference.js');
+      const fd = await runFiniteDifference(context.device, {
+        dim: metadata.dim, n: metadata.n, modes: copyI32(prepared.mode_records()), h: metadata.h,
+        plusHi: copyF32(prepared.finite_difference_plus_hi()), plusLo: copyF32(prepared.finite_difference_plus_lo()),
+        minusHi: copyF32(prepared.finite_difference_minus_hi()), minusLo: copyF32(prepared.finite_difference_minus_lo()),
+      }, { signal: task.controller.signal, shouldCancel: () => cancelled(task), batchChunks: task.policy.fdBatchChunks ?? task.policy.forceFdBatchChunks,
+        maxGpuBytes: task.policy.forceFdFailure === 'limits' ? 1 : 512 * 1024 * 1024,
+        onProgress: async (progress) => { send({ type: 'progress', requestId: task.requestId, phase: 'finite-difference', ...progress }); await yieldToMessages(); } });
+      if (cancelled(task)) return {};
+      attempt = { ...attempt, timings: fd.timings, diagnostics: fd.diagnostics, kernelProvenance: fd.provenance };
+      if (task.policy.forceFdFailure === 'readback') throw new Error('Forced finite-difference readback failure.');
+      fdValues = copyF64(fd.values);
+      if (task.policy.forceFdFailure === 'nonfinite' && fdValues.length) fdValues[0] = Number.NaN;
+      if (fdValues.length !== metadata.modeCount || !allFinite(fdValues)) throw new Error('GPU finite-difference channels were malformed or non-finite.');
+      fdExecution = { backend: 'gpu', provenance: 'gpu-compensated-f32', precision: 'high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference', h: metadata.h, ...attempt };
+    } catch (error) {
+      if (cancelled(task)) return {};
+      await disposeGpu();
+      cpuFd(String(error?.message || error), attempt);
+    }
+  } else {
+    cpuFd(task.policy.disableFd ? 'GPU finite differences disabled for an explicit reference comparison.' : null);
   }
-  if (execMeta.executedBackend === 'gpu') {
-    execMeta.diagnostics = { ...(execMeta.diagnostics || {}), cpuFiniteDifferencePrecomputed: stageTimes.finiteDifferenceMilliseconds != null };
-  }
+  if (cancelled(task)) return {};
+  stageTimes.finiteDifferenceMilliseconds = performance.now() - fdStarted;
+  const finalize = () => {
+    execMeta.finiteDifference = fdExecution;
+    execMeta.channelProvenance = { ...execMeta.channelProvenance, finiteDifference: fdExecution.provenance };
+    return finish(prepared, channels, execMeta, fdValues);
+  };
   execMeta.pmEvolution = pmExecution;
   execMeta.timings = { ...(execMeta.timings || {}), stages: stageTimes };
 
   phase(task, 'finalizing', 'Finalizing f64 observables and the run manifest.');
   const finalizationStarted = performance.now();
-  let result = finish(prepared, channels, execMeta);
+  let result = finalize();
   if (execMeta.executedBackend === 'gpu') {
     const failedModes = failedDerivativeModes(result, metadata.modeCount);
     if (failedModes == null) {
@@ -210,7 +251,7 @@ async function execute(task) {
       execMeta = cpuExecution(requested, 'GPU run omitted the required finite-difference comparison.');
       execMeta.gpuAttempt = gpuAttempt;
       execMeta.timings = { stages: stageTimes };
-      result = finish(prepared, channels, execMeta);
+      result = finalize();
     } else if (failedModes.length) {
       const recoveryStarted = performance.now();
       const failedIndices = Uint32Array.from(failedModes);
@@ -222,7 +263,7 @@ async function execute(task) {
         execMeta = cpuExecution(requested, 'Selective weak-mode recovery is unavailable in this Wasm build.');
         execMeta.gpuAttempt = gpuAttempt;
         execMeta.timings = { stages: stageTimes };
-        result = finish(prepared, channels, execMeta);
+        result = finalize();
       } else {
         phase(task, 'direct-recovery', 'Recovering weak LPT derivative modes with the f64 CPU reference.', false);
         const recovered = copyF64(prepared.direct_lpt_cpu_modes(failedIndices));
@@ -241,11 +282,18 @@ async function execute(task) {
           executedBackend: 'hybrid',
           fallbackReason: `Weak LPT mode derivative errors exceeded 1e-5; those ${failedModes.length} LPT mode(s) used the f64 CPU reference (${labels.join('; ')}).`,
           precision: 'f32 GPU modes with selective f64 CPU LPT recovery and f64 CPU finalization',
-          channelProvenance: { lpt: 'mixed-cpu-f64-and-gpu-f32', pm: 'gpu-f32', finiteDifference: 'cpu-f64' },
+          channelProvenance: { lpt: 'mixed-cpu-f64-and-gpu-f32', pm: 'gpu-f32', finiteDifference: fdExecution.provenance },
           diagnostics: { ...(execMeta.diagnostics || {}), cpuRecoveredLptModes: failedModes.map((i) => metadata.modes?.[i] || [i]), derivativeGate: 'relativeError <= 1e-5 per mode' },
         };
-        result = finish(prepared, channels, execMeta);
-        const unrecoveredModes = failedDerivativeModes(result, metadata.modeCount);
+        result = finalize();
+        let unrecoveredModes = failedDerivativeModes(result, metadata.modeCount);
+        if ((unrecoveredModes == null || unrecoveredModes.length) && fdExecution.backend === 'gpu') {
+          const recoveryStarted = performance.now();
+          cpuFd('GPU finite differences did not satisfy the unchanged amplitude-derivative gate after f64 LPT recovery.', fdExecution);
+          stageTimes.finiteDifferenceMilliseconds += performance.now() - recoveryStarted;
+          result = finalize();
+          unrecoveredModes = failedDerivativeModes(result, metadata.modeCount);
+        }
         if (unrecoveredModes == null || unrecoveredModes.length) {
           const hybridAttempt = execMeta;
           const fallbackStarted = performance.now();
@@ -254,7 +302,7 @@ async function execute(task) {
           execMeta = cpuExecution(requested, 'The selective f64 LPT recovery did not satisfy the per-mode finite-difference gate; the complete f64 CPU reference was used.');
           execMeta.gpuAttempt = hybridAttempt;
           execMeta.timings = { stages: stageTimes };
-          result = finish(prepared, channels, execMeta);
+          result = finalize();
         }
       }
     }
@@ -268,6 +316,10 @@ async function execute(task) {
   if (pmExecution.backend === 'gpu' && result.execution.executedBackend === 'cpu') {
     result.execution.executedBackend = 'hybrid';
     result.execution.precision = 'f32 GPU PM evolution with f64 CPU direct modes and finalization';
+  }
+  if (fdExecution.backend === 'gpu' && result.execution.executedBackend === 'cpu') {
+    result.execution.executedBackend = 'hybrid';
+    result.execution.precision = 'compensated GPU finite differences with f64 CPU direct modes and finalization';
   }
   stageTimes.finalizationMilliseconds = performance.now() - finalizationStarted;
   if (result.execution) result.execution.timings = { ...(result.execution.timings || {}), stages: stageTimes };
@@ -356,6 +408,16 @@ async function validatePmContext(context, task) {
   return validation;
 }
 
+async function validateFdContext(context, task) {
+  if (context.fdValidation) return context.fdValidation;
+  const { runFiniteDifferenceSelfTest } = await import('./gpu/fd-check.js');
+  const validation = await runFiniteDifferenceSelfTest({ device: context.device, signal: task.controller.signal,
+    onProgress: (progress) => send({ type: 'progress', requestId: task.requestId, phase: 'finite-difference', stage: 'Centered FD device validation', ...progress }) });
+  if (cancelled(task)) throw new Error('Finite-difference validation cancelled.');
+  if (validation.status === 'pass') context.fdValidation = validation;
+  return validation;
+}
+
 async function getGpuContext(task) {
   if (gpuContext && !gpuContextNeedsReinit) return gpuContext;
   if (gpuContext) await disposeGpu();
@@ -419,14 +481,16 @@ function stageBackends(execution) {
     griddedSpectra: { backend: 'cpu', inputPrecision: 'f32 density field', arithmeticPrecision: 'f64 complex FFT and binning', outputPrecision: 'f64 spectrum bins' },
     directPrimal: { lpt: directStage('lpt'), pm: directStage('pm') },
     directJvp: { lpt: directStage('lpt'), pm: directStage('pm') },
-    finiteDifference: { backend: 'cpu', precision: 'f64' },
+    finiteDifference: { backend: execution.finiteDifference?.backend || 'cpu', precision: execution.finiteDifference?.precision || 'f64', provenance: channels.finiteDifference || 'cpu-f64' },
     finalization: { backend: 'cpu', precision: 'f64' },
   };
   return execution;
 }
-function finish(prepared, channels, execution) {
+function finish(prepared, channels, execution, fdValues = null) {
   stageBackends(execution);
-  const raw = prepared.finish(channels, JSON.stringify(execution));
+  const raw = fdValues && typeof prepared.finish_with_finite_difference === 'function'
+    ? prepared.finish_with_finite_difference(channels, fdValues, JSON.stringify(execution))
+    : prepared.finish(channels, JSON.stringify(execution));
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
 }
 function cpuExecution(requestedBackend, fallbackReason) {

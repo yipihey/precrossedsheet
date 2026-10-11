@@ -52,12 +52,17 @@ try {
   const {sessionId}=await send('Target.attachToTarget',{targetId:target.targetId,flatten:true});
   await send('Runtime.enable',{},sessionId);
   const query=new URLSearchParams({autorun:'1'});
+  if(args.has('--fd-probe'))query.set('fd-probe','1');
+  if(args.has('--fd-self'))query.set('fd-self','1');
   if(args.has('--full'))query.set('full','1');
   if(args.has('--benchmark'))query.set('benchmark','1');
   if(args.has('--schedule-benchmark'))query.set('schedule-benchmark','1');
   if(args.has('--resident')||args.has('--resident-benchmark'))query.set('resident','1');
   if(args.has('--resident-benchmark'))query.set('resident-benchmark','1');
   if(args.has('--resident-worker'))query.set('resident-worker','1');
+  if(args.has('--fd-repeat'))query.set('fd-repeat','1');
+  if(args.has('--fd')||args.has('--fd-benchmark'))query.set('fd','1');
+  if(args.has('--fd-benchmark'))query.set('fd-benchmark','1');
   const url=`http://127.0.0.1:${server.address().port}/app/gpu-test.html?${query}`;
   await send('Page.navigate',{url},sessionId);
   const timeoutMs=Number(process.env.GPU_TEST_TIMEOUT_MS||900000),start=Date.now();
@@ -66,7 +71,7 @@ try {
     const result=await send('Runtime.evaluate',{expression:'({report:window.gpuTestReport || null,stage:document.querySelector("#status")?.textContent})',returnByValue:true},sessionId);
     report=result.result?.value?.report;
     const stage=result.result?.value?.stage;
-    if(stage&&stage!==lastStage){lastStage=stage;if(args.has('--resident-benchmark'))console.error(stage);}
+    if(stage&&stage!==lastStage){lastStage=stage;if(args.has('--resident-benchmark')||args.has('--fd-benchmark'))console.error(stage);}
     if(report&&['pass','fail','skip'].includes(report.status))break;
     if(events.length)throw new Error(JSON.stringify(events));
     await new Promise(r=>setTimeout(r,500));
@@ -76,9 +81,12 @@ try {
     machine:{cpu:cpus()[0]?.model??null,logicalCpus:cpus().length,memoryBytes:totalmem(),platform:platform(),architecture:arch(),release:release()}};
   const outputFlag=process.argv.indexOf('--output');
   if(outputFlag>=0){if(!process.argv[outputFlag+1])throw new Error('--output requires a path');await writeFile(resolve(process.argv[outputFlag+1]),JSON.stringify(report,null,2)+'\n');}
+  const median=values=>{const sorted=[...values].filter(Number.isFinite).sort((a,b)=>a-b);return sorted.length?sorted[Math.floor(sorted.length/2)]:null;};
+  const fdTimings=(report.fd?.timings??[]).map(t=>({request:t.request??null,cpuFiniteDifferenceMs:t.cpuFiniteDifferenceMs??null,gpuFiniteDifferenceWallMs:t.gpuFiniteDifferenceWallMs??null,gpuKernelMs:t.gpu?.kernelMs??null,repeats:t.repeats??null,cpuFdMedianMs:median(t.cpuFdWallMs??t.cpuMs??[]),gpuFdMedianMs:median(t.gpuFdWallMs??t.gpuWallMs??[]),gpuKernelMedianMs:median(t.gpuKernelMs??[]),pairedAccuracy:t.pairedAccuracy?.map(p=>({repeat:p.repeat,pass:p.pass,maximumWeakScaledRelative:p.comparison?.maximumWeakScaledRelative}))??null}));
   const concise={status:report.status,reason:report.reason??report.resident?.reason,browser:report.browser.product,adapter:report.deviceInfo?.adapter,
     kernelRows:report.kernel?.rows.length??report.rows?.length,labRows:report.lab?.rows.length,
     residentRows:report.resident?.rows?.length,residentBenchmarks:report.resident?.timings,
+    probe:report.probe,fdRepeat:report.fdRepeat?{status:report.fdRepeat.status,repeatsPerCase:report.fdRepeat.repeatsPerCase,totalRepeats:report.fdRepeat.totalRepeats,endpointRepeatBudget:report.fdRepeat.endpointRepeatBudget,cases:report.fdRepeat.cases?.map(({label,request,repeats,status,inputHashes,outputsStable,runs})=>({label,request,repeats,status,inputHashes,cpuFiniteDifferenceHash:inputHashes?.cpuFiniteDifference,outputsStable,maximumComponentAbsoluteDifferenceVsFirst:Math.max(0,...(runs??[]).map(run=>run.componentRepeatError?.maximumAbsolute??Infinity)),runs:runs?.map(({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes})=>({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes}))})),runs:report.fdRepeat.runs?.map(({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes})=>({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes}))}:null,fdRows:report.fd?.rows?.length,fdSelfTest:{status:report.fd?.selfTest?.status,rows:report.fd?.selfTest?.rows?.map(r=>({label:r.label,pass:r.pass,maximumWeakScaledRelative:r.maximumWeakScaledRelative,maximumAbsoluteError:r.maximumAbsoluteError,failedModes:r.failedModes}))},fdNumericalCases:report.fd?.cases?.map(c=>({label:c.label,request:c.request,pass:c.pass,maximumWeakScaledRelative:c.accuracy?.maximumWeakScaledRelative,failedModes:c.accuracy?.failedModes,finalizerGatePass:c.finalizer?.gatePass,crossing:c.crossing})),fdTimings,
     gpuEligibleRequests:report.lab?.cases?.filter(c=>c.gpuEligible).length,totalRequests:report.lab?.cases?.length,
     failures:report.rows?.filter(r=>r.ok===false||r.pass===false),
     benchmarks:report.lab?.timings?.filter(t=>t.benchmark).map(t=>t.endToEndWorker

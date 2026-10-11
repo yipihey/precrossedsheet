@@ -1,5 +1,45 @@
 # Verification record — 2026-10-11
 
+## Compensated GPU finite differences (engine 0.5.0, schema 3)
+
+- `make test` passed all 66 Rust tests and the JavaScript state/replay checks.
+  The new native regressions cover symmetric repeated knots and rejection of
+  an unbounded Taylor tail. The prepared-run contract covers high/low endpoint
+  packing and externally supplied finite differences.
+- `make test-wasm` rebuilt the release binary and passed 1D–3D mass, derivative,
+  crossed-output, typed endpoint/finalizer, and worker lifecycle checks.
+- The independent GPU FD suite passed 47 checks, including five full requests,
+  separate arithmetic and segment-integral fixtures, phase-gap/resource
+  rejection, forced recovery, device reacquisition and cancellation after an
+  actual endpoint batch. All comparisons retain the existing 1e-5 weak-mode
+  and analytic-derivative gates.
+- Forty executions on frozen wave/Gaussian requests (twenty each) passed the
+  CPU-FD comparison and the 1e-12 endpoint/delta component repeat budget. Exact output hashes are diagnostic.
+  The result is device-specific; it does not promise bitwise portable output.
+
+- The final completed-stage benchmark passed all 50 rows and every timed
+  comparison at 32³ and 64³. FD median speedups were 3.44× and 3.07×;
+  the complete matched 32³ worker request used 16.37% less elapsed time.
+- The existing observer regression passed 34 independent kernel checks and
+  47 full-request/worker checks with the corrected CPU series and new FD path.
+- The resident GPU regression passed all 131 FFT/force/trajectory and
+  full-request checks.
+- `make check` rebuilt the engine 0.5.0 API and resolved every provenance link.
+- `quarto render` completed all 13 pages without unresolved cross-references
+  or citations. Desktop and 390-pixel appendix review found no KaTeX errors
+  or horizontal page overflow.
+- The local matched 32³ gradient lab used GPU PM and GPU FD with 23 passing
+  FD startup checks. The final per-mode derivative gate passed (maximum
+  displayed error 3.761e-6). FD backend/precision/timings were visible;
+  desktop and narrow layouts had no overflow, and the lab console had no
+  new errors or warnings.
+
+Full requests, arithmetic and phase-gap budgets, source/binary fingerprints,
+raw comparisons and timings are recorded in [webgpu-fd-results.json](webgpu-fd-results.json).
+The derivation, timing scope and reproduction commands are explained in
+[webgpu-fd-results.md](webgpu-fd-results.md). CPU remains the default; GPU FD
+recovery is independent of completed PM and direct-mode stages.
+
 ## Resident cosmological PM revision (engine 0.4.0, schema 3)
 
 - `make test` passed all 64 Rust tests and JavaScript state/replay checks.

@@ -4,10 +4,11 @@ Implementation record: 2026-10-11. Milestones M0–M4 are implemented in the
 current first-release hybrid path. GPU execution remains opt-in through the
 `gpu` backend setting; `cpu` is the default and `auto` currently selects CPU.
 The resident FFT and cosmological PM portion of M5 is implemented in engine
-0.4.0. See the [observer record](webgpu-results.md) and
-[resident PM record](webgpu-pm-results.md) for measured outcomes.
+0.4.0. Engine 0.5.0 adds compensated GPU centered finite differences (M6).
+See the [observer record](webgpu-results.md), [resident PM record](webgpu-pm-results.md)
+and [finite-difference record](webgpu-fd-results.md) for measured outcomes.
 
-## First-release behavior
+## Historical first-release observer behavior (engine 0.3.0)
 
 The first release accelerates only the continuous fixed-mass P0 Fourier modes
 and their analytic position JVPs in 2D and 3D. Rust/Wasm prepares the complete
@@ -37,7 +38,7 @@ provenance record when the final result is CPU.
 |---|---|
 | `cpu` | Default. Use the Rust/Wasm reference, including f64 continuous modes and tangents. |
 | `auto` | Use the Rust/Wasm reference. Automatic GPU selection remains disabled pending a device/workload policy supported by [webgpu-results.md](webgpu-results.md). |
-| `gpu` | Attempt validated resident PM and direct-mode paths in 2D/3D. Resident PM requires a radix-2 force mesh. The stages recover independently on CPU, with reasons recorded. 1D remains CPU. |
+| `gpu` | Attempt validated resident PM, direct-mode and compensated finite-difference paths in 2D/3D. Resident PM requires a radix-2 force mesh. The stages recover independently on CPU, with reasons recorded. 1D remains CPU. |
 
 The default GPU schedule is `cell-tile`: one workgroup handles one mode and a
 64-cell tile, distributes cells across 64 lanes, and reduces the tile in a
@@ -61,8 +62,7 @@ execution is the default. The per-device self-check is labeled provisional in
 run metadata; automatic policy stays on CPU until the GPU workload and browser
 evidence meet the release criteria. Current limitations include f32 GPU input
 and arithmetic, only 2D/3D browser GPU execution, and CPU execution for initial
-conditions, nLPT construction, clipping, PDFs, gridded spectra, finite
-differences, and finalization. Resident PM support is described below.
+conditions, nLPT construction, clipping, PDFs, gridded spectra and finalization. Resident PM support is described below.
 
 ## Kernel contract and validation
 
@@ -94,9 +94,9 @@ gate. A missing adapter is a skip in ordinary browser automation; it is not a
 numerical pass. See [webgpu-results.md](webgpu-results.md) for recorded
 validation and timings.
 
-Finite differences remain on f64 CPU by default. GPU finite-difference parity
-at `h=1e-4` is a separate experimental gate; this release does not use GPU
-finite differences to validate the displayed tangent. The current error gate
+CPU requests retain f64 finite differences. In engine 0.5.0, explicit GPU
+requests use compensated endpoint integrals after a separate per-device
+finite-difference check, with f64 CPU recovery. The step remains `h=1e-4`. The current error gate
 is evaluated per mode. Weak LPT derivative modes can be selectively recovered
 in f64; a remaining failure switches all direct channels to CPU. The GPU does
 not add an exact-clipped-density shape derivative, reverse adjoint, or
@@ -163,7 +163,40 @@ independent of trajectory recovery.
 
 The [resident PM record](webgpu-pm-results.md) specifies component budgets,
 complete-request checks and measured timing inclusions. GPU nLPT construction,
-geometric clipping, finite differences and more precise weak-mode arithmetic
-remain subsequent work. Clipping must preserve positivity and mass accounting
+geometric clipping and more precise analytic weak-mode arithmetic remain
+subsequent work. Compensated GPU finite differences are described below. Clipping must preserve positivity and mass accounting
 on difficult degeneracies and cell-boundary cases. Reusing Hopf–Cole kernels
 does not establish equivalence for these operations.
+
+
+## M6: compensated centered finite differences
+
+Engine 0.5.0 exposes high/low f32 expansions of both retained f64 LPT endpoint
+displacements at the existing amplitude step `h=1e-4`. A new GPU endpoint
+observer evaluates the two continuous sheets using the same
+Kuhn simplex geometry, periodic lifts and fixed masses. High/low phase,
+divided-difference and reduction arithmetic preserve the small endpoint
+change. A three-point Gauss integral of the exact continuous directional
+derivative along their connecting path supplies the amplitude difference
+without subtracting independently rounded integrals. It uses actual endpoint
+gaps; the LPT analytic JVP remains independent. A conservative half-angle
+bound of 0.005 limits quadrature truncation, otherwise CPU FD is used. The
+host combines the amplitude delta and endpoint sum in f64.
+
+The worker validates the acquired device with independent piecewise-linear
+segment integrals, including repeated knots, weak and signed modes,
+translations, non-radix lattices and folds. Full-request release fixtures
+compare with the retained Rust f64 endpoint observer. The existing per-mode
+analytic derivative gate of `1e-5` is unchanged. FD failure recovers that stage
+on CPU; a derivative failure after selective f64 LPT recovery also rechecks
+CPU FD before full direct recovery. Completed PM evolution remains available.
+
+The compensated arithmetic uses runtime rounding barriers and a split-product
+residual. Portable WGSL optimization and its `fma` accuracy contract cannot
+be assumed to preserve an IEEE fused residual. The device check remains a
+requirement; high/low representation does not provide a universal f64
+accuracy guarantee. The [FD record](webgpu-fd-results.md) reports the measured
+fixtures and timing scopes, including the compiler behavior encountered in
+validation. GPU buffers, partials and staging are budgeted; bounded submitted
+batches yield to cancellation and release owned buffers before replacement.
+Automatic selection remains CPU.

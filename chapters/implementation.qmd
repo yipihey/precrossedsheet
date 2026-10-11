@@ -91,7 +91,7 @@ The prepared-run boundary retains the double-precision trajectory and tangent ar
 | Exact density, PDFs and gridded power | Existing Rust/Wasm implementation |
 | Continuous LPT/PM modes and analytic JVPs | Optional WGSL f32 kernel; CPU reference remains available |
 | Weak LPT mode recovery | Retained CPU f64 trajectory and direction |
-| Centered finite difference | CPU f64, value-only integral, cached per prepared run |
+| Centered finite difference | Optional compensated GPU endpoint observer; cached CPU f64 reference and recovery |
 | Power, derivative and physical units | Rust f64 finalization |
 
 For a fixed-mass simplex, the kernel evaluates the barycentric exponential divided difference and its repeated-knot derivative from @eq-simplex-fourier and @eq-amplitude-jvp. It retains periodic lifts and the same two-triangle or six-tetrahedron connectivity. The port adapts the stable local Taylor/Newton strategy from the MIT-licensed [Hopf–Cole direct kernel](https://github.com/yipihey/hopf-cole-cosmology/blob/3a3a13b9ba817c5b4f8f9f26314715845e13d4ad/app/js/gpu/direct.js). The [reuse manifest](../app/js/gpu/reuse-manifest.json) records original paths and hashes. Contributions are accumulated with an explicit reduction order and numerical diagnostics; no magnitude guard silently removes an element.
@@ -104,7 +104,7 @@ The first backend covers 2D and 3D, including supported non-power-of-two lattice
 
 The portable [WGSL floating-point contract](https://www.w3.org/TR/WGSL/#floating-point-types) supplies f32 rather than an f64 path. The [GPU self-check](../app/gpu-test.html) compares primal and JVP components with independently converged barycentric quadrature. The complete-request harness separately compares full-f64 Rust inputs, f64 kernels on quantized inputs, and GPU arithmetic. Its comparison target is $|\Delta F|\le10^{-6}+10^{-4}|F_{\rm ref}|$ component by component, with the same target for the JVP. This absolute floor makes cancellation-dominated modes interpretable; it does not assert uniform relative accuracy for arbitrarily weak modes.
 
-The existing amplitude derivative gate remains a relative discrepancy of at most $10^{-5}$ against the CPU centered finite difference at $h=10^{-4}$. Separately reduced GPU f32 powers at $A\pm h$ are therefore not used for that check. When an LPT mode exceeds the gate, its value and tangent are recovered together on CPU f64; PM channels and passing LPT modes can remain on GPU. The manifest records the executed backend of each mode. This recovery is a numerical precision policy, independent of the shell-crossing caution.
+The existing amplitude derivative gate remains $|\partial_A P-P_{\rm FD}|/\max(|\partial_A P|,10^{-9})\le10^{-5}$ in internal unit-box units, at $h=10^{-4}$. The centered finite difference uses the compensated endpoint kernel in @sec-gpu-fd when its device check passes; it retains the f64 CPU reference and recovery route. Ordinary independently reduced f32 endpoint powers are insufficient for this check. When an LPT mode exceeds the gate, its value and tangent are recovered together on CPU f64; PM channels and passing LPT modes can remain on GPU. The manifest records the executed backend of each mode. This recovery is a numerical precision policy, independent of the shell-crossing caution.
 
 CPU is the default. Selecting GPU attempts the accelerated observer and reports resource, capability or numerical fallback. Automatic selection remains on CPU until a device/workload policy is supported by accuracy and end-to-end measurements. Rendering uses the existing Canvas2D/SVG tier independently. Device limits, adapter metadata when exposed, shader hashes, reduction layout, stage durations and recovery decisions accompany the numerical results. Cross-device GPU replay uses stated tolerances rather than bitwise equality.
 
@@ -120,7 +120,7 @@ python3 scripts/profile_native_stages.py --dim 3 --repeats 3 --output native-pro
 
 The browser runner requires Chrome (or `CHROME_PATH`) and has no npm dependencies. A missing adapter is reported as a skip; `--require-gpu` makes that a failing requirement. Normal hosted CI runs the native, Wasm and worker contracts, while GPU checks require a GPU-capable runner. See the [implementation plan](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-backend-plan.md) and [measurement record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-results.md) for the tested requests and device-specific limits.
 
-GPU nLPT construction, geometric clipping and higher-precision continuous-mode arithmetic remain subsequent stages. CPU finite differences and selective weak-mode recovery continue to account for much of the complete-request cost.
+GPU nLPT construction, geometric clipping and more precise analytic mode/JVP arithmetic remain subsequent stages. Selective CPU recovery of weak LPT analytic modes remains part of the hybrid observer policy.
 
 ## Resident cosmological PM evolution {#sec-gpu-pm}
 
@@ -150,3 +150,146 @@ Select GPU and inspect the PM evolution entry together with the continuous-mode 
 
 {{< lab "v=3&dim=3&n=32&epoch=scaleFactor&a=0.25&steps=32&mesh=32&force=32&backend=gpu&view=gradient" "Resident PM and continuous-mode response" >}}
 :::
+
+
+## Centered finite differences on GPU {#sec-gpu-fd}
+
+The amplitude check evaluates two actual perturbed LPT sheets at fixed epoch,
+$\boldsymbol x_\pm=\boldsymbol x(A\pm h)$ with $h=10^{-4}$. It does not reuse the
+analytic JVP as an approximation to these endpoint values. The value-only
+continuous simplex integral from @eq-simplex-fourier gives $F_\pm$; the check is
+
+$$
+P_{\rm FD}=\frac{|F_+|^2-|F_-|^2}{2h}
+=\frac{\operatorname{Re}[(F_+-F_-)\overline{(F_++F_-)}]}{2h}.
+$$ {#eq-gpu-centered-fd}
+
+Directly subtracting independently rounded endpoint amplitudes amplifies their
+absolute errors by $1/h$. The GPU instead evaluates the same endpoint
+difference through a continuous path between the retained geometries. Write
+$\boldsymbol x_j(\theta)=\boldsymbol c_j+\theta\boldsymbol b_j$, where
+$\boldsymbol c_j=(\boldsymbol x_{+,j}+\boldsymbol x_{-,j})/2$ and
+$\boldsymbol b_j=(\boldsymbol x_{+,j}-\boldsymbol x_{-,j})/2$.
+Then
+
+$$
+\Delta F=F_+-F_-=\int_{-1}^{1}\frac{dF(\theta)}{d\theta}\,d\theta.
+$$ {#eq-gpu-endpoint-path}
+
+For a simplex contribution $F_T=w_T\exp[s_0,\ldots,s_d]$ with
+$s_j=-2\pi i\boldsymbol m\cdot\boldsymbol x_j(\theta)$, differentiation gives
+
+$$
+\frac{dF_T}{d\theta}=w_T\sum_{j=0}^{d}
+(-2\pi i\boldsymbol m\cdot\boldsymbol b_j)
+\exp[s_0,\ldots,s_d,s_j].
+$$ {#eq-gpu-endpoint-path-derivative}
+
+These repeated-knot integrals use the actual endpoint gaps. The path is an
+integration device, rather than an intermediate LPT trajectory; the analytic
+LPT amplitude direction is not supplied to this observer. Three-point
+Gauss–Legendre quadrature uses nodes $0,\pm\sqrt{3/5}$ and weights
+$8/9,5/9,5/9$ on $[-1,1]$. For a unit-total-mass sheet define
+$M=\pi\max_T\max_j|\boldsymbol m\cdot(\boldsymbol x_{+,j}-\boldsymbol x_{-,j})|$.
+The [Gauss remainder formula](https://dlmf.nist.gov/3.5.E19), applied separately
+to the real and imaginary parts, bounds the quadrature error by
+$|\epsilon_{\Delta F}|\le\sqrt{2}M^7/15750$.
+Since $|F_++F_-|\le2$, the induced power-derivative error is at most
+$\sqrt{2}M^7/(15750h)$.
+The host checks the conservative bound
+$M\le\pi\|\boldsymbol m\|_1\max_{j,a}|x_{+,j,a}-x_{-,j,a}|\le0.005$;
+otherwise this stage recovers on CPU. At the limit and $h=10^{-4}$, the
+quadrature contribution is below $7.1\times10^{-17}$ in internal units.
+This is a truncation bound, not a bound on GPU roundoff.
+
+The endpoint sum and independently accumulated $\Delta F$ return to host f64
+for @eq-gpu-centered-fd. The physical volume factor is applied later by the
+same Rust finalizer as for the analytic derivative.
+
+Rust retains both f64 endpoint geometries. For each displacement component it
+packs $\psi_{\rm hi}=\operatorname{f32}(x_\pm-q)$ and
+$\psi_{\rm lo}=\operatorname{f32}[(x_\pm-q)-\psi_{\rm hi}]$.
+Integer lattice coordinates supply $q$ without prematurely rounding the sum
+$q+\psi$ into an absolute f32 position. The typed getters and externally
+supplied finite-difference finalizer are exposed by
+{{< src laboratory::PreparedLabRun::finite_difference_plus_hi >}} and
+{{< src laboratory::PreparedLabRun::finish_with_finite_difference >}};
+{{< test prepared_run_finishes_identically_and_validates_direct_channels "endpoint packing and finalization" >}}
+checks reconstruction, output compatibility and invalid-channel rejection.
+The external finalizer consumes the supplied values directly, without
+invoking the CPU endpoint observer. The CPU series evaluator also uses a tail
+bound: a vanishing odd coefficient in a symmetric knot set does not justify
+omitting later even coefficients. This case is covered by
+{{< test symmetric_repeated_knots_do_not_stop_at_zero_odd_terms "symmetric-knot series regression" >}}.
+
+The WGSL evaluator carries high/low pairs through phase construction,
+exponential divided differences and fixed-order reductions. It uses explicit
+rounding barriers and split-product residuals, with reduced-phase polynomials
+for the complex exponential and the same periodic simplex lifts and fixed
+masses as the other continuous observer. Phase spans below 3 radians use
+40 normalized series terms; wider separated knots use divided differences. Both
+endpoint sheets retain their own geometry, including orientation reversals.
+The four vec4 input arrays occupy 16 MiB at $64^3$. For the six observed modes,
+per-cell complex plus/minus/delta expansions occupy another 72 MiB. Separate passes
+reduce each 32-cell block and then all blocks in a fixed order, with one sum
+owner per block or mode. Endpoint evaluation, delta evaluation and chunk
+reduction are separate completed submissions before the next stage consumes
+their storage. These fields, partials and readback buffers are checked
+against the device and per-run allocation limits.
+
+For $c$ phase knots, define $\beta_j=-2\pi(\phi_j-\bar\phi)$ and the
+complete homogeneous coefficients by
+$\prod_j(1-\beta_j t)^{-1}=\sum_{m\ge0}h_m t^m$.
+If $e_r$ are the elementary symmetric coefficients of the $\beta_j$, the
+normalized coefficients $g_m=h_m/(m+c-1)!$ obey
+
+$$
+g_m=\sum_{r=1}^{\min(m,c)}
+\frac{(-1)^{r-1}e_r g_{m-r}}
+{\prod_{s=0}^{r-1}(m+c-1-s)},\qquad
+ g_0=\frac{1}{(c-1)!}.
+$$ {#eq-gpu-normalized-series}
+
+The local integral is $e^{-2\pi i\bar\phi}\sum_m i^m g_m$.
+The repeated-node derivative requires five knots in 3D and five lagged
+coefficients; the
+[WGSL implementation](https://github.com/yipihey/precrossedsheet/blob/main/app/js/gpu/finite-difference.js)
+keeps them in registers. A phase span below 3 radians gives
+$R=\sum_j|\beta_j|\le7.5$ for at most five knots, and
+$|h_m|\le R^m$ bounds the omitted factorial tail after 40 terms below
+$10^{-17}g_0$. Normalization avoids separately constructing large $h_m$ and
+very small inverse factorials. Independent arithmetic, repeated-knot and
+complete-request fixtures check the resulting observer.
+
+High/low arithmetic is a compensated f32 implementation, rather than native
+f64. The [WGSL evaluation contract](https://www.w3.org/TR/WGSL/#floating-point-evaluation)
+permits transformations whose behavior depends on the compiler and adapter.
+Each acquired device must therefore pass independent endpoint and
+finite-difference fixtures before this stage is enabled. Complete-request
+checks separately compare the GPU result with retained Rust f64 endpoint
+integrals, including weak modes. The acceptance target is
+$|P_{\rm FD,GPU}-P_{\rm FD,CPU}|/\max(|P_{\rm FD,CPU}|,10^{-9})\le10^{-5}$
+in internal units. This fixture budget is distinct from the unchanged
+analytic-derivative gate.
+
+Capability, resource, validation or execution failures recover the cached
+f64 CPU finite difference without discarding a completed PM trajectory or
+passing direct channels. If the derivative gate still fails after f64 LPT
+mode recovery, the worker checks again using CPU finite differences before
+requiring complete CPU direct-mode recovery. The manifest records FD
+precision, step, shader hashes, device validation, timings and any recovery
+reason separately from PM and analytic channels. Submitted endpoint batches
+are cancellable with the same owned-buffer cleanup contract as the other
+GPU stages. One-dimensional requests and automatic backend selection retain
+CPU execution.
+
+```sh
+node scripts/test_gpu.mjs --require-gpu --fd --output fd-checks.json
+node scripts/test_gpu.mjs --require-gpu --fd-benchmark --output fd-benchmark.json
+node scripts/test_gpu.mjs --require-gpu --fd-repeat --output fd-repeat.json
+```
+
+See the [finite-difference validation record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-fd-results.md)
+for requests, observed discrepancies, measured timing scopes and device limits.
+
+{{< lab "v=3&dim=3&n=32&epoch=scaleFactor&a=0.25&steps=32&mesh=32&force=32&backend=gpu&view=gradient" "GPU centered finite-difference response" >}}

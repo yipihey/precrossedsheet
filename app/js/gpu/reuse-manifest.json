@@ -10,7 +10,7 @@
       "source": "app/js/gpu/direct.js",
       "sha256": "369d4a1b159b5d971c847db36b0c47fe20e4eda12d036ee2d2b75291c9e5ea09",
       "reuse": "Stable local Taylor and Newton exponential divided-difference strategy, phase reduction for exponentials, periodic lattice reconstruction and Kuhn simplex connectivity.",
-      "adaptation": "Rewritten as a worker-safe P0 fixed-mass direct-mode kernel; added analytic signed JVPs, original phase-direction association, arbitrary integer modes, bounded chunks, diagnostics, non-power-of-two grids, and resource cleanup. Removed sampled modes, P1 and silent contribution filters."
+      "adaptation": "Rewritten as a worker-safe P0 fixed-mass direct-mode kernel; added analytic signed JVPs, original phase-direction association, arbitrary integer modes, bounded chunks, diagnostics, non-power-of-two grids, and resource cleanup. Removed sampled modes, P1 and silent contribution filters. Engine 0.5.0 adds a new compensated endpoint observer in finite-difference.js, with high/low displacement inputs, reduced-phase polynomial exponentials, runtime rounding barriers, split-product residuals and high/low reductions. A stable amplitude delta integrates the exact continuous directional derivative along retained endpoint geometries with a guarded three-point Gauss rule; stages submit and complete separately before storage consumption. It retains the pinned strategy rather than copying upstream f32 precision policy."
     },
     {
       "source": "app/js/gpu/util.js",

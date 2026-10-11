@@ -265,6 +265,79 @@ fn prepared_run_finishes_identically_and_validates_direct_channels() {
     let fd_ptr = fd_first.as_ptr();
     let finished = prepared.finish(&channels, r#"{"backend":"cpu"}"#).unwrap();
     assert_eq!(prepared.finite_difference_cpu().as_ptr(), fd_ptr);
+    let grid = Grid::new(request.dim, request.n, 1.0);
+    let plus_hi = prepared.finite_difference_plus_hi();
+    let plus_lo = prepared.finite_difference_plus_lo();
+    let minus_hi = prepared.finite_difference_minus_hi();
+    let minus_lo = prepared.finite_difference_minus_lo();
+    for packed in [plus_hi, plus_lo, minus_hi, minus_lo] {
+        assert_eq!(packed.len(), grid.size * 4);
+        assert!(packed.iter().all(|v| v.is_finite()));
+        for i in 0..grid.size {
+            for axis in grid.dim..4 {
+                assert_eq!(packed[i * 4 + axis], 0.0);
+            }
+        }
+    }
+    assert!(
+        plus_lo.iter().chain(minus_lo).any(|value| *value != 0.0),
+        "the packed low parts must carry endpoint precision"
+    );
+    let reconstruct = |hi: &[f32], lo: Option<&[f32]>| {
+        let mut x = vec![0.0; grid.size * grid.dim];
+        for i in 0..grid.size {
+            let q = grid.unravel(i);
+            for axis in 0..grid.dim {
+                x[i * grid.dim + axis] =
+                    q[axis] as f64 * grid.dx()
+                        + hi[i * 4 + axis] as f64
+                        + lo.map_or(0.0, |values| values[i * 4 + axis] as f64);
+            }
+        }
+        x
+    };
+    let plus = reconstruct(plus_hi, Some(plus_lo));
+    let minus = reconstruct(minus_hi, Some(minus_lo));
+    let plus_single = reconstruct(plus_hi, None);
+    let minus_single = reconstruct(minus_hi, None);
+    let mut worst_expanded_error = 0.0f64;
+    let mut worst_single_error = 0.0f64;
+    for (i, mode) in prepared.modes().iter().enumerate() {
+        let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
+        let fd_expanded = (observables::sheet_mode(&grid, &plus, k).norm_sqr()
+            - observables::sheet_mode(&grid, &minus, k).norm_sqr())
+            / (2.0 * 1e-4);
+        let fd_single = (observables::sheet_mode(&grid, &plus_single, k).norm_sqr()
+            - observables::sheet_mode(&grid, &minus_single, k).norm_sqr())
+            / (2.0 * 1e-4);
+        let scale = fd_first[i].abs().max(1e-9);
+        let expanded_error = (fd_expanded - fd_first[i]).abs() / scale;
+        let single_error = (fd_single - fd_first[i]).abs() / scale;
+        worst_expanded_error = worst_expanded_error.max(expanded_error);
+        worst_single_error = worst_single_error.max(single_error);
+    }
+    assert!(
+        worst_expanded_error <= 2e-7,
+        "expanded f32 endpoints differ from retained f64 FD: {worst_expanded_error}"
+    );
+    assert!(
+        worst_single_error > worst_expanded_error * 4.0,
+        "hi/lo endpoints should improve over single-f32 positions: expanded={worst_expanded_error}, single={worst_single_error}"
+    );
+    let supplied_fd = fd_first.iter().map(|v| v + 0.125).collect::<Vec<_>>();
+    let supplied_finish = prepared
+        .finish_with_finite_difference(&channels, &supplied_fd, r#"{"backend":"external-fd"}"#)
+        .unwrap();
+    let supplied_scaled = supplied_finish["gradient"]["finiteDifference"]
+        .as_array()
+        .unwrap();
+    for (actual, raw) in supplied_scaled.iter().zip(&supplied_fd) {
+        assert_eq!(
+            actual.as_f64().unwrap(),
+            raw * request.box_size.powi(request.dim as i32)
+        );
+    }
+    assert_eq!(supplied_finish["execution"]["backend"], "external-fd");
     let compatibility = run(&request).unwrap();
     for path in [
         "spectra.direct",
@@ -283,6 +356,14 @@ fn prepared_run_finishes_identically_and_validates_direct_channels() {
     }
     assert!(prepared
         .finish(&channels[..channels.len() - 1], "{}")
+        .is_err());
+    assert!(prepared
+        .finish_with_finite_difference(&channels, &fd_first[..fd_first.len() - 1], "{}")
+        .is_err());
+    let mut bad_fd = fd_first.to_vec();
+    bad_fd[0] = f64::INFINITY;
+    assert!(prepared
+        .finish_with_finite_difference(&channels, &bad_fd, "{}")
         .is_err());
     let mut bad = channels.clone();
     bad[0] = f64::NAN;

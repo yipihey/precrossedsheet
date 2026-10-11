@@ -46,8 +46,11 @@ The optional WebGPU backend evaluates continuous 2D/3D sheet modes and JVPs,
 with selective f64 CPU recovery for weak LPT modes. It also evolves cosmological
 PM positions, canonical momenta and amplitude tangents on the GPU, using Rust
 kick/drift clocks and a reusable radix-2 FFT. CPU remains the default. Initial
-conditions, nLPT construction, exact meshing, PDFs and finite differences use
-Rust/Wasm. Non-power-of-two force meshes retain CPU PM with an explicit reason.
+conditions, nLPT construction, exact meshing and PDFs use Rust/Wasm.
+Centered amplitude finite differences use compensated GPU endpoint integrals
+after device validation, with f64 CPU recovery and the unchanged derivative gate. Non-power-of-two force meshes retain CPU PM with an explicit reason.
 Run `node scripts/test_gpu.mjs --require-gpu --full` and
 `node scripts/test_gpu.mjs --require-gpu --resident` after `make wasm`; see the
-[observer record](docs/webgpu-results.md) and [resident PM record](docs/webgpu-pm-results.md).
+[observer record](docs/webgpu-results.md), [resident PM record](docs/webgpu-pm-results.md),
+and [finite-difference record](docs/webgpu-fd-results.md).
+Run `node scripts/test_gpu.mjs --require-gpu --fd` for endpoint parity and worker checks.
