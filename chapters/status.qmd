@@ -16,6 +16,7 @@ This is a scientific laboratory of the pre-shell-crossing cold sheet, using nLPT
 | Published PDF agreement | Packaged original summaries and source metadata | Original filters and small crossing contamination |
 | Physical initial modes | EH98 smooth transfer, $\sigma_8$ quadrature and Hermitian/refinement tests | Approximate transfer without BAO or massive neutrinos |
 | Optional GPU continuous modes/JVPs | Independent quadrature and complete-request comparisons | f32 precision; weak LPT mode recovery and CPU fallback; device-specific performance |
+| Optional resident GPU PM/JVP | Independent DFT force checks and original/quantized Rust PM references | f32 state, CIC and FFT; radix-2 force mesh; CPU nLPT and exact observations |
 | Higher resolution | Native benchmarks and explicit resource envelope | Browser wall time depends on device; grids are never silently reduced |
 | General sub-percent 4LPT accuracy | **Not asserted** | Must specify observable and validation domain |
 

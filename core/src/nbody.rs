@@ -192,7 +192,7 @@ fn min_jacobian(sheet: &Grid, x: &[f64]) -> f64 {
 
 // The determinant along a drift is a polynomial of degree <= dim. Check its
 // interior stationary points too: positive endpoints alone can miss a fold.
-fn minimum_drift_jacobian(sheet: &Grid, start: &[f64], end: &[f64]) -> f64 {
+pub fn minimum_drift_jacobian(sheet: &Grid, start: &[f64], end: &[f64]) -> f64 {
     fn determinant(e: &[[f64; 3]; 3], d: usize) -> f64 {
         match d {
             1 => e[0][0],

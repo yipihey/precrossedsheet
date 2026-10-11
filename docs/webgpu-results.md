@@ -1,5 +1,10 @@
 # Hybrid WebGPU observer: validation and measurements
 
+This is the engine 0.3.0 observation-backend measurement record. Engine 0.4.0
+also offers resident cosmological PM evolution; see
+[its separate validation and timing record](webgpu-pm-results.md). Historical
+numbers below retain their original preparation and timing scope.
+
 Recorded 2026-10-10, engine 0.3.0 and browser state schema 3. The first backend
 implements milestones M0–M4 of [the backend plan](webgpu-backend-plan.md).
 It evaluates the continuous fixed-mass P0 sheet transform and analytic

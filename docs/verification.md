@@ -1,4 +1,41 @@
-# Verification record — 2026-10-10
+# Verification record — 2026-10-11
+
+## Resident cosmological PM revision (engine 0.4.0, schema 3)
+
+- `make test` passed all 64 Rust tests and JavaScript state/replay checks.
+  Added contracts cover the deferred CPU fallback, GPU-state rejection,
+  first crossing bracket, drift orientation and displacement packing.
+- `make test-wasm` passed typed PM input/clock and retained-fallback checks,
+  1D–3D mass and derivative checks, crossed-output retention and worker
+  lifecycle checks. `make check` resolved all provenance links.
+- The existing real-GPU observer suite passed all 34 independent kernel
+  comparisons and 47 complete-request/worker checks on the new release binary.
+  Its unchanged f64 finite-difference gate and selective LPT recovery remain.
+- A separate real-GPU worker suite passed six checks: allocation failure
+  recovers exact CPU PM densities/PDFs, a new GPU device is usable, a requested
+  non-radix force mesh stays CPU, and cancellation after the first actual GPU
+  PM step permits a queued CPU replacement and acknowledged shutdown.
+- The release-binary resident suite passed all 146 numerical and benchmark
+  rows. Six complete PM fixtures and all matched 32³/64³ timing states met
+  their component budgets. The recorded PM median ratios were 9.47× and
+  34.42×; complete 32³ elapsed time fell by 9.61% with identical CPU
+  finite-difference and mode-recovery policies. Full requests, raw samples,
+  hardware and fingerprints are in [webgpu-pm-results.json](webgpu-pm-results.json).
+- `quarto render` completed all 13 pages without unresolved references or
+  citations. The resident PM appendix was inspected with its equations,
+  source/test badges and experiment link; no KaTeX errors or horizontal
+  overflow occurred at desktop or 390-pixel width.
+- The local 3D 32³ gradient lab completed with resident GPU PM, a passing
+  32-row PM device gate, selective LPT recovery and the existing derivative
+  check. Backend stage precision and PM timings were visible; browser
+  inspection found no console errors or warnings. The appendix's new
+  experiment link explicitly includes state schema 3.
+
+CPU remains the default and automatic selection remains CPU. The opt-in
+GPU path now includes resident FFT/CIC/Poisson/KDK and its analytic JVP;
+exact deposition, PDFs, nLPT construction and precision recovery remain CPU.
+Device-specific numerical comparisons and matched timing samples are recorded
+in [webgpu-pm-results.md](webgpu-pm-results.md) and its linked JSON record.
 
 ## Hybrid GPU observer revision (engine 0.3.0, schema 3)
 

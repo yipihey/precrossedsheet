@@ -20,7 +20,7 @@ document.querySelector('#copy-link').addEventListener('click', async (ev) => { c
 const intro = $('section', 'lab-intro', root);
 intro.innerHTML = '<p class="eyebrow">Cosmological Lagrangian perturbation theory</p><p>Evolve a discretized Lagrangian sheet with deterministic mode benchmarks or a Gaussian field generated from an Eisenstein–Hu no-wiggle ΛCDM spectrum. The model is periodic and uses translationally invariant lower-dimensional geometry for 1D and 2D runs; only 3D runs represent a full spatial realization. Results remain visible after orientation loss, with the single-stream guard status shown as a scientific caution.</p>';
 const hasOldHash=location.hash.length>1&&!location.hash.slice(1).split('&').some(p=>p.startsWith('v='));
-if(hasOldHash)$('p','legacy-link-note',intro,'This experiment link predates versioned manifests and the cosmological engine update. Its visible controls have been migrated to current defaults; it cannot reproduce an earlier engine result exactly. Copy or export the version-2 link to preserve this run from here onward.');
+if(hasOldHash)$('p','legacy-link-note',intro,'This experiment link predates versioned manifests and the cosmological engine update. Its visible controls have been migrated to current defaults; it cannot reproduce an earlier engine result exactly. Copy or export the current versioned link to preserve this run from here onward.');
 const unsupportedNote=unsupportedSchema?$('p','unsupported-link-note',intro,`This URL uses unsupported experiment schema v${fragmentVersion(location.hash)}. The experiment has not been run. Select a preset or edit a control to start a new version-${STATE_VERSION} run; the saved values cannot be safely interpreted.`):null;
 function clearUnsupportedSchema(){unsupportedSchema=false;unsupportedNote?.remove();document.querySelectorAll('.unsupported-link-note').forEach((el)=>el.remove());}
 const presets = $('div', 'lab-presets', root);
@@ -79,7 +79,7 @@ numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed se
 selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of time steps in the particle-mesh trajectory.');
-selectControl('backend', 'Direct-mode observation backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. Automatic selection remains on CPU until a device and workload have passed the GPU validation fixtures. GPU applies only to 2D/3D direct modes; weak LPT modes may use f64 CPU recovery, and 1D remains on CPU.');
+selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. GPU attempts validated cosmological PM evolution and continuous sheet modes in 2D/3D. The PM force FFT requires a power-of-two force grid; other grids retain CPU PM. Weak LPT modes may use f64 CPU recovery. Exact sheet deposition and the finite-difference check stay on CPU; 1D and automatic selection use CPU.');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Controls density, PDFs, and spectra; this does not change force resolution.');
 selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Independent force resolution. Change it separately to measure force-grid sensitivity.');
 activeControlGroup=controlSection('Density observation');
@@ -124,8 +124,8 @@ function ensureWorker(){
   if(worker)return worker;
   worker=new Worker('./js/worker.js',{type:'module'});
   worker.onmessage=({data})=>{
-    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference-sync':'Checking the CPU finite difference…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
-    if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;status.textContent=`${data.stage||'Evaluating GPU modes'}${data.completed!=null?` (${data.completed}/${data.total})`:''}…`;return;}
+    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference-sync':'Checking the CPU finite difference…','pm-evolution':'Evolving PM trajectories on GPU…','observations-sync':'Depositing the sheet exactly…','pm-recovery-sync':'Recovering PM trajectories on CPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
+    if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
     if(data.type==='cancelled'&&data.requestId===activeRequestId){clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}
     if(data.type==='shutdown-ack'){hardTerminateWorker();return;}
     if(data.type!=='result'||data.requestId!==activeRequestId)return;
@@ -139,7 +139,7 @@ function ensureWorker(){
   return worker;
 }
 function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;execution=null;exportJsonButton.disabled=true;status.textContent='Preparing…';notice.textContent='Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,state:job.request,policy:job.policy});}
-function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;if(['preparing','preparing-sync','finalizing','finalizing-sync','direct-sync','direct-recovery-sync','finite-difference-sync','queued'].includes(activePhase)){hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}worker.postMessage({type:'cancel',requestId:id});status.textContent='Stopping obsolete GPU work…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},5000);}
+function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;if(['preparing','preparing-sync','finalizing','finalizing-sync','direct-sync','direct-recovery-sync','finite-difference-sync','observations-sync','pm-recovery-sync','queued'].includes(activePhase)){hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}worker.postMessage({type:'cancel',requestId:id});status.textContent='Stopping obsolete GPU work…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},5000);}
 function cancelObsoleteForCachedResult(){if(activeRequestId!=null||pendingRun)retireWorker();}
 function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
 function hardTerminateWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;if(!old)return;old.onmessage=null;old.onerror=null;old.terminate();}
@@ -289,10 +289,16 @@ function showExecution(meta){
   backendMeta.replaceChildren();
   $('h3','control-subheading',backendMeta,'Run backend and precision');
   const grid=$('div','execution-meta',backendMeta);
-  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','PM evolution','PM validation','PM timings','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
   compact('Requested backend',meta.requestedBackend);
   compact('Executed backend',meta.executedBackend);
   compact('Precision',meta.precision);
+  const pm=meta.pmEvolution;
+  if(pm){
+    compact('PM evolution',`${pm.backend} · ${pm.precision}${pm.fallbackReason?` · ${pm.fallbackReason}`:''}`);
+    if(pm.validation)compact('PM validation',`${pm.validation.status} · ${pm.validation.rows?.length||0} FFT/force/trajectory checks`);
+    if(pm.timings){const labels={compileMs:'setup',uploadMs:'upload',kernelMs:'force/KDK',diagnosticMs:'initial orientation',cpuCheckMs:'CPU orientation rechecks',readbackMs:'final readback',totalMs:'total'};compact('PM timings',Object.entries(pm.timings).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${labels[k]||k} ${num(v,3)} ms`).join(' · '));}
+  }
   if(meta.fallbackReason){const item=$('p','execution-fallback',backendMeta,meta.fallbackReason);item.setAttribute('role','note');}
 
   const device=meta.device||meta.gpuAttempt?.device;
@@ -327,7 +333,7 @@ function showExecution(meta){
   const direct=backends.directPrimal||{};
   const directSummary=['LPT','PM'].map((name)=>{const item=direct[name.toLowerCase()];return item?`${name} ${item.provenance||item.backend||'unknown'}`:null;}).filter(Boolean);
   const precisionSummary=[];
-  if(backends.trajectories)precisionSummary.push('nLPT fields f32 → trajectories/tangents f64 → GPU pack f32');
+  if(backends.trajectories)precisionSummary.push(`nLPT fields f32 → LPT state/tangent f64 · PM ${backends.trajectories.pmBackend||'cpu'} ${backends.trajectories.pmStatePrecision||'f64'}`);
   if(backends.exactDeposit)precisionSummary.push('deposit f32 positions→f64 geometry/mass→f32 density');
   if(backends.pdfs)precisionSummary.push('PDF f32 density→f64 stats');
   if(backends.griddedSpectra)precisionSummary.push('FFT f32 field→f64 transform/bins');

@@ -46,8 +46,8 @@ try {
   ws=new WebSocket(endpoint);
   await new Promise((ok,fail)=>{ws.onopen=ok;ws.onerror=fail;});
   let serial=0;const pending=new Map(),events=[];
-  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);if(p)m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);}else if(m.method==='Runtime.exceptionThrown')events.push(m.params.exceptionDetails);};
-  const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});
+  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);if(p){clearTimeout(p.timer);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);}}else if(m.method==='Runtime.exceptionThrown')events.push(m.params.exceptionDetails);};
+  const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++serial;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Browser command timed out: ${method}`));},120000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});
   const target=await send('Target.createTarget',{url:'about:blank'});
   const {sessionId}=await send('Target.attachToTarget',{targetId:target.targetId,flatten:true});
   await send('Runtime.enable',{},sessionId);
@@ -55,13 +55,18 @@ try {
   if(args.has('--full'))query.set('full','1');
   if(args.has('--benchmark'))query.set('benchmark','1');
   if(args.has('--schedule-benchmark'))query.set('schedule-benchmark','1');
+  if(args.has('--resident')||args.has('--resident-benchmark'))query.set('resident','1');
+  if(args.has('--resident-benchmark'))query.set('resident-benchmark','1');
+  if(args.has('--resident-worker'))query.set('resident-worker','1');
   const url=`http://127.0.0.1:${server.address().port}/app/gpu-test.html?${query}`;
   await send('Page.navigate',{url},sessionId);
   const timeoutMs=Number(process.env.GPU_TEST_TIMEOUT_MS||900000),start=Date.now();
-  let report;
+  let report,lastStage;
   while(Date.now()-start<timeoutMs){
-    const result=await send('Runtime.evaluate',{expression:'window.gpuTestReport || null',returnByValue:true},sessionId);
-    report=result.result?.value;
+    const result=await send('Runtime.evaluate',{expression:'({report:window.gpuTestReport || null,stage:document.querySelector("#status")?.textContent})',returnByValue:true},sessionId);
+    report=result.result?.value?.report;
+    const stage=result.result?.value?.stage;
+    if(stage&&stage!==lastStage){lastStage=stage;if(args.has('--resident-benchmark'))console.error(stage);}
     if(report&&['pass','fail','skip'].includes(report.status))break;
     if(events.length)throw new Error(JSON.stringify(events));
     await new Promise(r=>setTimeout(r,500));
@@ -71,8 +76,9 @@ try {
     machine:{cpu:cpus()[0]?.model??null,logicalCpus:cpus().length,memoryBytes:totalmem(),platform:platform(),architecture:arch(),release:release()}};
   const outputFlag=process.argv.indexOf('--output');
   if(outputFlag>=0){if(!process.argv[outputFlag+1])throw new Error('--output requires a path');await writeFile(resolve(process.argv[outputFlag+1]),JSON.stringify(report,null,2)+'\n');}
-  const concise={status:report.status,reason:report.reason,browser:report.browser.product,adapter:report.deviceInfo?.adapter,
+  const concise={status:report.status,reason:report.reason??report.resident?.reason,browser:report.browser.product,adapter:report.deviceInfo?.adapter,
     kernelRows:report.kernel?.rows.length??report.rows?.length,labRows:report.lab?.rows.length,
+    residentRows:report.resident?.rows?.length,residentBenchmarks:report.resident?.timings,
     gpuEligibleRequests:report.lab?.cases?.filter(c=>c.gpuEligible).length,totalRequests:report.lab?.cases?.length,
     failures:report.rows?.filter(r=>r.ok===false||r.pass===false),
     benchmarks:report.lab?.timings?.filter(t=>t.benchmark).map(t=>t.endToEndWorker

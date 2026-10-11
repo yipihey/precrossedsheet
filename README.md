@@ -42,4 +42,12 @@ reverse adjoint or cosmological growth gradient is claimed.
 
 MIT license; upstream copyright retained. `CITATION.cff` describes this project.
 
-The optional WebGPU observer evaluates continuous 2D/3D sheet modes and JVPs, with selective f64 CPU recovery for weak LPT modes. CPU remains the default; trajectories, exact meshing, PDFs and finite differences use Rust/Wasm. Run `node scripts/test_gpu.mjs --require-gpu --full` after `make wasm`; see [the measurement record](docs/webgpu-results.md).
+The optional WebGPU backend evaluates continuous 2D/3D sheet modes and JVPs,
+with selective f64 CPU recovery for weak LPT modes. It also evolves cosmological
+PM positions, canonical momenta and amplitude tangents on the GPU, using Rust
+kick/drift clocks and a reusable radix-2 FFT. CPU remains the default. Initial
+conditions, nLPT construction, exact meshing, PDFs and finite differences use
+Rust/Wasm. Non-power-of-two force meshes retain CPU PM with an explicit reason.
+Run `node scripts/test_gpu.mjs --require-gpu --full` and
+`node scripts/test_gpu.mjs --require-gpu --resident` after `make wasm`; see the
+[observer record](docs/webgpu-results.md) and [resident PM record](docs/webgpu-pm-results.md).

@@ -1,10 +1,11 @@
 # WebGPU backend plan and Hopf–Cole reuse audit
 
-Implementation record: 2026-10-10. Milestones M0–M4 are implemented in the
+Implementation record: 2026-10-11. Milestones M0–M4 are implemented in the
 current first-release hybrid path. GPU execution remains opt-in through the
 `gpu` backend setting; `cpu` is the default and `auto` currently selects CPU.
-M5 is future work. See the [GPU results and validation record](webgpu-results.md)
-for measured outcomes; this plan makes no new benchmark claims.
+The resident FFT and cosmological PM portion of M5 is implemented in engine
+0.4.0. See the [observer record](webgpu-results.md) and
+[resident PM record](webgpu-pm-results.md) for measured outcomes.
 
 ## First-release behavior
 
@@ -36,7 +37,7 @@ provenance record when the final result is CPU.
 |---|---|
 | `cpu` | Default. Use the Rust/Wasm reference, including f64 continuous modes and tangents. |
 | `auto` | Use the Rust/Wasm reference. Automatic GPU selection remains disabled pending a device/workload policy supported by [webgpu-results.md](webgpu-results.md). |
-| `gpu` | Attempt the validated 2D/3D GPU direct-mode path. 1D, unavailable devices, failed self-checks, invalid output, device loss, or numerical-gate failure use the CPU route, with the reason recorded. |
+| `gpu` | Attempt validated resident PM and direct-mode paths in 2D/3D. Resident PM requires a radix-2 force mesh. The stages recover independently on CPU, with reasons recorded. 1D remains CPU. |
 
 The default GPU schedule is `cell-tile`: one workgroup handles one mode and a
 64-cell tile, distributes cells across 64 lanes, and reduces the tile in a
@@ -59,8 +60,9 @@ M0–M4 being implemented does not mean every adapter has passed or that GPU
 execution is the default. The per-device self-check is labeled provisional in
 run metadata; automatic policy stays on CPU until the GPU workload and browser
 evidence meet the release criteria. Current limitations include f32 GPU input
-and arithmetic, only 2D/3D direct modes, and CPU execution for trajectories,
-clipping, PDFs, gridded spectra, finite differences, and finalization.
+and arithmetic, only 2D/3D browser GPU execution, and CPU execution for initial
+conditions, nLPT construction, clipping, PDFs, gridded spectra, finite
+differences, and finalization. Resident PM support is described below.
 
 ## Kernel contract and validation
 
@@ -116,8 +118,9 @@ creation, buffer binding, dispatch and fixed tree reduction. The target's
 worker compute context is independent of the upstream DOM/rendering module;
 target buffers have per-run ownership and cleanup. The upstream
 `viz/gpu.js` is recorded only as a probe/error-handling reference; no source
-was copied from it. Hopf–Cole FFT/LPT, fixed-point CIC and exact clipping
-remain references for M5, not part of the first-release backend. Its CIC
+was copied from it. The resident FFT adapts the upstream Stockham stages,
+generalizes dimensions, and preserves last-axis-fast indexing. Hopf–Cole LPT,
+fixed-point CIC and exact clipping remain references for subsequent work. Its CIC
 quantization/overflow policy and its FFT's 3D radix-2 restriction are not
 equivalent to this project's CPU implementations.
 
@@ -140,14 +143,27 @@ profiling results; they are not GPU speedup results and do not quantify the
 current hybrid backend. Current GPU measurements belong in
 [webgpu-results.md](webgpu-results.md).
 
-## M5: later resident compute work
+## M5: resident FFT and cosmological PM
 
-M5 is not part of this first release. Profile each candidate against the
-current hybrid backend before implementation. Potential areas are a resident
-FFT/LPT pipeline, a matched cosmological PM force and tangent solver, and
-geometric clipping. Each needs independent numerical tests and a complete-run
-comparison with the f64 Rust oracle. PM must carry the canonical momentum and
-Rust-computed cosmological kick/drift clocks, with matching deposit, Poisson
-solve, gather, and JVP. Clipping must preserve positivity and mass accounting
+Engine 0.4.0 adds a deferred Rust boundary that retains the f64 initial LPT/PM
+state and clocks. The worker uploads PM positions, canonical momenta and their
+amplitude tangents once. CIC deposition, spectral force and force JVP, CIC
+gather and its weight derivative, and cosmological KDK evolution remain on
+the GPU. One-dimensional browser requests and non-radix-2 force meshes retain
+CPU PM. No request is resized to fit the GPU.
+
+Integer atomic linked lists give each mesh node one floating-point sum owner.
+The insertion order can vary; numerical comparisons use explicit tolerances.
+Reference fixtures separate original initial-state quantization from f32 GPU
+arithmetic. Every drift checks the full orientation polynomial, with f64 CPU
+rechecks of candidates near zero or invalid arithmetic. Crossed results remain
+available with the existing caution. Resource, validation and execution
+failures recover from the retained f64 initial state; direct-mode recovery is
+independent of trajectory recovery.
+
+The [resident PM record](webgpu-pm-results.md) specifies component budgets,
+complete-request checks and measured timing inclusions. GPU nLPT construction,
+geometric clipping, finite differences and more precise weak-mode arithmetic
+remain subsequent work. Clipping must preserve positivity and mass accounting
 on difficult degeneracies and cell-boundary cases. Reusing Hopf–Cole kernels
 does not establish equivalence for these operations.

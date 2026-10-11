@@ -89,7 +89,9 @@ async function execute(task) {
     return { result, durationMilliseconds: performance.now() - started, execution };
   }
 
-  const prepared = new preparedCtor(JSON.stringify(task.state));
+  const physical = await preparePhysical(task, wasm, preparedCtor);
+  if (!physical || cancelled(task)) { physical?.prepared?.free?.(); return {}; }
+  const { prepared, pmExecution } = physical;
   try {
   let metadata = parseJson(prepared.metadata(), 'prepared metadata');
   if (!Number.isInteger(metadata.modeCount) || !Number.isInteger(metadata.dim) || !Number.isInteger(metadata.n)) {
@@ -120,7 +122,7 @@ async function execute(task) {
     execMeta = cpuExecution(requested, 'The GPU direct-mode kernel supports 2D and 3D; 1D remains on the CPU reference.');
   } else if (requested === 'gpu') {
     try {
-      task.controller = new AbortController();
+      task.controller ||= new AbortController();
       phase(task, 'direct', 'Checking the worker GPU device and evaluating fixed-mass Fourier modes.', true);
       const forcedFailure = task.policy?.forceGpuFailure;
       if (forcedFailure === 'missing-api') throw forcedGpuError(forcedFailure);
@@ -192,6 +194,7 @@ async function execute(task) {
   if (execMeta.executedBackend === 'gpu') {
     execMeta.diagnostics = { ...(execMeta.diagnostics || {}), cpuFiniteDifferencePrecomputed: stageTimes.finiteDifferenceMilliseconds != null };
   }
+  execMeta.pmEvolution = pmExecution;
   execMeta.timings = { ...(execMeta.timings || {}), stages: stageTimes };
 
   phase(task, 'finalizing', 'Finalizing f64 observables and the run manifest.');
@@ -256,7 +259,16 @@ async function execute(task) {
       }
     }
   }
+  // Direct-mode fallback does not replace an already completed GPU trajectory.
+  // Record those two decisions separately, including on complete direct recovery.
+  execMeta.pmEvolution = pmExecution;
   if (result?.error) throw new Error(result.error);
+  result.execution.pmEvolution = pmExecution;
+  stageBackends(result.execution);
+  if (pmExecution.backend === 'gpu' && result.execution.executedBackend === 'cpu') {
+    result.execution.executedBackend = 'hybrid';
+    result.execution.precision = 'f32 GPU PM evolution with f64 CPU direct modes and finalization';
+  }
   stageTimes.finalizationMilliseconds = performance.now() - finalizationStarted;
   if (result.execution) result.execution.timings = { ...(result.execution.timings || {}), stages: stageTimes };
   if (result.execution?.gpuAttempt?.timings) result.execution.gpuAttempt.timings.stages = stageTimes;
@@ -265,6 +277,83 @@ async function execute(task) {
   } finally {
     prepared.free?.();
   }
+}
+
+async function preparePhysical(task, wasm, preparedCtor) {
+  const cpu = (reason) => ({ prepared: new preparedCtor(JSON.stringify(task.state)), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: reason } });
+  const requested = task.policy.requested || 'cpu';
+  if (requested !== 'gpu' || task.state.dim === 1) return cpu(null);
+  // Failure hooks intentionally test the original complete CPU recovery path.
+  if (task.policy.forceGpuFailure) return cpu('Resident PM bypassed for a forced GPU failure check.');
+  if (task.policy.disablePm) return cpu('Resident PM disabled for an explicit observer-only comparison.');
+  if (typeof wasm.PendingLabRun !== 'function') return cpu('Deferred PM boundary unavailable in this Wasm build.');
+  const pending = new wasm.PendingLabRun(JSON.stringify(task.state));
+  let attempt = null;
+  try {
+    const meta = parseJson(pending.metadata(), 'pending PM metadata');
+    await yieldToMessages();
+    if (cancelled(task)) return null;
+    const meshN = meta.forceMesh;
+    if (!Number.isInteger(meshN) || meshN < 2 || (meshN & (meshN - 1)) !== 0) {
+      return { prepared: pending.finish_cpu(), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: `Resident force FFT requires a power-of-two force mesh; requested mesh ${meshN} was retained on CPU.` } };
+    }
+    task.controller = new AbortController();
+    phase(task, 'pm-evolution', 'Validating and evolving the cosmological PM state and tangent on GPU.', true);
+    const context = await getGpuContext(task);
+    if (cancelled(task)) return null;
+    const forcedPmFailure = task.policy.forcePmFailure;
+    attempt = { device: deviceMetadata(context), validation: null };
+    if (forcedPmFailure === 'validation') throw new Error('Forced PM device-validation failure.');
+    const validation = await validatePmContext(context, task);
+    attempt = { device: deviceMetadata(context), validation };
+    if (validation.status !== 'pass') throw new Error('The GPU cosmological PM self-check did not pass.');
+    if (forcedPmFailure === 'device-loss') {
+      context.device.destroy();
+      throw new Error('Forced PM device loss.');
+    }
+    const clocksFlat = copyF64(pending.pm_clocks());
+    const steps = clocksFlat.length / 5;
+    if (!Number.isInteger(steps) || steps !== meta.steps) throw new Error('Malformed Rust PM clock schedule.');
+    const clocks = { kick0: new Float64Array(steps), drift: new Float64Array(steps), kick1: new Float64Array(steps) };
+    for (let i = 0; i < steps; i++) { clocks.kick0[i] = clocksFlat[5*i]; clocks.drift[i] = clocksFlat[5*i+1]; clocks.kick1[i] = clocksFlat[5*i+2]; }
+    const { runPm } = await import('./gpu/pm.js');
+    const pm = await runPm(context.device, {
+      dim: meta.dim, n: meta.n, meshN, boxSize: 1, omegaM: meta.omegaM,
+      initialMinimum: Math.min(meta.pmInitialMinimumJacobianF64, meta.pmInitialMinimumJacobianDisplacementF32),
+      positionRepresentation: 'lattice-displacement',
+      x: copyF32(pending.pm_displacement()), p: copyF32(pending.pm_p()),
+      dx: copyF32(pending.pm_dx()), dp: copyF32(pending.pm_dp()), clocks,
+      forceKernel: 'rust-spectral-cic-v1',
+    }, {
+      signal: task.controller.signal, shouldCancel: () => cancelled(task), maxGpuBytes: forcedPmFailure === 'limits' ? 1 : 512 * 1024 * 1024, allowCrossing: true,
+      checkDrift: (start, end) => wasm.pm_drift_minimum(meta.dim, meta.n, start, end),
+      onProgress: (progress) => send({ type: 'progress', requestId: task.requestId, phase: 'pm-evolution', ...progress }),
+    });
+    if (cancelled(task)) return null;
+    attempt = { ...attempt, diagnostics: pm.diagnostics, timings: pm.timings };
+    if (forcedPmFailure === 'readback') throw new Error('Forced PM readback failure.');
+    if (forcedPmFailure === 'nonfinite') pm.x[0] = Number.NaN;
+    phase(task, 'observations', 'Depositing the evolved sheet exactly and computing CPU density statistics.');
+    const observationStarted = performance.now();
+    const prepared = pending.finish_gpu_pm(pm.x, pm.p, pm.dx, pm.dp, Float64Array.from(pm.driftMinima));
+    return { prepared, pmExecution: { backend: 'gpu', precision: 'f32 state, tangent, CIC and FFT; Rust f64 clocks rounded to f32; near-zero drift checks in CPU f64', ...attempt, observationMilliseconds: performance.now() - observationStarted } };
+  } catch (error) {
+    if (cancelled(task)) return null;
+    phase(task, 'pm-recovery', 'Recovering cosmological PM evolution with the retained f64 CPU initial state.');
+    // A failed resident stage must release its device resources before reuse.
+    await disposeGpu();
+    return { prepared: pending.finish_cpu(), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: String(error?.message || error), gpuAttempt: attempt } };
+  } finally { pending.free?.(); }
+}
+
+async function validatePmContext(context, task) {
+  if (context.pmValidation) return context.pmValidation;
+  const { runPmSelfTests } = await import('./gpu/resident-check.js');
+  const validation = await runPmSelfTests({ device: context.device, signal: task.controller.signal,
+    onProgress: (progress) => send({ type: 'progress', requestId: task.requestId, phase: 'pm-evolution', stage: 'PM device validation', ...progress }) });
+  if (cancelled(task)) throw new Error('PM validation cancelled.');
+  if (validation.status === 'pass') context.pmValidation = validation;
+  return validation;
 }
 
 async function getGpuContext(task) {
@@ -324,7 +413,7 @@ function stageBackends(execution) {
     return { provenance, precision: provenance.startsWith('mixed-') ? 'f32 GPU input/kernel with f64 CPU mode recovery' : provenance.includes('f32') ? 'f32 GPU input/kernel' : 'f64 CPU reference' };
   };
   execution.stageBackends = {
-    trajectories: { backend: 'cpu', spatialFieldPrecision: 'f32 nLPT tensors', statePrecision: 'f64', tangentPrecision: 'f64', gpuPackedInputPrecision: 'f32' },
+    trajectories: { backend: execution.pmEvolution?.backend === 'gpu' ? 'mixed' : 'cpu', lptBackend: 'cpu', pmBackend: execution.pmEvolution?.backend || 'cpu', spatialFieldPrecision: 'f32 nLPT tensors', statePrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', lptStatePrecision: 'f64', pmStatePrecision: execution.pmEvolution?.backend === 'gpu' ? 'f32' : 'f64', tangentPrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', gpuPackedInputPrecision: 'f32' },
     exactDeposit: { backend: 'cpu', inputPrecision: 'f32 positions', arithmeticPrecision: 'f64 geometry and mass accumulation', outputPrecision: 'f32 density field' },
     pdfs: { backend: 'cpu', inputPrecision: 'f32 density fields', arithmeticPrecision: 'f64 histogram and moment accumulation', outputPrecision: 'f64 summaries' },
     griddedSpectra: { backend: 'cpu', inputPrecision: 'f32 density field', arithmeticPrecision: 'f64 complex FFT and binning', outputPrecision: 'f64 spectrum bins' },

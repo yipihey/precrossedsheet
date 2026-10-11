@@ -27,6 +27,13 @@
     {
       "source": "app/js/viz/gpu.js",
       "reuse": "No source copied. The new context module follows the plan's capability-probe and loss-reporting boundary without a DOM dependency."
+    },
+    {
+      "source": "app/js/gpu/fft3d.js",
+      "sha256": "6a167b24819d611f4af0284995eac3aa5079c4cbb4ceb391f8d80c0abc8c84fc",
+      "target": "app/js/gpu/fft.js",
+      "reuse": "Stockham radix-2 autosort butterflies, twiddle table, ping-pong scheduling, and normalized inverse transform.",
+      "adaptation": "Generalized to 1D\u20133D grids and explicit owned buffers; last-axis-fast layout, force FFT integration and error handling are checked independently against mode and PM fixtures. The PM cosmological KDK/CIC-JVP solver is new and follows the Rust reference, rather than upstream heat-flow dynamics."
     }
   ]
 }

@@ -1,6 +1,6 @@
 use hcc_core::{
     grid::Grid,
-    laboratory::{run, run_json, LabRequest},
+    laboratory::{prepare_pending, run, run_json, LabRequest},
     observables,
 };
 #[test]
@@ -175,7 +175,8 @@ fn complete_response_and_manifest_replay_the_executed_request() {
         ..Default::default()
     };
     let d = run(&request).unwrap();
-    let manifest = serde_json::json!({"schemaVersion":2,"state":{"n":64},"request":{"n":64},"result":d});
+    let manifest =
+        serde_json::json!({"schemaVersion":2,"state":{"n":64},"request":{"n":64},"result":d});
     let replay: serde_json::Value = serde_json::from_str(&run_json(&manifest.to_string())).unwrap();
     assert_eq!(replay["request"]["n"], 16);
     assert_eq!(replay["rho"], manifest["result"]["rho"]);
@@ -206,13 +207,22 @@ fn v3_manifest_replays_physics_request_and_ignores_ui_execution_policy() {
     });
     let replay: serde_json::Value = serde_json::from_str(&run_json(&manifest.to_string())).unwrap();
     assert!(replay.get("error").is_none(), "{}", replay["error"]);
-    assert_eq!(replay["schemaVersion"], 2, "physical response schema remains v2");
-    assert_eq!(replay["engineVersion"], "0.3.0");
-    assert_eq!(replay["request"]["n"], request.n, "manifest request wins over stale UI state");
+    assert_eq!(
+        replay["schemaVersion"], 2,
+        "physical response schema remains v2"
+    );
+    assert_eq!(replay["engineVersion"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        replay["request"]["n"], request.n,
+        "manifest request wins over stale UI state"
+    );
     assert_eq!(replay["a"], expected["a"]);
     assert_eq!(replay["x"], expected["x"]);
     assert_eq!(replay["spectra"]["direct"], expected["spectra"]["direct"]);
-    assert_eq!(replay["execution"]["backend"], "cpu", "execution policy is not a physical input");
+    assert_eq!(
+        replay["execution"]["backend"], "cpu",
+        "execution policy is not a physical input"
+    );
 }
 
 #[test]
@@ -238,8 +248,15 @@ fn physical_epoch_allows_no_finite_crossing_reference() {
 
 #[test]
 fn prepared_run_finishes_identically_and_validates_direct_channels() {
-    let request = LabRequest { dim: 2, n: 16, force_mesh: 16, steps: 32,
-        epoch: "scaleFactor".into(), scale_factor: 0.3, ..Default::default() };
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        force_mesh: 16,
+        steps: 32,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.3,
+        ..Default::default()
+    };
     let prepared = hcc_core::laboratory::prepare(&request).unwrap();
     assert_eq!(prepared.metadata()["modeCount"], 4);
     let channels = prepared.direct_cpu();
@@ -249,20 +266,202 @@ fn prepared_run_finishes_identically_and_validates_direct_channels() {
     let finished = prepared.finish(&channels, r#"{"backend":"cpu"}"#).unwrap();
     assert_eq!(prepared.finite_difference_cpu().as_ptr(), fd_ptr);
     let compatibility = run(&request).unwrap();
-    for path in ["spectra.direct", "spectra.directPM", "gradient.power", "gradient.tangent", "gradient.finiteDifference", "gradient.relativeError"] {
+    for path in [
+        "spectra.direct",
+        "spectra.directPM",
+        "gradient.power",
+        "gradient.tangent",
+        "gradient.finiteDifference",
+        "gradient.relativeError",
+    ] {
         let pointer = format!("/{}", path.replace('.', "/"));
-        assert_eq!(finished.pointer(&pointer), compatibility.pointer(&pointer), "{path}");
+        assert_eq!(
+            finished.pointer(&pointer),
+            compatibility.pointer(&pointer),
+            "{path}"
+        );
     }
-    assert!(prepared.finish(&channels[..channels.len()-1], "{}").is_err());
-    let mut bad = channels.clone(); bad[0] = f64::NAN;
+    assert!(prepared
+        .finish(&channels[..channels.len() - 1], "{}")
+        .is_err());
+    let mut bad = channels.clone();
+    bad[0] = f64::NAN;
     assert!(prepared.finish(&bad, "{}").is_err());
     assert!(prepared.finish(&channels, "{").is_err());
 }
 
 #[test]
+fn pending_run_reuses_common_state_after_gpu_validation_failure() {
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        force_mesh: 16,
+        steps: 32,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.3,
+        ..Default::default()
+    };
+    let pending = prepare_pending(&request).unwrap();
+    assert_eq!(pending.pm_clocks().len(), 5 * request.steps);
+    let reference = pending.pm_reference().unwrap();
+    let quantized_reference = pending.pm_reference_quantized().unwrap();
+    assert_eq!(reference.len(), 16 * request.n.pow(request.dim as u32));
+    assert_eq!(quantized_reference.len(), reference.len());
+    assert!(reference
+        .iter()
+        .chain(&quantized_reference)
+        .all(|v| v.is_finite()));
+    let (x, p, dx, dp) = pending.pm_input();
+    assert_eq!(x.len(), request.n.pow(request.dim as u32) * 4);
+    assert_eq!(p.len(), x.len());
+    assert_eq!(dx.len(), x.len());
+    assert_eq!(dp.len(), x.len());
+    let bad = vec![0.0; request.steps - 1];
+    assert!(pending.finish_gpu_pm(&x, &p, &dx, &dp, &bad).is_err());
+    let mut nonfinite = x.clone();
+    nonfinite[0] = f32::NAN;
+    assert!(pending
+        .finish_gpu_pm(&nonfinite, &p, &dx, &dp, &vec![1.0; request.steps])
+        .is_err());
+    // The same retained pending state can still complete the exact CPU route.
+    let prepared = pending.finish_cpu().unwrap();
+    let channels = prepared.direct_cpu();
+    let finished = prepared.finish(&channels, r#"{"backend":"cpu"}"#).unwrap();
+    assert_eq!(finished, run(&request).unwrap());
+}
+
+#[test]
+fn pm_displacement_packing_preserves_weak_modes_and_has_quantized_cpu_oracle() {
+    let request = LabRequest {
+        dim: 3,
+        n: 16,
+        force_mesh: 32,
+        steps: 32,
+        omega_m: 1.0,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.25,
+        ..Default::default()
+    };
+    let pending = prepare_pending(&request).unwrap();
+    let displacement = pending.pm_displacement();
+    let absolute = pending.pm_initial_component(0);
+    let grid = Grid::new(request.dim, request.n, 1.0);
+
+    // Subtracting q after rounding absolute x loses low displacement bits.
+    // Packing ψ=x−q in f64 first should retain a much smaller relative error.
+    let mut worst_relative_separation = 0.0f64;
+    for i in 0..grid.size {
+        let q = grid.unravel(i);
+        for axis in 0..grid.dim {
+            let j = i * 4 + axis;
+            let q = q[axis] as f64 * grid.dx();
+            let psi = displacement[j] as f64;
+            if q > 0.5 && psi.abs() > 1e-7 {
+                let abs_then_subtract = absolute[j] as f64 - q;
+                let separation = (abs_then_subtract - psi).abs();
+                let displacement_ulp_scale = f32::EPSILON as f64 * psi.abs();
+                worst_relative_separation =
+                    worst_relative_separation.max(separation / displacement_ulp_scale);
+            }
+        }
+    }
+    assert!(
+        worst_relative_separation > 8.0,
+        "displacement packing should preserve weak-mode bits lost by absolute f32 positions; ratio={worst_relative_separation}"
+    );
+
+    let metadata = pending.metadata();
+    assert!(metadata["pmInitialMinimumJacobianDisplacementF32"]
+        .as_f64()
+        .unwrap()
+        .is_finite());
+    let oracle = pending.pm_reference_displacement_quantized().unwrap();
+    assert_eq!(oracle.len(), 16 * request.n.pow(request.dim as u32));
+    assert!(oracle.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn pending_gpu_result_records_first_verified_drift_bracket() {
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        force_mesh: 16,
+        steps: 32,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.3,
+        ..Default::default()
+    };
+    let pending = prepare_pending(&request).unwrap();
+    let (x, p, dx, dp) = pending.pm_input();
+    let mut minima = vec![0.5; request.steps];
+    minima[4] = -0.125;
+    minima[9] = -0.25;
+    let prepared = pending.finish_gpu_pm(&x, &p, &dx, &dp, &minima).unwrap();
+    let channels = prepared.direct_cpu();
+    let finished = prepared
+        .finish(&channels, r#"{"backend":"gpu","pmArithmetic":"f32"}"#)
+        .unwrap();
+    assert_eq!(finished["guard"]["pmCrossed"], true);
+    assert_eq!(finished["guard"]["firstPmCrossing"]["step"], 5);
+    let clocks = pending.pm_clocks();
+    assert_eq!(
+        finished["guard"]["firstPmCrossing"]["aStart"],
+        clocks[5 * 4 + 3]
+    );
+    assert_eq!(
+        finished["guard"]["firstPmCrossing"]["aEnd"],
+        clocks[5 * 4 + 4]
+    );
+    assert_eq!(finished["conventions"]["pmArithmetic"], "f32");
+    assert_eq!(finished["guard"]["pmMinimumSimplexJacobian"], -0.25);
+    let metadata = pending.metadata();
+    let initial_used = metadata["pmInitialMinimumJacobianF64"]
+        .as_f64()
+        .unwrap()
+        .min(
+            metadata["pmInitialMinimumJacobianDisplacementF32"]
+                .as_f64()
+                .unwrap(),
+        );
+    assert_eq!(
+        finished["guard"]["pmInitialMinimumJacobianDisplacementF32"],
+        metadata["pmInitialMinimumJacobianDisplacementF32"]
+    );
+    assert_eq!(
+        finished["guard"]["pmInitialMinimumJacobianUsed"],
+        initial_used
+    );
+    assert_eq!(
+        finished["guard"]["pmInitialMinimumJacobianRepresentation"],
+        "min(f64, displacement-f32-materialized)"
+    );
+}
+
+#[test]
+fn pm_drift_minimum_detects_reversed_orientation() {
+    let grid = Grid::new(2, 2, 1.0);
+    let start: Vec<f64> = (0..4)
+        .flat_map(|i| {
+            let q = grid.unravel(i);
+            [q[0] as f64 / 2.0, q[1] as f64 / 2.0]
+        })
+        .collect();
+    let end = start.iter().map(|v| -*v).collect::<Vec<_>>();
+    let minimum = hcc_core::nbody::minimum_drift_jacobian(&grid, &start, &end);
+    assert!(minimum < 0.0, "the affine drift reverses orientation");
+}
+
+#[test]
 fn packed_gpu_inputs_are_quantized_displacements_and_match_cpu_modes() {
-    let request = LabRequest { dim: 2, n: 16, force_mesh: 16, steps: 32,
-        epoch: "scaleFactor".into(), scale_factor: 0.3, ..Default::default() };
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        force_mesh: 16,
+        steps: 32,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.3,
+        ..Default::default()
+    };
     let prepared = hcc_core::laboratory::prepare(&request).unwrap();
     let grid = Grid::new(request.dim, request.n, 1.0);
     let channels = prepared.direct_cpu();
@@ -288,14 +487,24 @@ fn packed_gpu_inputs_are_quantized_displacements_and_match_cpu_modes() {
         let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
         let (f, df) = observables::sheet_mode_jvp(&grid, &x, &dx, k);
         let (pmf, pmdf) = observables::sheet_mode_jvp(&grid, &pmx, &pmdx, k);
-        let got = &channels[8*i..8*i+8];
+        let got = &channels[8 * i..8 * i + 8];
         let packed_channels = [f.re, f.im, df.re, df.im, pmf.re, pmf.im, pmdf.re, pmdf.im];
         for j in 0..8 {
             assert!(got[j].is_finite() && packed_channels[j].is_finite());
-            assert!((quantized_channels[8*i+j] - packed_channels[j]).abs() < 1e-13,
-                "quantized mode {}, channel {j}: API {} vs manual {}", mode[0], quantized_channels[8*i+j], packed_channels[j]);
-            assert!((got[j] - packed_channels[j]).abs() < 2e-4,
-                "mode {}, channel {j}: f64 {} vs packed-f32 {}", mode[0], got[j], packed_channels[j]);
+            assert!(
+                (quantized_channels[8 * i + j] - packed_channels[j]).abs() < 1e-13,
+                "quantized mode {}, channel {j}: API {} vs manual {}",
+                mode[0],
+                quantized_channels[8 * i + j],
+                packed_channels[j]
+            );
+            assert!(
+                (got[j] - packed_channels[j]).abs() < 2e-4,
+                "mode {}, channel {j}: f64 {} vs packed-f32 {}",
+                mode[0],
+                got[j],
+                packed_channels[j]
+            );
         }
         let (value, _) = observables::sheet_mode_jvp(&grid, &x, &dx, k);
         assert!((observables::sheet_mode(&grid, &x, k) - value).norm() < 1e-13);
@@ -304,17 +513,26 @@ fn packed_gpu_inputs_are_quantized_displacements_and_match_cpu_modes() {
 
 #[test]
 fn selected_lpt_mode_recovery_matches_full_cpu_channels_and_checks_indices() {
-    let request = LabRequest { dim: 2, n: 16, force_mesh: 16, steps: 32,
-        epoch: "scaleFactor".into(), scale_factor: 0.3, ..Default::default() };
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        force_mesh: 16,
+        steps: 32,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.3,
+        ..Default::default()
+    };
     let prepared = hcc_core::laboratory::prepare(&request).unwrap();
     let full = prepared.direct_cpu();
     let selected = prepared.direct_lpt_cpu_modes(&[3, 0, 3]).unwrap();
     assert_eq!(selected.len(), 12);
     for (out_mode, full_mode) in [(0usize, 3usize), (1, 0), (2, 3)] {
         assert_eq!(
-            &selected[4*out_mode..4*out_mode+4],
-            &full[8*full_mode..8*full_mode+4],
+            &selected[4 * out_mode..4 * out_mode + 4],
+            &full[8 * full_mode..8 * full_mode + 4],
         );
     }
-    assert!(prepared.direct_lpt_cpu_modes(&[prepared.metadata()["modeCount"].as_u64().unwrap() as u32]).is_err());
+    assert!(prepared
+        .direct_lpt_cpu_modes(&[prepared.metadata()["modeCount"].as_u64().unwrap() as u32])
+        .is_err());
 }

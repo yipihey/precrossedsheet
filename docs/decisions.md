@@ -165,3 +165,50 @@ timings and fallback reasons. Cross-device GPU reproduction uses explicit
 tolerances, rather than a bitwise guarantee. Scope and measurements are in
 [webgpu-results.md](webgpu-results.md); M5 resident physics remains subsequent
 work, with smaller scales still deferred.
+
+## 2026-10-11 — resident cosmological PM (engine 0.4.0)
+
+Resident GPU PM uses the existing canonical momentum, flat matter–Λ or EdS
+force operator and Rust cosmological kick/drift schedule. The deferred boundary
+retains f64 initial conditions and LPT observations, so PM execution can recover
+without rebuilding the realization. CPU PM and the original synchronous API
+remain available. GPU PM and GPU continuous observations recover independently;
+manifests record both decisions. State schema 3 and physical request schema 2
+remain compatible, while the engine version changes to 0.4.0.
+
+The new FFT adapts the pinned MIT Hopf–Cole Stockham stages to 1D–3D
+last-axis-fast storage. It is reusable independently of PM. Only radix-2 force
+meshes use resident PM; supported non-power-of-two lattices do not imply a
+radix-2 lattice requirement. Unsupported force meshes retain CPU PM with their
+original size. GPU buffer limits and the per-run allocation budget are checked
+explicitly. CPU remains the default and automatic policy remains CPU.
+
+CIC sums use integer-atomic linked lists with one floating sum per mesh node.
+This removes fixed-point quantization and competing floating writes, but list
+insertion order can vary. Device and repeated-run comparisons therefore use
+explicit tolerances. The PM force uses CIC; displayed density and PDFs keep
+exact conservative sheet deposition in Rust.
+
+The GPU evolves displacement ψ=x−q in f32, with subtraction before packing in
+f64 and force-grid lattice addressing computed by integer quotient/remainder.
+Absolute-position f32 storage passed primal tests but failed sparse tangent
+budgets near CIC faces. The displacement representation preserves weak initial
+motions; the derivative budgets are unchanged. The quantized-input f64 oracle
+reconstructs q + f32(ψ) without rounding the sum prematurely. Absolute f32
+positions are materialized for orientation diagnostics and exact observations.
+
+Drift orientation uses the complete determinant polynomial with interior
+stationary points, rather than endpoint checks alone. Regular reference
+simplex determinants are analytic signed powers of boxSize/n. GPU candidates
+at most 1e-3 or invalid arithmetic require Rust f64 checks of the evolved f32
+endpoints. That threshold is a practical recheck policy, not a rigorous global
+roundoff bound. Initially crossed and later crossed outputs continue with the
+existing caution and a first-drift bracket.
+
+Numerical and performance scope is recorded in [webgpu-pm-results.md](webgpu-pm-results.md).
+PM timing is separate from full worker timing. CPU weak-mode recovery and
+finite differences remain substantial work; this release does not imply that
+all stages are GPU-resident or that every request is faster. GPU nLPT
+construction, exact clipping, more precise continuous-mode arithmetic,
+cosmological gradients and adjoints remain subsequent work. Smaller scales
+and newly validated post-crossing physics remain deferred.

@@ -6,12 +6,12 @@ use crate::{
     grid::Grid,
     growth::{growth_rate, Cosmology},
     ics::Preset,
-    nbody::{evolve_cosmology, PmState, PmTangent},
+    nbody::{cosmology_clocks, evolve_cosmology, PmCrossing, PmRun, PmState, PmTangent},
     observables, sheet, spectra, tangent, Cosmo,
 };
+use num_complex::Complex64;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use num_complex::Complex64;
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -268,20 +268,52 @@ pub struct PreparedLabRun {
     fd_channels: OnceLock<Vec<f64>>,
 }
 
+/// Shared f64 physical preparation before the final PM evolution. The PM seed,
+/// tangent and clocks remain available when a GPU attempt fails, so fallback
+/// can finish this exact run without rebuilding the realization or LPT fields.
+pub struct PendingLabRun {
+    request: LabRequest,
+    c: Cosmo,
+    a: f64,
+    a_start: f64,
+    d: f64,
+    d_da: f64,
+    sc: f64,
+    minj: f64,
+    mins: f64,
+    x: Vec<f64>,
+    v: Vec<f64>,
+    dpos: Vec<f64>,
+    xplus: Vec<f64>,
+    xminus: Vec<f64>,
+    pm_initial: PmState,
+    pm_initial_tangent: PmTangent,
+    pm_initial_min_jacobian: f64,
+    pm_initial_quantized_min_jacobian: f64,
+    pm_initial_displacement_quantized_min_jacobian: f64,
+    pm_clocks: Vec<f64>,
+    pm_reference_cache: OnceLock<Result<PmRun, String>>,
+    pm_reference_quantized_cache: OnceLock<Result<PmRun, String>>,
+    pm_reference_displacement_quantized_cache: OnceLock<Result<PmRun, String>>,
+}
+
 fn packed_vec4(grid: &Grid, values: &[f64], displacement: bool) -> Vec<f32> {
     let mut out = vec![0.0f32; grid.size * 4];
     for i in 0..grid.size {
         for a in 0..grid.dim {
-            let q = if displacement { grid.unravel(i)[a] as f64 * grid.dx() } else { 0.0 };
+            let q = if displacement {
+                grid.unravel(i)[a] as f64 * grid.dx()
+            } else {
+                0.0
+            };
             out[4 * i + a] = (values[i * grid.dim + a] - q) as f32;
         }
     }
     out
 }
 
-/// Prepare a request once. Expensive physical preparation and CPU reference channels
-/// are shared by the synchronous compatibility wrapper and the split Wasm API.
-pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
+/// Prepare the common realization and retain the initial PM state for either backend.
+pub fn prepare_pending(r: &LabRequest) -> Result<PendingLabRun, String> {
     r.validate()?;
     let c = initial_conditions(r);
     let g = &c.grid;
@@ -308,6 +340,10 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
     let d_da_start = growth_rate(growth, a_start) * d_start / a_start;
     let (x, v_d) = evaluate(&c, d, r.order, 1.0);
     let v: Vec<f64> = v_d.iter().map(|v| v * d_da).collect();
+    let dpos = tangent::lpt_amplitude_jvp(c.lpt_ref(), d, r.order).0;
+    let h = 1e-4;
+    let (xplus, _) = evaluate(&c, d, r.order, 1. + h);
+    let (xminus, _) = evaluate(&c, d, r.order, 1. - h);
     let mut minj = f64::INFINITY;
     let mut mins = f64::INFINITY;
     // Resolved time-history check; positivity only at sampled times is not a
@@ -335,21 +371,386 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
         .iter()
         .map(|v| a_start.powi(3) * c.cosmo.e(a_start) * d_da_start * v)
         .collect();
-    let force_grid = Grid::new(r.dim, r.force_mesh, 1.0);
-    let pm = evolve_cosmology(
-        &force_grid,
-        g,
-        PmState {
+    let pm_initial_min_jacobian = observables::minimum_simplex_jacobian(g, &xi);
+    let mut xi_f32 = vec![0.0f32; g.size * 4];
+    for i in 0..g.size {
+        for axis in 0..g.dim {
+            xi_f32[i * 4 + axis] = xi[i * g.dim + axis] as f32;
+        }
+    }
+    let pm_initial_quantized_min_jacobian =
+        observables::minimum_simplex_jacobian(g, &unpack_vec4_f32(g.dim, g.size, &xi_f32));
+    let mut xi_displacement_f32 = vec![0.0f32; g.size * 4];
+    for i in 0..g.size {
+        let q = g.unravel(i);
+        for axis in 0..g.dim {
+            let psi = xi[i * g.dim + axis] - q[axis] as f64 * g.dx();
+            xi_displacement_f32[i * 4 + axis] = psi as f32;
+        }
+    }
+    // This minimum describes the absolute f32 state materialized by the GPU
+    // orientation/output path. The force kernel itself consumes ψ directly.
+    let mut xi_displacement_quantized = vec![0.0; g.size * g.dim];
+    for i in 0..g.size {
+        let q = g.unravel(i);
+        for axis in 0..g.dim {
+            xi_displacement_quantized[i * g.dim + axis] =
+                (q[axis] as f32 / g.n as f32 + xi_displacement_f32[i * 4 + axis]) as f64;
+        }
+    }
+    let pm_initial_displacement_quantized_min_jacobian =
+        observables::minimum_simplex_jacobian(g, &xi_displacement_quantized);
+    if !pm_initial_min_jacobian.is_finite() || !pm_initial_quantized_min_jacobian.is_finite() {
+        return Err("PM initial Jacobian is nonfinite".into());
+    }
+    if !pm_initial_displacement_quantized_min_jacobian.is_finite() {
+        return Err("PM displacement-quantized initial Jacobian is nonfinite".into());
+    }
+    let mut pm_clocks = Vec::with_capacity(r.steps * 5);
+    for s in 0..r.steps {
+        let a0 = a_start + (a - a_start) * s as f64 / r.steps as f64;
+        let a1 = a_start + (a - a_start) * (s + 1) as f64 / r.steps as f64;
+        let amid = 0.5 * (a0 + a1);
+        let kick0 = cosmology_clocks(Cosmology { omega_m: r.omega_m }, a0, amid).0;
+        let drift = cosmology_clocks(Cosmology { omega_m: r.omega_m }, a0, a1).1;
+        let kick1 = cosmology_clocks(Cosmology { omega_m: r.omega_m }, amid, a1).0;
+        pm_clocks.extend([kick0, drift, kick1, a0, a1]);
+    }
+    Ok(PendingLabRun {
+        request: r.clone(),
+        c,
+        a,
+        a_start,
+        d,
+        d_da,
+        sc,
+        minj,
+        mins,
+        x,
+        v,
+        dpos,
+        xplus,
+        xminus,
+        pm_initial: PmState {
             x: xi,
             p,
             a: a_start,
         },
-        Some(PmTangent { dx, dp }),
-        a,
-        r.steps,
-        Cosmology { omega_m: r.omega_m },
-        true,
-    )?;
+        pm_initial_tangent: PmTangent { dx, dp },
+        pm_initial_min_jacobian,
+        pm_initial_quantized_min_jacobian,
+        pm_initial_displacement_quantized_min_jacobian,
+        pm_clocks,
+        pm_reference_cache: OnceLock::new(),
+        pm_reference_quantized_cache: OnceLock::new(),
+        pm_reference_displacement_quantized_cache: OnceLock::new(),
+    })
+}
+
+/// Compatibility CPU path.
+pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
+    prepare_pending(r)?.finish_cpu()
+}
+
+impl PendingLabRun {
+    pub fn request(&self) -> &LabRequest {
+        &self.request
+    }
+    pub fn pm_clocks(&self) -> &[f64] {
+        &self.pm_clocks
+    }
+    pub fn pm_initial_min_jacobian(&self) -> f64 {
+        self.pm_initial_min_jacobian
+    }
+    /// GPU input displacement ψ=x−q, with subtraction performed in f64 before
+    /// the weak displacement is rounded to f32.
+    pub fn pm_displacement(&self) -> Vec<f32> {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        packed_vec4(&grid, &self.pm_initial.x, true)
+    }
+    pub fn metadata(&self) -> Value {
+        json!({"dim":self.request.dim,"n":self.request.n,"forceMesh":self.request.force_mesh,
+            "box":1.0,"omegaM":self.request.omega_m,"aStart":self.a_start,"aEnd":self.a,
+            "steps":self.request.steps,"modeCount":(self.request.n/4).min(6),
+            "pmArithmetic":"f32","pmInitialMinimumJacobianF64":self.pm_initial_min_jacobian,
+            "pmInitialMinimumJacobianF32":self.pm_initial_quantized_min_jacobian,
+            "pmInitialMinimumJacobianDisplacementF32":self.pm_initial_displacement_quantized_min_jacobian})
+    }
+    pub fn pm_reference(&self) -> Result<Vec<f64>, String> {
+        self.pack_pm_reference(self.pm_reference_run()?)
+    }
+    /// CPU PM oracle from the f32-rounded initial state, with the reference
+    /// solver and exact f64 clocks retained to isolate input quantization.
+    pub fn pm_reference_quantized(&self) -> Result<Vec<f64>, String> {
+        self.pack_pm_reference(self.pm_reference_quantized_run()?)
+    }
+    /// CPU PM oracle from f32-rounded displacement ψ and f32-rounded p/dx/dp.
+    /// The lattice q is restored in f64 before evolution, using exact f64 clocks.
+    pub fn pm_reference_displacement_quantized(&self) -> Result<Vec<f64>, String> {
+        self.pack_pm_reference(self.pm_reference_displacement_quantized_run()?)
+    }
+    fn pack_pm_reference(&self, run: &PmRun) -> Result<Vec<f64>, String> {
+        let dim = self.request.dim;
+        let nv = self.request.n.pow(dim as u32);
+        let mut out = vec![0.0; nv * 16];
+        for (block, values) in [
+            (0, run.state.x.as_slice()),
+            (1, run.state.p.as_slice()),
+            (2, run.tangent.as_ref().unwrap().dx.as_slice()),
+            (3, run.tangent.as_ref().unwrap().dp.as_slice()),
+        ] {
+            for i in 0..nv {
+                for a in 0..dim {
+                    out[block * nv * 4 + i * 4 + a] = values[i * dim + a];
+                }
+            }
+        }
+        Ok(out)
+    }
+    fn pm_reference_run(&self) -> Result<&PmRun, String> {
+        self.pm_reference_cache
+            .get_or_init(|| {
+                self.evolve_pm(self.pm_initial.clone(), self.pm_initial_tangent.clone())
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+    fn pm_reference_quantized_run(&self) -> Result<&PmRun, String> {
+        self.pm_reference_quantized_cache
+            .get_or_init(|| {
+                let (x, p, dx, dp) = self.pm_input();
+                let dim = self.request.dim;
+                let nv = self.request.n.pow(dim as u32);
+                let compact = |v: &[f32]| {
+                    let mut out = vec![0.0; nv * dim];
+                    for i in 0..nv {
+                        for a in 0..dim {
+                            out[i * dim + a] = v[i * 4 + a] as f64;
+                        }
+                    }
+                    out
+                };
+                self.evolve_pm(
+                    PmState {
+                        x: compact(&x),
+                        p: compact(&p),
+                        a: self.a_start,
+                    },
+                    PmTangent {
+                        dx: compact(&dx),
+                        dp: compact(&dp),
+                    },
+                )
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+    fn pm_reference_displacement_quantized_run(&self) -> Result<&PmRun, String> {
+        self.pm_reference_displacement_quantized_cache
+            .get_or_init(|| {
+                let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+                let displacement = self.pm_displacement();
+                let p = self.pm_initial_component(1);
+                let dx = self.pm_initial_component(2);
+                let dp = self.pm_initial_component(3);
+                let dim = self.request.dim;
+                let nv = self.request.n.pow(dim as u32);
+                let compact = |v: &[f32]| {
+                    let mut out = vec![0.0; nv * dim];
+                    for i in 0..nv {
+                        for a in 0..dim {
+                            out[i * dim + a] = v[i * 4 + a] as f64;
+                        }
+                    }
+                    out
+                };
+                let mut x = vec![0.0; nv * dim];
+                for i in 0..nv {
+                    let q = grid.unravel(i);
+                    for a in 0..dim {
+                        x[i * dim + a] = q[a] as f64 * grid.dx() + displacement[i * 4 + a] as f64;
+                    }
+                }
+                self.evolve_pm(
+                    PmState {
+                        x,
+                        p: compact(&p),
+                        a: self.a_start,
+                    },
+                    PmTangent {
+                        dx: compact(&dx),
+                        dp: compact(&dp),
+                    },
+                )
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+    fn evolve_pm(&self, initial: PmState, tangent: PmTangent) -> Result<PmRun, String> {
+        let force_grid = Grid::new(self.request.dim, self.request.force_mesh, 1.0);
+        let sheet = Grid::new(self.request.dim, self.request.n, 1.0);
+        evolve_cosmology(
+            &force_grid,
+            &sheet,
+            initial,
+            Some(tangent),
+            self.a,
+            self.request.steps,
+            Cosmology {
+                omega_m: self.request.omega_m,
+            },
+            true,
+        )
+    }
+    pub fn pm_input(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+        (
+            self.pm_initial_component(0),
+            self.pm_initial_component(1),
+            self.pm_initial_component(2),
+            self.pm_initial_component(3),
+        )
+    }
+    pub fn pm_initial_component(&self, component: usize) -> Vec<f32> {
+        let dim = self.request.dim;
+        let nv = self.request.n.pow(dim as u32);
+        let values = match component {
+            0 => &self.pm_initial.x,
+            1 => &self.pm_initial.p,
+            2 => &self.pm_initial_tangent.dx,
+            3 => &self.pm_initial_tangent.dp,
+            _ => return Vec::new(),
+        };
+        let mut out = vec![0.0f32; nv * 4];
+        for i in 0..nv {
+            for a in 0..dim {
+                out[i * 4 + a] = values[i * dim + a] as f32;
+            }
+        }
+        out
+    }
+    pub fn finish_cpu(&self) -> Result<PreparedLabRun, String> {
+        let pm = self.pm_reference_run()?.clone();
+        assemble_prepared(self, pm, "f64")
+    }
+    pub fn finish_gpu_pm(
+        &self,
+        x: &[f32],
+        p: &[f32],
+        dx: &[f32],
+        dp: &[f32],
+        drift_minima: &[f64],
+    ) -> Result<PreparedLabRun, String> {
+        let dim = self.request.dim;
+        let nv = self.request.n.pow(dim as u32);
+        let expected = nv * 4;
+        for (name, values) in [("x", x), ("p", p), ("dx", dx), ("dp", dp)] {
+            if values.len() != expected {
+                return Err(format!("GPU PM {name} length must be {expected}"));
+            }
+            if values.iter().any(|v| !v.is_finite()) {
+                return Err(format!("GPU PM {name} contains a nonfinite value"));
+            }
+        }
+        if drift_minima.len() != self.request.steps {
+            return Err(format!(
+                "GPU PM needs {} verified drift minima",
+                self.request.steps
+            ));
+        }
+        if drift_minima.iter().any(|v| !v.is_finite()) {
+            return Err("GPU PM drift minima must be finite".into());
+        }
+        let mut pmx = vec![0.0; nv * dim];
+        let mut p64 = pmx.clone();
+        let mut dx64 = pmx.clone();
+        let mut dp64 = pmx.clone();
+        for i in 0..nv {
+            for a in 0..dim {
+                let j = i * dim + a;
+                let k = i * 4 + a;
+                pmx[j] = x[k] as f64;
+                p64[j] = p[k] as f64;
+                dx64[j] = dx[k] as f64;
+                dp64[j] = dp[k] as f64;
+            }
+        }
+        // The active GPU protocol carries displacement ψ, so its materialized
+        // initial state is the displacement-quantized branch. Keep the legacy
+        // absolute-f32 diagnostic available in metadata, but don't let that
+        // unused representation create a crossing warning.
+        let min_initial = self
+            .pm_initial_min_jacobian
+            .min(self.pm_initial_displacement_quantized_min_jacobian);
+        let mut minimum = min_initial;
+        let mut first_crossing = if minimum <= 0.0 {
+            Some(PmCrossing {
+                step: 0,
+                a_start: self.a_start,
+                a_end: self.a_start,
+                minimum_jacobian: minimum,
+            })
+        } else {
+            None
+        };
+        for (i, &jac) in drift_minima.iter().enumerate() {
+            minimum = minimum.min(jac);
+            if jac <= 0.0 && first_crossing.is_none() {
+                first_crossing = Some(PmCrossing {
+                    step: i + 1,
+                    a_start: self.pm_clocks[5 * i + 3],
+                    a_end: self.pm_clocks[5 * i + 4],
+                    minimum_jacobian: jac,
+                });
+            }
+        }
+        let pm = PmRun {
+            state: PmState {
+                x: pmx,
+                p: p64,
+                a: self.a,
+            },
+            tangent: Some(PmTangent { dx: dx64, dp: dp64 }),
+            min_jacobian: minimum,
+            completed_steps: self.request.steps,
+            crossed: first_crossing.is_some(),
+            first_crossing,
+        };
+        assemble_prepared(self, pm, "f32")
+    }
+}
+
+fn unpack_vec4_f32(dim: usize, nv: usize, packed: &[f32]) -> Vec<f64> {
+    let mut out = vec![0.0; nv * dim];
+    for i in 0..nv {
+        for a in 0..dim {
+            out[i * dim + a] = packed[i * 4 + a] as f64;
+        }
+    }
+    out
+}
+
+fn assemble_prepared(
+    pending: &PendingLabRun,
+    pm: PmRun,
+    pm_arithmetic: &str,
+) -> Result<PreparedLabRun, String> {
+    let r = &pending.request;
+    let c = &pending.c;
+    let a = pending.a;
+    let a_start = pending.a_start;
+    let d = pending.d;
+    let d_da = pending.d_da;
+    let sc = pending.sc;
+    let minj = pending.minj;
+    let mins = pending.mins;
+    let x = &pending.x;
+    let v = &pending.v;
+    let dpos = &pending.dpos;
+    let xplus = &pending.xplus;
+    let xminus = &pending.xminus;
+    let g = &c.grid;
+    let growth = &c.lpt_ref().growth;
+    let h = 1e-4;
     let pmx = &pm.state.x;
     let pmv: Vec<f64> = pm
         .state
@@ -377,10 +778,6 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
     let ps = power(&eg, &rho);
     let psc = power(&eg, &cic);
     let psp = power(&eg, &pmrho);
-    let (dpos, _) = tangent::lpt_amplitude_jvp(c.lpt_ref(), d, r.order);
-    let h = 1e-4;
-    let (xplus, _) = evaluate(&c, d, r.order, 1. + h);
-    let (xminus, _) = evaluate(&c, d, r.order, 1. - h);
     let mut ks = Vec::new();
     let mut powers = Vec::new();
     let mut derivatives = Vec::new();
@@ -401,6 +798,18 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
         mode_records.push([m as i32, 0, 0, 0]);
     }
     let pmdpos = pm.tangent.as_ref().unwrap().dx.clone();
+    let pm_initial_minimum_used = if pm_arithmetic == "f64" {
+        pending.pm_initial_min_jacobian
+    } else {
+        pending
+            .pm_initial_min_jacobian
+            .min(pending.pm_initial_displacement_quantized_min_jacobian)
+    };
+    let pm_initial_minimum_representation = if pm_arithmetic == "f64" {
+        "f64"
+    } else {
+        "min(f64, displacement-f32-materialized)"
+    };
     let q: Vec<f64> = (0..g.size)
         .flat_map(|i| {
             let ijk = g.unravel(i);
@@ -432,6 +841,11 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
     let physical_k = |v: &[f64]| v.iter().map(|k| k / r.box_size).collect::<Vec<_>>();
     let physical_p = |v: &[f64]| v.iter().map(|p| p * physical_volume).collect::<Vec<_>>();
     let safe = minj > 0. && mins > 0. && !pm.crossed;
+    let crossing_diagnostic = if pm_arithmetic == "f64" {
+        "f64 CPU polynomial extrema for every PM drift"
+    } else {
+        "f32 GPU polynomial extrema; f64 CPU recomputation when the GPU minimum is <=1e-3; f64 and f32 initial-sheet checks"
+    };
     let first_pm_crossing = pm.first_crossing.as_ref().map(|f| {
         json!({
             "step":f.step,"aStart":f.a_start,"aEnd":f.a_end,"minimumJacobian":f.minimum_jacobian
@@ -448,12 +862,11 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
         "Shell crossing detected: results remain visible; the single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply. Deposited density sums positive stream masses."
     };
     let dy = 3.6 / 80.;
-    let result =
-        json!({"dim":r.dim,"n":r.n,"mesh":r.mesh,"forceMesh":r.force_mesh,"box":1.,"boxSize":r.box_size,"a":a,"aStart":a_start,"D":d,"dDa":d_da,"redshift":1./a-1.,"growthAtOne":growth.d_of_a(1.),"shellCrossing":sc,"aShellCrossing":a_sc,
-        "request":r,"engineVersion":"0.3.0","schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
+    let result = json!({"dim":r.dim,"n":r.n,"mesh":r.mesh,"forceMesh":r.force_mesh,"box":1.,"boxSize":r.box_size,"a":a,"aStart":a_start,"D":d,"dDa":d_da,"redshift":1./a-1.,"growthAtOne":growth.d_of_a(1.),"shellCrossing":sc,"aShellCrossing":a_sc,
+        "request":r,"engineVersion":env!("CARGO_PKG_VERSION"),"schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
         "cosmology":{"omegaM":r.omega_m,"omegaB":r.omega_b,"h":r.h,"ns":r.ns,"sigma8":r.sigma8},
-        "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
+        "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
         "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,
         "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers)},
         "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"summary":summary,"pmSummary":pm_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy},
@@ -465,27 +878,49 @@ pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
         "initialNormalization":"Gaussian spectrum sigma8 at z=0 before Gaussian filtering and radial cutoff; no realization RMS rescaling. Deterministic waves use fixed delta0 amplitudes independent of sigma8.",
         "initialFilter":"Gaussian exp(-k^2 R_initial^2/2) plus fixed radial integer-mode cutoff",
         "modeGenerator":"PSC Fourier mode hash v2, SplitMix64 and xoshiro256** Box-Muller, exact Hermitian pairing",
-        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices"}});
+        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices","pmArithmetic":pm_arithmetic,"crossingDiagnostic":crossing_diagnostic}});
     let grid = &c.grid;
     Ok(PreparedLabRun {
-        request: r.clone(), result, modes: mode_records, h,
+        request: r.clone(),
+        result,
+        modes: mode_records,
+        h,
         lpt_displacement: packed_vec4(grid, &x, true),
         lpt_direction: packed_vec4(grid, &dpos, false),
         pm_displacement: packed_vec4(grid, pmx, true),
         pm_direction: packed_vec4(grid, &pmdpos, false),
-        x, dpos, xplus, xminus, pmx: pmx.clone(), pmdpos,
+        x: x.clone(),
+        dpos: dpos.clone(),
+        xplus: xplus.clone(),
+        xminus: xminus.clone(),
+        pmx: pmx.clone(),
+        pmdpos,
         fd_channels: OnceLock::new(),
     })
 }
 
 impl PreparedLabRun {
-    pub fn dim(&self) -> usize { self.request.dim }
-    pub fn n(&self) -> usize { self.request.n }
-    pub fn modes(&self) -> &[[i32; 4]] { &self.modes }
-    pub fn lpt_displacement(&self) -> &[f32] { &self.lpt_displacement }
-    pub fn lpt_direction(&self) -> &[f32] { &self.lpt_direction }
-    pub fn pm_displacement(&self) -> &[f32] { &self.pm_displacement }
-    pub fn pm_direction(&self) -> &[f32] { &self.pm_direction }
+    pub fn dim(&self) -> usize {
+        self.request.dim
+    }
+    pub fn n(&self) -> usize {
+        self.request.n
+    }
+    pub fn modes(&self) -> &[[i32; 4]] {
+        &self.modes
+    }
+    pub fn lpt_displacement(&self) -> &[f32] {
+        &self.lpt_displacement
+    }
+    pub fn lpt_direction(&self) -> &[f32] {
+        &self.lpt_direction
+    }
+    pub fn pm_displacement(&self) -> &[f32] {
+        &self.pm_displacement
+    }
+    pub fn pm_direction(&self) -> &[f32] {
+        &self.pm_direction
+    }
     pub fn direct_cpu(&self) -> Vec<f64> {
         self.direct_with_fields(&self.x, &self.dpos, &self.pmx, &self.pmdpos)
     }
@@ -496,8 +931,12 @@ impl PreparedLabRun {
         let grid = Grid::new(self.request.dim, self.request.n, 1.0);
         let mut out = Vec::with_capacity(indices.len() * 4);
         for &index in indices {
-            let mode = self.modes.get(index as usize)
-                .ok_or_else(|| format!("Direct mode index {index} is out of range (mode count {})", self.modes.len()))?;
+            let mode = self.modes.get(index as usize).ok_or_else(|| {
+                format!(
+                    "Direct mode index {index} is out of range (mode count {})",
+                    self.modes.len()
+                )
+            })?;
             let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
             let (f, df) = observables::sheet_mode_jvp(&grid, &self.x, &self.dpos, k);
             out.extend([f.re, f.im, df.re, df.im]);
@@ -515,7 +954,11 @@ impl PreparedLabRun {
                 let ijk = grid.unravel(i);
                 for a in 0..grid.dim {
                     values[i * grid.dim + a] = packed[4 * i + a] as f64
-                        + if displacement { ijk[a] as f64 * grid.dx() } else { 0.0 };
+                        + if displacement {
+                            ijk[a] as f64 * grid.dx()
+                        } else {
+                            0.0
+                        };
                 }
             }
             values
@@ -544,11 +987,15 @@ impl PreparedLabRun {
     pub fn finite_difference_cpu(&self) -> &[f64] {
         self.fd_channels.get_or_init(|| {
             let grid = Grid::new(self.request.dim, self.request.n, 1.0);
-            self.modes.iter().map(|mode| {
-                let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
-                (observables::sheet_mode(&grid, &self.xplus, k).norm_sqr()
-                    - observables::sheet_mode(&grid, &self.xminus, k).norm_sqr()) / (2.0 * self.h)
-            }).collect()
+            self.modes
+                .iter()
+                .map(|mode| {
+                    let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
+                    (observables::sheet_mode(&grid, &self.xplus, k).norm_sqr()
+                        - observables::sheet_mode(&grid, &self.xminus, k).norm_sqr())
+                        / (2.0 * self.h)
+                })
+                .collect()
         })
     }
 
@@ -561,7 +1008,10 @@ impl PreparedLabRun {
     pub fn finish(&self, channels: &[f64], execution: &str) -> Result<Value, String> {
         let expected = self.modes.len() * 8;
         if channels.len() != expected {
-            return Err(format!("Expected {expected} direct channel scalars, got {}", channels.len()));
+            return Err(format!(
+                "Expected {expected} direct channel scalars, got {}",
+                channels.len()
+            ));
         }
         if channels.iter().any(|v| !v.is_finite()) {
             return Err("Direct channel values must all be finite".into());

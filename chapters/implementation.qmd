@@ -57,11 +57,11 @@ For production use also check the affine simplex orientations and the resolution
 
 ## Numerical limits and derivative scope
 
-The inherited LPT spatial fields and deposited density arrays use `f32`; Fourier arithmetic, clipping moments, PM state, and analytic tangent arithmetic use `f64`. A finite-difference check must choose its step above representation noise and below nonlinear truncation error. The facade bounds allocations before building the field, and requires a conservative Gaussian input bandwidth. The recorded native benchmarks distinguish measured peak RSS from the conservative memory estimate.
+In the CPU reference, inherited LPT spatial fields and deposited density arrays use `f32`; Fourier arithmetic, clipping moments, PM state, and analytic tangent arithmetic use `f64`. The optional resident PM stage uses `f32` state and tangent arithmetic, as detailed in @sec-gpu-pm. A finite-difference check must choose its step above representation noise and below nonlinear truncation error. The facade bounds allocations before building the field, and requires a conservative Gaussian input bandwidth. The recorded native benchmarks distinguish measured peak RSS from the conservative memory estimate.
 
 The differentiable route carries an initial-condition JVP through nLPT, or supplied phase-space directions through PM, to continuous P0 Fourier modes and power. It supports directional derivatives at fixed cosmology and clocks. It does not provide cosmological growth derivatives, a reverse-mode adjoint, or exact-clipped-density shape derivatives. Those are separate implementation tasks; they should not be implied by the word “differentiable.”
 
-The browser uses Wasm and Canvas2D/SVG as the portable capability tier, with an optional checked GPU observer described below. The worker keeps large calculations off the page thread; the resource envelope permits lattice 64³ and observation/force grids up to 128³ when their combined estimate fits 1 GiB, while 1D and 2D ceilings are 1024 and 256². Invalid requests return explicit errors without replacing the requested grid. The same low-level Rust library supports caller-managed larger allocations outside the facade. The facade intentionally uses the same limits in native and Wasm runs so one manifest denotes one experiment.
+The browser uses Wasm and Canvas2D/SVG as the portable capability tier, with optional checked GPU PM evolution and continuous-mode observations described below. The worker keeps large calculations off the page thread; the resource envelope permits lattice 64³ and observation/force grids up to 128³ when their combined estimate fits 1 GiB, while 1D and 2D ceilings are 1024 and 256². Invalid requests return explicit errors without replacing the requested grid. The same low-level Rust library supports caller-managed larger allocations outside the facade. The facade intentionally uses the same limits in native and Wasm runs so one manifest denotes one experiment.
 
 ## Data lineage and adaptation
 
@@ -80,13 +80,14 @@ The checked `laboratory::run_json` facade accepts exported manifests as well as 
 
 ## Hybrid WebGPU observation backend {#sec-gpu-backend}
 
-The optional compute backend evaluates the continuous fixed-mass sheet modes and their analytic position directions. Rust/Wasm still constructs the initial field, integrates growth, builds nLPT and PM trajectories, checks orientation, clips the sheet onto the observation grid, and computes PDFs and gridded spectra. The backend changes the arithmetic used for selected continuous modes; it does not change the represented sheet, physical epoch, or estimator.
+The optional compute backend evaluates the continuous fixed-mass sheet modes and their analytic position directions. Rust/Wasm constructs the initial field, integrates growth, builds nLPT trajectories, clips the sheet onto the observation grid, and computes PDFs and gridded spectra. PM trajectories can use either the f64 CPU reference or the resident GPU solver described below. The continuous-mode estimator uses the same sheet connectivity and fixed simplex masses for either trajectory source.
 
 The prepared-run boundary retains the double-precision trajectory and tangent arrays. A GPU failure therefore reuses the prepared CPU state rather than repeating the physical calculation. Finalization uses the same Rust power normalization and unit conversion as the synchronous facade. The boundary is exposed by {{< src laboratory::prepare >}} and {{< src laboratory::PreparedLabRun >}}, and its compatibility and selective-recovery contracts are pinned by {{< test prepared_run_finishes_identically_and_validates_direct_channels "prepared-run contract" >}}.
 
 | Stage | Arithmetic and execution |
 |---|---|
-| Initial conditions, growth and trajectory generation | Existing Rust/Wasm implementation |
+| Initial conditions, growth and nLPT trajectory generation | Existing Rust/Wasm implementation |
+| Cosmological PM trajectory and tangent | Rust f64 reference or validated resident GPU f32 solver |
 | Exact density, PDFs and gridded power | Existing Rust/Wasm implementation |
 | Continuous LPT/PM modes and analytic JVPs | Optional WGSL f32 kernel; CPU reference remains available |
 | Weak LPT mode recovery | Retained CPU f64 trajectory and direction |
@@ -119,4 +120,33 @@ python3 scripts/profile_native_stages.py --dim 3 --repeats 3 --output native-pro
 
 The browser runner requires Chrome (or `CHROME_PATH`) and has no npm dependencies. A missing adapter is reported as a skip; `--require-gpu` makes that a failing requirement. Normal hosted CI runs the native, Wasm and worker contracts, while GPU checks require a GPU-capable runner. See the [implementation plan](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-backend-plan.md) and [measurement record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-results.md) for the tested requests and device-specific limits.
 
-FFT/LPT residency, a GPU cosmological PM/KDK tangent solver and geometric clipping are subsequent stages. Hopf–Cole provides FFT and LPT foundations; its heat-flow model does not replace this laboratory's gravitational evolution. Extend a resident solver only after profiling the released hybrid path and passing independent trajectory, force, tangent and geometric tests.
+GPU nLPT construction, geometric clipping and higher-precision continuous-mode arithmetic remain subsequent stages. CPU finite differences and selective weak-mode recovery continue to account for much of the complete-request cost.
+
+## Resident cosmological PM evolution {#sec-gpu-pm}
+
+The resident stage carries unwrapped positions, canonical momenta, and their initial-amplitude directions through the same discrete cosmological PM equations as the CPU solver. The initial four-order growing state and the cosmological kick/drift integrals are supplied by Rust. For $\boldsymbol p=a^3 E(a)\,d\boldsymbol x/da$, each step uses the two half-kicks and full drift from @eq-kdk-integrals; only the numerical arithmetic changes to f32. The deferred boundary retains the f64 initial state until a successful GPU completion, so an allocation, validation, or execution failure can recover without rebuilding the initial realization. See {{< src laboratory::PendingLabRun >}} and the retained-state test {{< test pending_run_reuses_common_state_after_gpu_validation_failure "PM fallback contract" >}}.
+
+The state buffer evolves $\boldsymbol\psi=\boldsymbol x-\boldsymbol q$, with subtraction performed in f64 before upload by {{< src laboratory::PendingLabRun::pm_displacement >}}. Force interpolation combines the integer lattice-to-force-grid quotient and remainder with $\boldsymbol\psi$, rather than rounding a small displacement into an absolute f32 position first. This matters for derivatives near CIC cell boundaries, where a change in interpolation branch can alter the JVP even when primal positions are close. Absolute f32 positions are materialized for orientation checks and exact observations. The reference harness separately reconstructs $\boldsymbol q+\operatorname{f32}(\boldsymbol\psi)$ in f64 to measure input quantization. A weak-mode packing test checks this distinction {{< test pm_displacement_packing_preserves_weak_modes_and_has_quantized_cpu_oracle "displacement precision" >}}.
+
+Each force evaluation performs CIC deposition of both density and its direction, forward transforms, the derivative-safe spectral Poisson operation, inverse transforms, and CIC interpolation back to the particles. The gather direction includes the derivative of its interpolation weights as well as the force-field direction. Masses, cosmology, force mesh and clock schedule are held fixed. Thus the PM JVP differentiates the implemented discrete solver, including both CIC operations; it is not a cosmological-parameter gradient or an adjoint. The CPU equations and their independent finite-difference tests remain in @sec-pm.
+
+The FFT is a Stockham radix-2 complex transform adapted from the pinned MIT [Hopf–Cole implementation](https://github.com/yipihey/hopf-cole-cosmology/blob/3a3a13b9ba817c5b4f8f9f26314715845e13d4ad/app/js/gpu/fft3d.js). It preserves last-axis-fast storage, the forward sign, and inverse normalization. The force denominator retains Nyquist contributions to $|\boldsymbol k|^2$, while odd derivatives use the zeroed Nyquist component from {{< src grid::Grid::kd >}}. A non-power-of-two force mesh retains CPU PM with an explicit reason; the requested lattice and observation grid are unchanged.
+
+CIC deposition uses integer atomics to build per-node lists of particle contributions. One invocation sums the list for each node in floating point. This avoids fixed-point mass quantization and conflicting floating writes, but insertion order can depend on device scheduling, so cross-device and repeated-run agreement is assessed with tolerances. These CIC fields are force inputs. Displayed sheet density still uses exact geometric cell overlaps on CPU, with the same positive-stream-mass accounting, PDF weighting and smoothing conventions.
+
+### Drift orientation and precision
+
+Every drift evaluates the determinant polynomial on each interval, triangle or Kuhn tetrahedron at both endpoints and at all interior stationary points. A flag records nonfinite polynomial arithmetic. When the GPU candidate is at most $10^{-3}$, or is invalid, Rust recomputes the complete drift minimum in f64 from the f32 endpoints actually evolved. The threshold is a recheck policy, not a universal error bound. Initial orientation is checked for both the original f64 and quantized f32 initial sheet. The first failed drift is retained as a bracket, and evolution continues with the shell-crossing caution. The CPU extrema calculation is exposed by {{< src nbody::minimum_drift_jacobian >}}, with an interior-fold test {{< test drift_guard_detects_interior_fold_with_positive_endpoint_jacobians "continuous drift extrema" >}} and boundary-bracket test {{< test pending_gpu_result_records_first_verified_drift_bracket "crossing bracket" >}}.
+
+PM state, tangents, CIC sums and FFT fields use f32; Rust clocks are rounded to f32 when uploaded. Exact observation integration and final power/unit conversion retain the existing CPU arithmetic. The per-device gate compares FFT modes, a direct-DFT CIC force/JVP reference, and complete PM states against Rust with both original and quantized initial inputs. A separate full suite checks observation statistics, crossings, resource refusal and cancellation. The measured requests, tolerances, source hashes and timings are recorded in [the resident-backend validation record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-pm-results.md).
+
+```sh
+node scripts/test_gpu.mjs --require-gpu --resident --output resident-checks.json
+node scripts/test_gpu.mjs --require-gpu --resident-benchmark --output resident-benchmark.json
+```
+
+::: {.callout-tip title="Inspect trajectory and observation provenance"}
+Select GPU and inspect the PM evolution entry together with the continuous-mode precision table. The two stages can recover independently. The exported manifest retains device checks, clocks' physical request, shader hashes, precision, timings and fallback reasons.
+
+{{< lab "v=3&dim=3&n=32&epoch=scaleFactor&a=0.25&steps=32&mesh=32&force=32&backend=gpu&view=gradient" "Resident PM and continuous-mode response" >}}
+:::
