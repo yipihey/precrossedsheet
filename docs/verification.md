@@ -1,4 +1,13 @@
-# Verification record — 2026-10-11
+# Verification record — 2026-10-12
+
+## Two-point geometry chapter and interval experiment (engine 0.6.0)
+
+- `make test` passes all 74 native Rust tests and the state/replay and new two-point JavaScript checks. Three independent native fixtures check periodic overlap marginal identities, normalized mass-pair weights, the distinct separation-conditioned mass marginal, zero-lag variance, the periodic integral constraint, and agreement with spatial quadrature and exact interval Fourier transforms including same-element terms.
+- The two equal-mass interval arrangements retain identical one-point volume and mass PDFs. Both give `xi(0)=29/96`; at separation `1/4`, the autocorrelations give `-79/2304` and `-169/2304`. The JavaScript checks pin both values and reject confusing an A/B cross-correlation with either arrangement's autocorrelation. URL state round-trips; the CSV includes inputs, both layouts' element and pair data, and both correlation curves.
+- `make test-wasm` rebuilds the existing engine and passes its mass, derivative, crossing, cache, typed-boundary and persistent-worker checks. The new chapter fixture is a browser interval calculation, without a new Wasm cosmological observer.
+- `make check` resolves source/test/lab provenance; the 14-page book renders without unresolved references or citations. Desktop and 390-pixel chapter review find no KaTeX errors or horizontal page overflow. Long formulas and tables scroll within their containers. Browser controls reproduce the analytic A/B values, restore the uniform-density limit, and update the reproducible query-string state.
+
+The chapter derives full joint PDFs and endpoint measures, the exact overlap/separation kernels, centroid phases and finite-support Fourier windows, and smoothing/radial conventions. Its native and browser demonstrations establish those geometric identities rather than additional cosmological accuracy or small-scale results.
 
 
 ## Complete GPU optimization release (engine 0.6.0, schema 3)

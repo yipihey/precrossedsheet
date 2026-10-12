@@ -1,9 +1,15 @@
-// Chapter widgets are compact permalinks into the full lab. `data-widget`
-// selects the opening view; `data-state` may contain URL-hash key/value pairs.
+// Chapter widgets are either a focused local explainer or a compact permalink
+// into the full lab. `data-widget` selects the behavior; `data-state` may hold
+// URL-hash key/value pairs for laboratory links.
 import { encodeHash, makeDefaults, decodeHash } from './state.js';
+import { mountTwoPointWidget } from './two-point.js';
 
 const VIEW_BY_WIDGET = { curve: 'sheet', sheet: 'sheet', density: 'density', spectra: 'spectra', pdf: 'pdf', gradient: 'gradient', published: 'published' };
 for (const host of document.querySelectorAll('.qd-widget')) {
+  if (host.dataset.widget === 'two-point') {
+    mountTwoPointWidget(host);
+    continue;
+  }
   const state = { ...makeDefaults(), ...decodeHash(host.dataset.state || '') };
   state.view = VIEW_BY_WIDGET[host.dataset.widget] || state.view;
   const card = document.createElement('section'); card.className = 'lab-widget-card';

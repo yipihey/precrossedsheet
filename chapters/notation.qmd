@@ -21,6 +21,11 @@ title: "Notation and conventions"
 | $R_f,R_s$ | Initial-condition filter scale and observable filter scale |
 | $A$ | Amplitude multiplier of the initial field; tangent at $A=1$ |
 | $y=\log_{10}r$ | PDF coordinate; ordinate is probability per unit $y$ |
+| $V_B=L^d$, $M_B=\bar\rho V_B$ | Box volume and total mass |
+| $p_{VV},p_{MV},p_{VM},p_{MM}$ | Joint density PDFs at fixed displacement; subscripts specify endpoint measures |
+| $\xi(\mathbf s)$ | Volume average of $\delta(\mathbf x)\delta(\mathbf x+\mathbf s)$ at a fixed epoch |
+| $K_{TU}(\mathbf s)$, $q_{TU}(\mathbf s)$ | Periodic overlap volume and normalized displacement PDF of two uniform element points |
+| $\mathbf c_T$, $\Sigma_T$, $W_T(\mathbf k)$ | Unwrapped element centroid, spatial covariance, and centered Fourier form factor |
 
 The facade uses unit-box positions and $H_0=1$ internally, with an explicit physical box length in $h^{-1}\mathrm{Mpc}$; @sec-dimensional-units gives the conversions. Fourier output uses physical $k$ and $P_d$. The live Gaussian observation filter uses $R_s/L$ as its control; the initial filter is entered directly in $h^{-1}\mathrm{Mpc}$. Neither Gaussian filter is the archival top-hat filter. Lower-dimensional modes describe translationally invariant solutions, with a distinct power normalization.
 
@@ -31,6 +36,8 @@ The forward FFT is unnormalized, the inverse FFT includes $1/N_e^d$, and a Fouri
 Array storage is row major with the last spatial index fastest; positions and velocities are interleaved by component. Every square is split along the same diagonal; every cube has six Kuhn tetrahedra. A boundary neighbor receives a periodic lift before constructing an element. The term “P0” refers to a constant density inside the affine simplex; “P1” refers to an additional normalized linear density reconstruction.
 
 Mass-weighted smoothed PDFs use unsmoothed mass weights as defined in @eq-mass-environment. Hard histogram ranges are finite; captured probabilities are reported. The continuous derivative panel is P0 Fourier power, not a histogram or an exact-clipping derivative.
+
+Two independently mass-selected positions conditioned on their displacement use the pair normalization $1+\xi$, as in @eq-pair-change-measure. Their conditioned density marginals generally differ from the one-point mass PDF. Centroid differences describe unwrapped element pairs; periodic overlap kernels determine their exact displacement distributions. Volumes alone do not specify simplex shape in two or three dimensions.
 
 The compensated GPU finite-difference observer in @sec-gpu-fd uses
 $F_\pm=F[\mathbf x(A\pm h)]$, $\Delta F=F_+-F_-$ and $h=10^{-4}$.

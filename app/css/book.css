@@ -18,3 +18,68 @@
     display: none;
   }
 }
+
+/* Standalone periodic two-point interval widget embedded in the chapter. */
+.two-point-widget {
+  --tp-bg: var(--bs-body-bg, #fff);
+  --tp-fg: var(--bs-body-color, #222);
+  --tp-muted: var(--bs-secondary-color, #667085);
+  --tp-line: var(--bs-border-color, #cbd5e1);
+  --tp-accent: var(--bs-primary, #276c9b);
+  margin: 1.25rem 0;
+  padding: 1rem;
+  color: var(--tp-fg);
+  background: var(--tp-bg);
+  border: 1px solid var(--tp-line);
+  border-radius: .65rem;
+}
+.two-point-widget .tp-heading { margin: 0 0 .75rem; font-size: 1.2rem; }
+.two-point-widget .tp-subheading { margin: 1rem 0 .45rem; font-size: 1rem; }
+.two-point-widget .tp-intro,
+.two-point-widget .tp-note,
+.two-point-widget .tp-statline { margin: .55rem 0; font-size: .9rem; }
+.two-point-widget .tp-note { color: var(--tp-muted); }
+.two-point-widget .tp-controls { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(9rem, .7fr) minmax(12rem, 1fr); gap: .75rem; align-items: end; }
+.two-point-widget .tp-control { display: grid; gap: .25rem; font-size: .82rem; font-weight: 650; }
+.two-point-widget .tp-control input[type="range"] { width: 100%; accent-color: var(--tp-accent); }
+.two-point-widget .tp-control select { width: 100%; padding: .35rem .45rem; color: var(--tp-fg); background: var(--tp-bg); border: 1px solid var(--tp-line); border-radius: .3rem; }
+.two-point-widget .tp-readout { color: var(--tp-muted); font-variant-numeric: tabular-nums; }
+.two-point-widget .tp-visual-slot { width: 100%; overflow-x: auto; }
+.two-point-widget .tp-strip,
+.two-point-widget .tp-plot { display: block; width: 100%; min-width: 480px; height: auto; }
+.two-point-widget .tp-svg-label,
+.two-point-widget .tp-tick,
+.two-point-widget .tp-axis-title { fill: var(--tp-fg); font: 12px system-ui, sans-serif; }
+.two-point-widget .tp-tick { fill: var(--tp-muted); font-size: 10px; }
+.two-point-widget .tp-axis { stroke: var(--tp-line); stroke-width: 1; }
+.two-point-widget .tp-interval { stroke: var(--tp-bg); stroke-width: 1; }
+.two-point-widget .tp-interval-label { fill: #fff; font: 11px system-ui, sans-serif; font-weight: 700; pointer-events: none; }
+.two-point-widget .tp-centroid { stroke: var(--tp-fg); stroke-width: 1; }
+.two-point-widget .tp-centroid-dot { fill: var(--tp-fg); stroke: var(--tp-bg); stroke-width: 1; }
+.two-point-widget .tp-zero { stroke: var(--tp-line); stroke-width: 1; stroke-dasharray: 4 3; }
+.two-point-widget .tp-curve { fill: none; stroke-width: 1.8; opacity: .58; }
+.two-point-widget .tp-curve-a,
+.two-point-widget .tp-legend-a { stroke: #4477aa; }
+.two-point-widget .tp-curve-b,
+.two-point-widget .tp-legend-b { stroke: #cc6677; }
+.two-point-widget .tp-curve.tp-selected { stroke-width: 3.2; opacity: 1; }
+.two-point-widget .tp-marker { stroke: var(--tp-accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.two-point-widget .tp-marker-point { fill: var(--tp-accent); stroke: var(--tp-bg); stroke-width: 1.5; }
+.two-point-widget .tp-table-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; align-items: start; }
+.two-point-widget .tp-table-section { min-width: 0; overflow-x: auto; }
+.two-point-widget .tp-table { width: 100%; border-collapse: collapse; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.two-point-widget .tp-table th,
+.two-point-widget .tp-table td { padding: .28rem .4rem; border: 1px solid var(--tp-line); text-align: right; }
+.two-point-widget .tp-table th:first-child,
+.two-point-widget .tp-table td:first-child { text-align: left; }
+.two-point-widget .tp-table th { background: color-mix(in srgb, var(--tp-bg), var(--tp-fg) 6%); }
+.two-point-widget .tp-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .75rem; }
+.two-point-widget .tp-button { padding: .4rem .65rem; color: var(--tp-fg); background: var(--tp-bg); border: 1px solid var(--tp-line); border-radius: .35rem; font: inherit; font-size: .82rem; cursor: pointer; }
+.two-point-widget .tp-button:hover { border-color: var(--tp-accent); }
+.two-point-widget .tp-button:focus-visible,
+.two-point-widget input:focus-visible,
+.two-point-widget select:focus-visible { outline: 2px solid var(--tp-accent); outline-offset: 2px; }
+.two-point-widget .tp-live { min-height: 1em; color: var(--tp-muted); font-size: .8rem; }
+@media (max-width: 760px) {
+  .two-point-widget .tp-controls { grid-template-columns: 1fr; }
+}

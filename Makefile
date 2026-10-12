@@ -25,6 +25,7 @@ preview:
 test:
 	cargo test --release --manifest-path core/Cargo.toml
 	node scripts/test_lab.mjs
+	node scripts/test_two_point.mjs
 
 test-wasm: wasm
 	node scripts/test_wasm.mjs

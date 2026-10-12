@@ -43,6 +43,7 @@ book:
     - chapters/03-meshing.qmd
     - chapters/04-validation.qmd
     - chapters/05-pdfs.qmd
+    - chapters/05-two-point.qmd
     - chapters/06-inference.qmd
     - chapters/07-lab.qmd
     - chapters/references.qmd

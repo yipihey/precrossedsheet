@@ -16,7 +16,7 @@ The statement “4LPT is accurate to better than 1%” needs an observable, filt
 
 ## Structure of the report
 
-Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-cosmology defines the background, physical initial modes and normalization. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
+Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-cosmology defines the background, physical initial modes and normalization. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-two-point connects those PDFs to spatial correlations and element-pair geometry; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
 
 ```{=html}
 <div class="qd-cta">
