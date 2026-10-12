@@ -75,7 +75,7 @@ p_M(r)&=\sum_T\frac{m_T}{M_B}\delta_{\rm D}(r-r_T).
 \end{aligned}
 $$ {#eq-element-one-point-measures}
 
-This is the conservative sheet representation of @sec-meshing [@abel2012; @hahn2013]. Equal initial simplex volumes give equal masses. Counting such elements equally gives the mass PDF; weighting by their **current** volumes gives the volume PDF.
+The conservative sheet representation described in @sec-meshing follows [@abel2012; @hahn2013]. Equal initial simplex volumes give equal masses. Counting such elements equally gives the mass PDF; weighting by their **current** volumes gives the volume PDF.
 
 Define the periodic overlap kernel
 
