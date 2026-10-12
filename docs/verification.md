@@ -1,5 +1,17 @@
 # Verification record — 2026-10-11
 
+
+## Complete GPU optimization release (engine 0.6.0, schema 3)
+
+- `make test` passed all 71 Rust tests and frontend state/replay checks. New native coverage pins the raw nLPT/growth boundary, rejected-payload retry, reused JVP workspaces, complete cache-byte accounting, compatible smoothing/mesh reuse and stale/invalid external-density rejection.
+- `make test-wasm` rebuilt the release binary and passed all existing tests plus typed nLPT seed, exact 2D/3D identity density and four-level CPU cache/fresh-run parity checks. Worker queue/cancellation/shutdown checks passed.
+- The independent optimization GPU suite passed 25,418 rows. The full numerical and matched 32³/64³ benchmark passed all 46 checks, including actual GPU nLPT/deposition/analytic recovery, per-mode derivative gates, conservation, field/spectrum/PDF budgets, cache invalidation and forced stage recovery.
+- The strict FD suite passed 47 checks. Forty frozen wave/Gaussian runs passed the weak-scaled and 1e-12 component-repeat budgets. Existing resident PM tests passed 131 checks; the original observer passed 34 independent and 47 full-request/worker checks. The PM cancellation fixture explicitly disables the physical cache to reach an actual GPU evolution step.
+- Final cold-request medians were 3,207.7→1,056.4 ms at 32³ (3.04×) and 21,934.6→7,342.0 ms at 64³ (2.99×). Device/pipeline checks are warmed, and physical caches are disabled. Both arms use the optimized FD shader; the baseline disables GPU spatial fields, clipping and analytic recovery. Cache-hot 32³ used all four levels, while 64³ retained initial fields/geometry and recomputed PM/observations under the 256 MiB limit.
+- `make check` resolved every source/test/lab provenance link. A full 13-page render passed without unresolved references or citations. Desktop and 390-pixel appendix review found zero KaTeX errors and no horizontal page overflow; long equations remain locally scrollable. The final live 32³ GPU lab completed with GPU nLPT, PM, exact deposit, analytic recovery and FD provenance; a smoothing-control update hit all four cache levels, with no console errors.
+
+The [optimization record](webgpu-optimization-results.md), [JSON summary](webgpu-optimization-results.json), and compressed complete archive retain numerical budgets, raw paired samples, requests, device/toolchain data and source/Wasm hashes. CPU remains the default/automatic policy, and the established scientific scope and shell-crossing caution are unchanged.
+
 ## Compensated GPU finite differences (engine 0.5.0, schema 3)
 
 - `make test` passed all 66 Rust tests and the JavaScript state/replay checks.

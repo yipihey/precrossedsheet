@@ -353,7 +353,7 @@ async function workerFallbackChecks({signal,onProgress=()=>{}}={}){
             if(canceled&&replaced){cleanup();resolve({stepSeen,progressStep,canceled,replaced});}
           };
           cancelWorker.addEventListener('message',message);cancelWorker.addEventListener('error',error);timer=setTimeout(()=>{cleanup();reject(new Error('Worker cancel/replacement check timed out'));},600000);
-          cancelWorker.postMessage({type:'run',requestId:activeId,key:'resident-cancel-active',state:small,policy:{requested:'gpu'}});
+          cancelWorker.postMessage({type:'run',requestId:activeId,key:'resident-cancel-active',state:small,policy:{requested:'gpu',disableCache:true}});
         });
         const replacementResult=await canceledAndReplaced,replacementExec=workerExecution(replacementResult.replaced);
         rows.push({label:'Worker cancellation is triggered after an actual GPU PM evolution step',pass:replacementResult.stepSeen&&replacementResult.canceled&&replacementResult.replaced?.type==='result'&&!replacementResult.replaced?.error&&replacementExec?.pmEvolution?.backend==='cpu',stepSeen:replacementResult.stepSeen,progressStep:replacementResult.progressStep,canceled:replacementResult.canceled,replacementBackend:replacementExec?.pmEvolution?.backend,queuedRequest:{...replacement}});

@@ -34,6 +34,27 @@
       "target": "app/js/gpu/fft.js",
       "reuse": "Stockham radix-2 autosort butterflies, twiddle table, ping-pong scheduling, and normalized inverse transform.",
       "adaptation": "Generalized to 1D\u20133D grids and explicit owned buffers; last-axis-fast layout, force FFT integration and error handling are checked independently against mode and PM fixtures. The PM cosmological KDK/CIC-JVP solver is new and follows the Rust reference, rather than upstream heat-flow dynamics."
+    },
+    {
+      "source": "app/js/gpu/exact2d.js",
+      "sha256": "a66431508af962f0aa428f12ff13cc0312e9999312eefb28122ffd7cd0781a40",
+      "target": "app/js/gpu/deposit.js",
+      "reuse": "Periodic P0/P1 simplex clipping and triangle integration structure for exact sheet-to-cell overlap.",
+      "adaptation": "Reworked around periodic cell-local coordinates and floating-point positive mass contributions. Integer atomics build particle links; each cell gathers its own linked particles and performs ordered compensated summation. The upstream 18-bit fixed-point quantization and atomic fixed-point mass accumulation are not used."
+    },
+    {
+      "source": "app/js/gpu/exact3d.js",
+      "sha256": "22fdfab5a7ad21fc108c7145bad9dfb03c109c42457b79da399fbefcd320cbb4",
+      "target": "app/js/gpu/deposit-clip3d.js",
+      "reuse": "Periodic tetrahedron clipping, graph-based clipped-polyhedron traversal, and cell-local P0 overlap integration.",
+      "adaptation": "Adapted as a floating-point clipping/integration helper used by deposit.js. Cell-local coordinates limit cancellation; integer particle links are followed by per-cell floating-point gathering and compensated summation. No fixed-point quantization or atomic mass summation is retained."
+    },
+    {
+      "source": "app/js/gpu/lpt3d.js",
+      "sha256": "951ffc2341be5bffac06c943e00371e9b2f4aa152d08c668cfac6853a4c5d2a4",
+      "target": "app/js/gpu/lpt.js",
+      "reuse": "Raw nLPT tensor/source recursion, spectral derivative and inverse-Laplacian conventions, and the 2D/3D term construction structure.",
+      "adaptation": "Implemented for 2D and 3D raw terms with all Hessian components and dimension-specific source channels, using the local radix-2 FFT. Rust retains exact growth functions, EdS merging, temporal evaluation, and final state construction. The upstream Hopf-Cole/Legendre correction, shell-crossing search, and transverse correction are not included."
     }
   ]
 }

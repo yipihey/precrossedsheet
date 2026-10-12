@@ -7,7 +7,7 @@ import { makePipeline, readBuffer } from './util.js';
 export const FINITE_DIFFERENCE_PROVENANCE = Object.freeze({
   method: 'centered finite difference of continuous P0 simplex Fourier-mode power using retained high/low endpoint displacement expansions; stable endpoint amplitude delta from three-point Gauss integration of the exact continuous directional derivative along the two endpoints',
   arithmetic: 'double-single f32 expansions with explicit runtime rounding barriers and Dekker product residuals; sin through degree 17, cos through degree 18',
-  dividedDifferences: 'fixed compare-swap sorting network; local Taylor series for angular spans <= 3 radians (40 normalized terms; conservative factorial-tail bound below 1e-17); Newton recursion otherwise',
+  dividedDifferences: 'fixed compare-swap sorting network; local Taylor series for angular spans <= 3 radians (adaptive normalized series through maximum order 40; conservative factorial-tail bound below 1e-17); Newton recursion otherwise',
   reduction: 'per-cell plus/minus/delta endpoint values written to one interleaved storage buffer; one invocation sequentially double-single reduces each 32-cell chunk, then one invocation per mode sequentially reduces chunk partials',
   step: 1e-4,
   source: 'core/src/observables.rs::sheet_mode and core/src/direct.rs::exp_divided_difference_with_scratch',
@@ -33,33 +33,16 @@ function horner(name, degree, factorialOffset, negativeFirst) {
   return s;
 }
 
-function shaderFor(dim) {
-  const vertices=dim+1;
-  const maxNodes=vertices+1;
-  const simplices=dim===2?[0,1,3,0,3,2]:[0,1,3,7,0,1,5,7,0,2,3,7,0,2,6,7,0,4,5,7,0,4,6,7];
-  const qCode=simplices.map(x=>`${x}u`).join(',');
-  const pi2=pairLiteral(TWO_PI);
-  const thetaRoot=pairLiteral(Math.sqrt(3/5));
-  const weightMid=pairLiteral(8/9);
-  const weightSide=pairLiteral(5/9);
-  const sortPairs=[];for(let pass=0;pass<maxNodes-1;pass++)for(let a=0;a<maxNodes-pass-1;a++)sortPairs.push([a,a+1]);
-  const sortCode=sortPairs.map(([a,b])=>`if(${b}u<count){if(dsCmp(x[${a}u],x[${b}u])>0){let tmp=x[${a}u];x[${a}u]=x[${b}u];x[${b}u]=tmp;}}`).join('');
-  const sinSource=horner('sp',8,1);
-  const cosSource=horner('cp',9,0);
-  return /* wgsl */`
-struct DS { h:f32, l:f32 };
-struct DC { r:DS, i:DS };
-struct Params { dim:u32,n:u32,np:u32,nm:u32,cpc:u32,ctotal:u32,chunk0:u32,chunk1:u32,invn:f32,invmass:f32,pad0:u32,pad1:u32 };
-@group(0) @binding(0) var<uniform> u:Params;
-@group(0) @binding(1) var<storage,read> plusHi:array<vec4<f32>>;
-@group(0) @binding(2) var<storage,read> plusLo:array<vec4<f32>>;
-@group(0) @binding(3) var<storage,read> minusHi:array<vec4<f32>>;
-@group(0) @binding(4) var<storage,read> minusLo:array<vec4<f32>>;
-@group(0) @binding(5) var<storage,read> modes:array<vec4<i32>>;
-@group(0) @binding(6) var<storage,read_write> cellValues:array<vec4<f32>>;
-@group(0) @binding(7) var<storage,read_write> diag:array<atomic<u32>>;
+// Shared DS/complex arithmetic and fixed-node exponential divided differences.
+// The direct observer consumes this exact source so the FD and analytic paths
+// share the same tested rounding/trigonometric implementation.
+export function compensatedMathWGSL(dim) {
+  if(dim!==2&&dim!==3)throw new RangeError('compensated math requires dim=2 or 3');
+  const maxNodes=dim+2,pi2=pairLiteral(TWO_PI);
+  const sinSource=horner('sp',8,1),cosSource=horner('cp',9,0);
+  const common=`
+struct DS{h:f32,l:f32};struct DC{r:DS,i:DS};
 const PI2:DS=${pi2};
-const SIMP:array<u32,${simplices.length}>=array<u32,${simplices.length}>(${qCode});
 fn rn(v:f32)->f32{return bitcast<f32>(bitcast<u32>(v)^u.pad0);}
 fn ds(a:f32)->DS{return DS(a,0.0);}
 fn dsNorm(a:f32,b:f32)->DS{let s=rn(a+b);let v=rn(s-a);let sv=rn(s-v);let aa=rn(a-sv);let bb=rn(b-v);let e=rn(aa+bb);let hi=rn(s+e);let hs=rn(hi-s);return DS(hi,rn(e-hs));}
@@ -78,73 +61,93 @@ fn dcSub(a:DC,b:DC)->DC{return DC(dsSub(a.r,b.r),dsSub(a.i,b.i));}
 fn dcMul(a:DC,b:DC)->DC{return DC(dsSub(dsMul(a.r,b.r),dsMul(a.i,b.i)),dsAdd(dsMul(a.r,b.i),dsMul(a.i,b.r)));}
 fn dcScale(a:DC,s:DS)->DC{return DC(dsMul(a.r,s),dsMul(a.i,s));}
 fn dcZero()->DC{return DC(ds(0.0),ds(0.0));}
-fn cph(phase:DS)->DC{
- let q=i32(round(dsValue(dsMul(phase,ds(4.0)))));
- let rem=dsSub(phase,ds(0.25*f32(q)));
- let x=dsMul(rem,PI2);let z=dsMul(x,x);
- ${sinSource}${cosSource}
- let sn=dsMul(x,sp);let co=cp;let qm=((q%4)+4)%4;var c=co;var s=sn;
- if(qm==1){c=dsNeg(sn);s=co;}else if(qm==2){c=dsNeg(co);s=dsNeg(sn);}else if(qm==3){c=sn;s=dsNeg(co);}
- return DC(c,dsNeg(s));
+fn cph(phase:DS)->DC{let q=i32(round(dsValue(dsMul(phase,ds(4.0)))));let rem=dsSub(phase,ds(0.25*f32(q)));let x=dsMul(rem,PI2);let z=dsMul(x,x);${sinSource}${cosSource}let sn=dsMul(x,sp);let co=cp;let qm=((q%4)+4)%4;var c=co;var s=sn;if(qm==1){c=dsNeg(sn);s=co;}else if(qm==2){c=dsNeg(co);s=dsNeg(sn);}else if(qm==3){c=sn;s=dsNeg(co);}return DC(c,dsNeg(s));}
+`;
+  let specialized='';
+  for(let count=2;count<=maxNodes;count++){
+    const l=count-1,zs=Array.from({length:count},(_,i)=>`z${i}`);
+    let body=`fn ddivTaylor${count}(x:array<DS,5>,start:u32)->DC{var mean=ds(0.0);`;
+    for(let i=0;i<count;i++)body+=`mean=dsAdd(mean,x[start+${i}u]);`;
+    body+=`mean=dsDivInt(mean,${count}u);`;
+    for(let j=1;j<=count;j++)body+=`var e${j}=ds(0.0);`;
+    for(let i=0;i<count;i++){
+      body+=`let ${zs[i]}=dsNeg(dsMul(PI2,dsSub(x[start+${i}u],mean)));`;
+      for(let j=count;j>=1;j--)body+=`e${j}=dsAdd(e${j},dsMul(${zs[i]},${j===1?'ds(1.0)':`e${j-1}`}));`;
+    }
+    let fact=1;for(let i=2;i<=l;i++)fact*=i;
+    body+=`let g0=${pairLiteral(1/fact)};let g0mag=abs(g0.h)+abs(g0.l);var g1=g0;`;
+    for(let j=2;j<=count;j++)body+=`var g${j}=ds(0.0);`;
+    body+=`var radius=1.0e-4;`;
+    for(const z of zs)body+=`radius+=abs(${z}.h)+abs(${z}.l);`;
+    body+=`var terms=40u;var firstOmitted=g0mag;for(var candidate=0u;candidate<40u;candidate++){let k=candidate+1u;firstOmitted=firstOmitted*radius/f32(k+${l}u);let ratio=radius/f32(k+${l+1}u)*(1.0+1.0e-6);if(firstOmitted>0.0&&ratio<1.0&&firstOmitted/(1.0-ratio)<=5.0e-18*g0mag){terms=candidate;break;}}var sum=DC(g0,ds(0.0));for(var m=1u;m<=terms;m++){let d=m+${l}u;var term=dsDivInt(dsMul(e1,g1),d);`;
+    for(let j=2;j<=count;j++){
+      let expr=`dsMul(e${j},g${j})`;
+      for(let k=0;k<j;k++)expr=`dsDivInt(${expr},d-${k}u)`;
+      body+=`if(m>=${j}u){term=${j%2===0?'dsSub':'dsAdd'}(term,${expr});}`;
+    }
+    body+=`switch(m&3u){case 0u:{sum.r=dsAdd(sum.r,term);}case 1u:{sum.i=dsAdd(sum.i,term);}case 2u:{sum.r=dsSub(sum.r,term);}default:{sum.i=dsSub(sum.i,term);}}`;
+    for(let j=count;j>=2;j--)body+=`g${j}=g${j-1};`;
+    body+=`g1=term;}return dcMul(sum,cph(mean));}`;
+    const pairs=[];for(let pass=0;pass<count-1;pass++)for(let i=0;i<count-pass-1;i++)pairs.push([i,i+1]);
+    let evalFn=`fn ddEval${count}(source:array<DS,5>)->DC{var x=source;`;
+    for(const [a,b] of pairs)evalFn+=`if(dsCmp(x[${a}u],x[${b}u])>0){let tmp=x[${a}u];x[${a}u]=x[${b}u];x[${b}u]=tmp;}`;
+    evalFn+=`let angular=dsValue(dsMul(dsSub(x[${count-1}u],x[0u]),PI2));if(angular<3.0){return ddivTaylor${count}(x,0u);}`;
+    evalFn+=`var table:array<DC,${count*count}>;`;
+    for(let i=0;i<count;i++)evalFn+=`table[${i*count+i}u]=cph(x[${i}u]);`;
+    evalFn+=`for(var level=1u;level<${count}u;level++){for(var i=0u;i+level<${count}u;i++){let span=dsMul(dsSub(x[i+level],x[i]),PI2);let angle=dsValue(span);var value:DC;if(angle<3.0){switch(level){`;
+    for(let level=1;level<count;level++)evalFn+=`case ${level}u:{value=ddivTaylor${level+1}(x,i);}`;
+    evalFn+=`default:{value=dcZero();}}}else{let d=dcSub(table[(i+1u)*${count}u+i+level],table[i*${count}u+i+level-1u]);value=DC(dsDiv(dsNeg(d.i),span),dsDiv(d.r,span));}table[i*${count}u+i+level]=value;}}`;
+    evalFn+=`return table[${count-1}u];}`;
+    specialized+=body+evalFn;
+  }
+  return common+specialized;
 }
-fn ddivTaylor(x:array<DS,${maxNodes}>,start:u32,count:u32)->DC{
- var mean=ds(0.0);for(var a=0u;a<count;a++){mean=dsAdd(mean,x[start+a]);}mean=dsDivInt(mean,count);
- let l=count-1u;
- // Elementary symmetric coefficients and normalized Taylor terms stay in
- // registers; no mutable dynamically indexed coefficient workspace.
- var e1=ds(0.0);var e2=ds(0.0);var e3=ds(0.0);var e4=ds(0.0);var e5=ds(0.0);
- for(var a=0u;a<count;a++){
-  let z=dsNeg(dsMul(PI2,dsSub(x[start+a],mean)));
-  e5=dsAdd(e5,dsMul(z,e4));e4=dsAdd(e4,dsMul(z,e3));e3=dsAdd(e3,dsMul(z,e2));e2=dsAdd(e2,dsMul(z,e1));e1=dsAdd(e1,z);
- }
- var g0=ds(1.0);for(var q=2u;q<=l;q++){g0=dsDivInt(g0,q);}var g1=g0;var g2=ds(0.0);var g3=ds(0.0);var g4=ds(0.0);var g5=ds(0.0);
- var sum=DC(g0,ds(0.0));
- for(var m=1u;m<=40u;m++){
-  let d=m+l;var term=dsDivInt(dsMul(e1,g1),d);
-  if(m>=2u){term=dsSub(term,dsDivInt(dsDivInt(dsMul(e2,g2),d),d-1u));}
-  if(m>=3u){term=dsAdd(term,dsDivInt(dsDivInt(dsDivInt(dsMul(e3,g3),d),d-1u),d-2u));}
-  if(m>=4u){term=dsSub(term,dsDivInt(dsDivInt(dsDivInt(dsDivInt(dsMul(e4,g4),d),d-1u),d-2u),d-3u));}
-  if(m>=5u){term=dsAdd(term,dsDivInt(dsDivInt(dsDivInt(dsDivInt(dsDivInt(dsMul(e5,g5),d),d-1u),d-2u),d-3u),d-4u));}
-  switch(m&3u){case 0u:{sum.r=dsAdd(sum.r,term);}case 1u:{sum.i=dsAdd(sum.i,term);}case 2u:{sum.r=dsSub(sum.r,term);}default:{sum.i=dsSub(sum.i,term);}}
-  g5=g4;g4=g3;g3=g2;g2=g1;g1=term;
- }
- return dcMul(sum,cph(mean));
-}
-fn ddEval(source:array<DS,${maxNodes}>,count:u32)->DC{
- var x=source;${sortCode}
- let angular=dsValue(dsMul(dsSub(x[count-1u],x[0]),PI2));if(angular<3.0){return ddivTaylor(x,0u,count);}
- var table:array<DC,${maxNodes*maxNodes}>;for(var i=0u;i<count;i++){table[i*${maxNodes}u+i]=cph(x[i]);}
- for(var level=1u;level<count;level++){for(var i=0u;i+level<count;i++){let span=dsMul(dsSub(x[i+level],x[i]),PI2);let angle=dsValue(span);var value:DC;if(angle<3.0){value=ddivTaylor(x,i,level+1u);}else{let d=dcSub(table[(i+1u)*${maxNodes}u+i+level],table[i*${maxNodes}u+i+level-1u]);value=DC(dsDiv(dsNeg(d.i),span),dsDiv(d.r,span));}table[i*${maxNodes}u+i+level]=value;}}
- return table[count-1u];
-}
+
+function shaderFor(dim) {
+  const vertices=dim+1;
+  const maxNodes=5;
+  const simplices=dim===2?[0,1,3,0,3,2]:[0,1,3,7,0,1,5,7,0,2,3,7,0,2,6,7,0,4,5,7,0,4,6,7];
+  const qCode=simplices.map(x=>`${x}u`).join(',');
+  const thetaRoot=pairLiteral(Math.sqrt(3/5));
+  const weightMid=pairLiteral(8/9);
+  const weightSide=pairLiteral(5/9);
+  return /* wgsl */`
+struct Params { dim:u32,n:u32,np:u32,nm:u32,cpc:u32,ctotal:u32,chunk0:u32,chunk1:u32,invn:f32,invmass:f32,pad0:u32,pad1:u32 };
+@group(0) @binding(0) var<uniform> u:Params;
+@group(0) @binding(1) var<storage,read> plusHi:array<vec4<f32>>;
+@group(0) @binding(2) var<storage,read> plusLo:array<vec4<f32>>;
+@group(0) @binding(3) var<storage,read> minusHi:array<vec4<f32>>;
+@group(0) @binding(4) var<storage,read> minusLo:array<vec4<f32>>;
+@group(0) @binding(5) var<storage,read> modes:array<vec4<i32>>;
+@group(0) @binding(6) var<storage,read_write> cellValues:array<vec4<f32>>;
+@group(0) @binding(7) var<storage,read_write> diag:array<atomic<u32>>;
+const SIMP:array<u32,${simplices.length}>=array<u32,${simplices.length}>(${qCode});
+${compensatedMathWGSL(dim)}
 fn coords(cell:u32)->vec3<u32>{if(u.dim==2u){return vec3<u32>(cell/u.n,cell%u.n,0u);}return vec3<u32>(cell/(u.n*u.n),(cell/u.n)%u.n,cell%u.n);}
 fn vertexId(base:vec3<u32>,bits:u32)->u32{let x=(base.x+(bits&1u))%u.n;let y=(base.y+((bits>>1u)&1u))%u.n;if(u.dim==2u){return x*u.n+y;}let z=(base.z+((bits>>2u)&1u))%u.n;return (x*u.n+y)*u.n+z;}
 fn qbit(bits:u32,a:u32)->i32{return i32((bits>>a)&1u);}
 fn displacementDot(id:u32,md:vec3<i32>,plus:bool)->DS{let hi=select(minusHi[id],plusHi[id],plus);let lo=select(minusLo[id],plusLo[id],plus);var v=ds(0.0);for(var a=0u;a<u.dim;a++){v=dsAdd(v,dsMul(ds(f32(md[a])),DS(hi[a],lo[a])));}return v;}
-fn midpointDisplacementDot(id:u32,md:vec3<i32>,theta:DS)->DS{let p=displacementDot(id,md,true);let m=displacementDot(id,md,false);let midpoint=dsDivInt(dsAdd(p,m),2u);let halfgap=dsDivInt(dsSub(p,m),2u);return dsAdd(midpoint,dsMul(theta,halfgap));}
-fn halfGapDot(id:u32,md:vec3<i32>)->DS{return dsDivInt(dsSub(displacementDot(id,md,true),displacementDot(id,md,false)),2u);}
 fn endpointCell(cell:u32,md:vec4<i32>,plus:bool)->DC{
  let base=coords(cell);let ns=${vertices}u;var total=dcZero();let scale=dsDivInt(ds(1.0),u.np);
  let raw=md.x*i32(base.x)+md.y*i32(base.y)+md.z*i32(base.z);let rem=((raw%i32(u.n))+i32(u.n))%i32(u.n);let qphase=dsDivInt(ds(f32(rem)),u.n);
  for(var si=0u;si<${simplices.length/vertices}u;si++){
-  let b0=SIMP[si*${vertices}u];let id0=vertexId(base,b0);let phase0=dsAdd(qphase,displacementDot(id0,md.xyz,plus));var nodes:array<DS,${maxNodes}>;
+  let b0=SIMP[si*${vertices}u];let id0=vertexId(base,b0);let phase0=dsAdd(qphase,displacementDot(id0,md.xyz,plus));var nodes:array<DS,${maxNodes}>;for(var q=0u;q<${maxNodes}u;q++){nodes[q]=ds(0.0);}
   for(var a=0u;a<ns;a++){let bits=SIMP[si*${vertices}u+a];let id=vertexId(base,bits);let dm=i32(qbit(bits,0u)-qbit(b0,0u))*md.x+i32(qbit(bits,1u)-qbit(b0,1u))*md.y+i32(qbit(bits,2u)-qbit(b0,2u))*md.z;let qrel=dsDivInt(ds(f32(dm)),u.n);nodes[a]=dsAdd(qrel,dsSub(displacementDot(id,md.xyz,plus),displacementDot(id0,md.xyz,plus)));}
-  let term=dcMul(ddEval(nodes,ns),cph(phase0));total=dcAdd(total,term);
+  let term=dcMul(ddEval${vertices}(nodes),cph(phase0));total=dcAdd(total,term);
  }
  total=dcScale(total,scale);if(!dsFinite(total.r)||!dsFinite(total.i)){atomicOr(&diag[0],1u);atomicAdd(&diag[1],1u);}return total;
 }
-fn directionalCellAt(cell:u32,md:vec4<i32>,theta:DS)->DC{
- let base=coords(cell);let ns=${vertices}u;var total=dcZero();let scale=dsDivInt(ds(1.0),u.np);
- let raw=md.x*i32(base.x)+md.y*i32(base.y)+md.z*i32(base.z);let rem=((raw%i32(u.n))+i32(u.n))%i32(u.n);let qphase=dsDivInt(ds(f32(rem)),u.n);
+fn directionalCellAt(md:vec4<i32>,base:vec3<u32>,qphase:DS,midDots:array<DS,8>,gapDots:array<DS,8>,theta:DS)->DC{
+ let ns=${vertices}u;var total=dcZero();let scale=dsDivInt(ds(1.0),u.np);
  for(var si=0u;si<${simplices.length/vertices}u;si++){
-  let b0=SIMP[si*${vertices}u];let id0=vertexId(base,b0);let phase0=dsAdd(qphase,midpointDisplacementDot(id0,md.xyz,theta));var nodes:array<DS,${maxNodes}>;var gaps:array<DS,${vertices}>;
-  for(var a=0u;a<ns;a++){let bits=SIMP[si*${vertices}u+a];let id=vertexId(base,bits);let dm=i32(qbit(bits,0u)-qbit(b0,0u))*md.x+i32(qbit(bits,1u)-qbit(b0,1u))*md.y+i32(qbit(bits,2u)-qbit(b0,2u))*md.z;let qrel=dsDivInt(ds(f32(dm)),u.n);nodes[a]=dsAdd(qrel,dsSub(midpointDisplacementDot(id,md.xyz,theta),midpointDisplacementDot(id0,md.xyz,theta)));gaps[a]=halfGapDot(id,md.xyz);}
-  var derivative=dcZero();for(var a=0u;a<ns;a++){var repeated=nodes;repeated[ns]=nodes[a];derivative=dcAdd(derivative,dcScale(ddEval(repeated,ns+1u),gaps[a]));}
+  let b0=SIMP[si*${vertices}u];let phase0=dsAdd(qphase,dsAdd(midDots[b0],dsMul(theta,gapDots[b0])));var nodes:array<DS,${maxNodes}>;for(var q=0u;q<${maxNodes}u;q++){nodes[q]=ds(0.0);}var gaps:array<DS,${vertices}>;
+  for(var a=0u;a<ns;a++){let bits=SIMP[si*${vertices}u+a];let dm=i32(qbit(bits,0u)-qbit(b0,0u))*md.x+i32(qbit(bits,1u)-qbit(b0,1u))*md.y+i32(qbit(bits,2u)-qbit(b0,2u))*md.z;let qrel=dsDivInt(ds(f32(dm)),u.n);nodes[a]=dsAdd(qrel,dsAdd(dsSub(midDots[bits],midDots[b0]),dsMul(theta,dsSub(gapDots[bits],gapDots[b0]))));gaps[a]=gapDots[bits];}
+  var derivative=dcZero();for(var a=0u;a<ns;a++){var repeated=nodes;repeated[ns]=nodes[a];derivative=dcAdd(derivative,dcScale(ddEval${vertices+1}(repeated),gaps[a]));}
   let phase=dcMul(derivative,cph(phase0));let dtheta=DC(dsMul(phase.i,PI2),dsNeg(dsMul(phase.r,PI2)));total=dcAdd(total,dtheta);
  }
  return dcScale(total,scale);
 }
-fn endpointDeltaCell(cell:u32,md:vec4<i32>)->DC{let root=${thetaRoot};let mid=directionalCellAt(cell,md,ds(0.0));let hi=directionalCellAt(cell,md,root);let lo=directionalCellAt(cell,md,dsNeg(root));return dcAdd(dcScale(mid,${weightMid}),dcScale(dcAdd(hi,lo),${weightSide}));}
+fn endpointDeltaCell(cell:u32,md:vec4<i32>)->DC{let root=${thetaRoot};let base=coords(cell);let raw=md.x*i32(base.x)+md.y*i32(base.y)+md.z*i32(base.z);let rem=((raw%i32(u.n))+i32(u.n))%i32(u.n);let qphase=dsDivInt(ds(f32(rem)),u.n);var midDots:array<DS,8>;var gapDots:array<DS,8>;for(var bits=0u;bits<8u;bits++){midDots[bits]=ds(0.0);gapDots[bits]=ds(0.0);if((u.dim==2u&&bits<4u)||u.dim==3u){let id=vertexId(base,bits);let p=displacementDot(id,md.xyz,true);let m=displacementDot(id,md.xyz,false);midDots[bits]=dsDivInt(dsAdd(p,m),2u);gapDots[bits]=dsDivInt(dsSub(p,m),2u);}}let mid=directionalCellAt(md,base,qphase,midDots,gapDots,ds(0.0));let hi=directionalCellAt(md,base,qphase,midDots,gapDots,root);let lo=directionalCellAt(md,base,qphase,midDots,gapDots,dsNeg(root));return dcAdd(dcScale(mid,${weightMid}),dcScale(dcAdd(hi,lo),${weightSide}));}
 @compute @workgroup_size(32) fn evaluate_endpoints(@builtin(workgroup_id) wg:vec3<u32>,@builtin(local_invocation_index) lane:u32,@builtin(num_workgroups) nwg:vec3<u32>){let group=wg.y*nwg.x+wg.x;let groups=(u.chunk1-u.chunk0)*u.nm;if(group>=groups){return;}let mi=group%u.nm;let chunk=u.chunk0+group/u.nm;let cell=chunk*u.cpc+lane;if(cell<u.np){let fp=endpointCell(cell,modes[mi],true);let fm=endpointCell(cell,modes[mi],false);let at=(mi*u.np+cell)*3u;cellValues[at]=vec4<f32>(fp.r.h,fp.r.l,fp.i.h,fp.i.l);cellValues[at+1u]=vec4<f32>(fm.r.h,fm.r.l,fm.i.h,fm.i.l);}}
 @compute @workgroup_size(32) fn evaluate_delta(@builtin(workgroup_id) wg:vec3<u32>,@builtin(local_invocation_index) lane:u32,@builtin(num_workgroups) nwg:vec3<u32>){let group=wg.y*nwg.x+wg.x;let groups=(u.chunk1-u.chunk0)*u.nm;if(group>=groups){return;}let mi=group%u.nm;let chunk=u.chunk0+group/u.nm;let cell=chunk*u.cpc+lane;if(cell<u.np){let fd=endpointDeltaCell(cell,modes[mi]);if(!dsFinite(fd.r)||!dsFinite(fd.i)){atomicOr(&diag[0],2u);atomicAdd(&diag[1],1u);}let at=(mi*u.np+cell)*3u;cellValues[at+2u]=vec4<f32>(fd.r.h,fd.r.l,fd.i.h,fd.i.l);}}
 `;
@@ -212,13 +215,13 @@ export async function runPrecisionProbe(device,options={}){
  let av=dsAdd(a,b);let mv=dsMul(a,DS(1.0000001192092896,0.00000000999999993922529));
  let dv=dsDiv(DS(1.0,0.000000029999999583867185),DS(3.0,0.00000000999999993922529));
  let cv=cph(DS(0.12345679104328156,0.000000000123456789));
- var close:array<DS,4>;close[0]=DS(0.125,0.0);close[1]=DS(0.12500999867916107,0.0);close[2]=DS(0.12498000264167786,0.0);close[3]=ds(0.0);
- let tv=ddivTaylor(close,0u,3u);
- var spread:array<DS,4>;spread[0]=ds(0.01);spread[1]=ds(0.23);spread[2]=ds(0.61);spread[3]=ds(0.0);let nv=ddEval(spread,3u);
- var moderate:array<DS,4>;moderate[0]=ds(0.0);moderate[1]=ds(0.06);moderate[2]=ds(0.06);moderate[3]=ds(0.0);let mv2=ddivTaylor(moderate,0u,3u);
- var symmetric:array<DS,4>;symmetric[0]=ds(0.0);symmetric[1]=ds(0.06);symmetric[2]=ds(0.12);symmetric[3]=ds(0.0);let sv2=ddivTaylor(symmetric,0u,3u);
- var repeated:array<DS,4>;repeated[0]=ds(0.0);repeated[1]=ds(0.51);repeated[2]=ds(0.51);repeated[3]=ds(0.0);let rv2=ddEval(repeated,3u);
- var threshold:array<DS,4>;threshold[0]=ds(0.0);threshold[1]=ds(0.236);threshold[2]=ds(0.472);threshold[3]=ds(0.0);let thv=ddEval(threshold,3u);
+ var close:array<DS,5>;close[0]=DS(0.125,0.0);close[1]=DS(0.12500999867916107,0.0);close[2]=DS(0.12498000264167786,0.0);close[3]=ds(0.0);
+ let tv=ddivTaylor3(close,0u);
+ var spread:array<DS,5>;spread[0]=ds(0.01);spread[1]=ds(0.23);spread[2]=ds(0.61);spread[3]=ds(0.0);let nv=ddEval3(spread);
+ var moderate:array<DS,5>;moderate[0]=ds(0.0);moderate[1]=ds(0.06);moderate[2]=ds(0.06);moderate[3]=ds(0.0);let mv2=ddivTaylor3(moderate,0u);
+ var symmetric:array<DS,5>;symmetric[0]=ds(0.0);symmetric[1]=ds(0.06);symmetric[2]=ds(0.12);symmetric[3]=ds(0.0);let sv2=ddivTaylor3(symmetric,0u);
+ var repeated:array<DS,5>;repeated[0]=ds(0.0);repeated[1]=ds(0.51);repeated[2]=ds(0.51);repeated[3]=ds(0.0);let rv2=ddEval3(repeated);
+ var threshold:array<DS,5>;threshold[0]=ds(0.0);threshold[1]=ds(0.236);threshold[2]=ds(0.472);threshold[3]=ds(0.0);let thv=ddEval3(threshold);
  cellValues[0]=vec4<f32>(av.h,av.l,mv.h,mv.l);
  cellValues[1]=vec4<f32>(dv.h,dv.l,cv.r.h,cv.r.l);
  cellValues[2]=vec4<f32>(cv.i.h,cv.i.l,tv.r.h,tv.r.l);

@@ -5,6 +5,7 @@ current first-release hybrid path. GPU execution remains opt-in through the
 `gpu` backend setting; `cpu` is the default and `auto` currently selects CPU.
 The resident FFT and cosmological PM portion of M5 is implemented in engine
 0.4.0. Engine 0.5.0 adds compensated GPU centered finite differences (M6).
+Engine 0.6.0 implements GPU spatial nLPT, exact overlap deposition, compensated analytic recovery, CPU JVP workspace reuse, bounded intermediate caches and specialized FD recurrence. See [the optimization record](webgpu-optimization-results.md) for current validation and timing.
 See the [observer record](webgpu-results.md), [resident PM record](webgpu-pm-results.md)
 and [finite-difference record](webgpu-fd-results.md) for measured outcomes.
 
@@ -200,3 +201,9 @@ fixtures and timing scopes, including the compiler behavior encountered in
 validation. GPU buffers, partials and staging are budgeted; bounded submitted
 batches yield to cancellation and release owned buffers before replacement.
 Automatic selection remains CPU.
+
+## M7: spatial fields, geometric observations and retained work
+
+The six optimization targets are implemented in engine 0.6.0. Rust generates Fourier initial conditions and f64 cosmological growth; radix-2 2D/3D GPU nLPT returns raw spatial terms to the existing growth/EdS merge boundary. GPU exact deposition clips triangles/tetrahedra in cell-local coordinates and uses positive floating contribution records with one compensated sum owner per cell. Weak LPT modes first attempt compensated analytic GPU recovery, with the independent centered FD gate unchanged. CPU JVP scratch storage is reused across simplices. FD kernels specialize knot counts, reuse projected endpoint geometry and truncate only with a conservative factorial-tail bound.
+
+A native session retains one precision-keyed entry for initial fields, prepared geometry/validity, PM state, and unsmoothed observations, with a combined 256 MiB limit. No failed external field is inserted. CPU default/automatic policy, fixed cosmology derivative scope, shell-crossing cautions and the physical experiment schema are unchanged. Device refusal retains the requested resolution. For measurements, failure coverage and reproducible commands, use the optimization record rather than historical milestone timings.

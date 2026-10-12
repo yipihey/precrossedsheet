@@ -1,0 +1,3690 @@
+{
+  "recordedAtUtc": "2026-10-12T04:20:42.182743+00:00",
+  "engineVersion": "0.6.0",
+  "stateSchemaVersion": 3,
+  "sourceParentRevision": "838ed93c98bb5ced319258c1388e2ed3256cfb36",
+  "sourceState": "Release numerical source and Wasm fingerprints. GPU numerical algorithms, WGSL and Wasm match the recorded runs; the explanatory FD provenance wording was clarified after the benchmark. Complete buffer-accounting guard is included in the final benchmark. Rendering is excluded from timings.",
+  "sourceFiles": {
+    "app/gpu-test.html": "06a5db518d07e97c4bf831cfac75da78920d6851f441c393b4f868f82224f38d",
+    "app/js/app.js": "a5c48b18ea0fa6759d1aecd35c086377520e7f6189067e963a3e14802d596964",
+    "app/js/gpu/UPSTREAM-MIT-NOTICE.txt": "c40bb25f2fa1f6b254a3cf254c20dbf40e1ed057fe9d201f9be95dbc990e2a07",
+    "app/js/gpu/compensated-check.js": "fc6962d9124e96cb688a6e34a7c70dc24cca0646fe61184b7fe6eb2c5984fe9b",
+    "app/js/gpu/compensated-direct.js": "0dbe003bccc750e278602f2213a9e21706c7cdbd3d22d32e7de16b0ea2b81451",
+    "app/js/gpu/context.js": "8bcdf55e36c5726c5de04a4007d5c89a4718ae61f0bdd2a0a5d42e7371cb9566",
+    "app/js/gpu/deposit-check.js": "f3affee06d34950e6d4dc3d2a4e416447fe4bb88ef18f6ce0188697063471116",
+    "app/js/gpu/deposit-clip3d.js": "86d8dc0a4511a7db4717e80b710236f8e42f50e04d07555b1c3539bd3c75cf86",
+    "app/js/gpu/deposit.js": "6d463f6a23f22fe585d35bbc32432a683ddc93432ead108206a73ed6eb6efb02",
+    "app/js/gpu/direct.js": "d2bcb35d4aad044bc291bbcd23daaaefa89f4910134abf53683a5c1f11c1323e",
+    "app/js/gpu/fd-check.js": "adb385ee022fdd806ff5ce3d3b31166c96ae3a3f387757031e0179c144171123",
+    "app/js/gpu/fft.js": "01341f229114260375750a87fffbf51f3c916759962bc39f12c9b9bd0c2ddd98",
+    "app/js/gpu/finite-difference.js": "8de77f360943112703d2b68fb3ab49a299142da9b0d2d030e58b4f1ae64698a4",
+    "app/js/gpu/lab-check.js": "5525d0eb567a0b886359990773f79e34a4aee96bb28661708b359718c85f073c",
+    "app/js/gpu/lpt-check.js": "e5a462d4c39c30588cb1f87c9637de293bc9f83622cf3f39cffc40077533d4ce",
+    "app/js/gpu/lpt.js": "74807a78183822320b14314b506f41197cf78865d9506e69b9e3a75d412a80c0",
+    "app/js/gpu/optimization-check.js": "2bfb7d804b20ebd7dca60243845fdd502763b5fa4396c689b19e3222beb928cf",
+    "app/js/gpu/pm.js": "d5a0011502032b60cc915b1ac6c62b675fd64d6a80bd5aa1fab31a7243cc6872",
+    "app/js/gpu/resident-check.js": "749532f9f2544014bb85f9858c8f6ad811ede0d186e4759c0a0dc189bc0856cc",
+    "app/js/gpu/reuse-manifest.json": "54faf55aeecd45779687773923a8023251c15514c7ebf6e8dec469a33c7fd005",
+    "app/js/gpu/selftest.js": "5fc36abc066f175ea922b4786287dcd203cf78ca645873f523d33b93e4a21ea9",
+    "app/js/gpu/util.js": "8722df9972a981e408ae2f03f868743809c6e3b4c51fa9eeb3b3d6851b32fb13",
+    "app/js/state.js": "cc0f36460bfa91fd422b033323bfcb3c3f7d31d1fb5b91bae2f5889d0b08b695",
+    "app/js/worker.js": "a232011fc633403a9c3738932b631882ec9df8dbc04ad111424cf2b76bf8c7ba",
+    "core/Cargo.lock": "c6376937ff052a58ff809a442e6b79630ae2d8219ddca5aa5bf2395605907b1a",
+    "core/Cargo.toml": "fb17f88f38df5a2ed4daf0ce4bcfb0892a3596e61a6b6c29abbabad58f770d7a",
+    "core/src/burgers1d.rs": "15ae82bb5edc771a87c1d1c8d25f254e2592a335f2dc535dd105d710513d0d16",
+    "core/src/cosmological.rs": "7dbe2a1abe90e1a036aada125e245b5c8e6412f9460efde9a8236f8ba00f3c68",
+    "core/src/direct.rs": "d40e3d930ab05990eda9da02c5bb78ef30d24a547313dbf9e036f87d2ac7db43",
+    "core/src/fft.rs": "e540317f5452e5e055cb27551dc24f24fb368df03ac19bf41b1a0f9a977be2ed",
+    "core/src/gpu_lpt.rs": "a2b83c460420567a157249855008c74ce67567aa1f35d7f1d12e5719e3670cae",
+    "core/src/grid.rs": "d7f4c9ed0c547c4a39ae65674cb64193cc373c5186be9e04d77d33cae14dae8f",
+    "core/src/growth.rs": "6c0c139f394e6804c6fc05d80096909992d08bc7e9eddbe9bfa52739eeef20f1",
+    "core/src/hopfcole.rs": "34a75f2315980188c7941734166ee9d67912dcef9af3be39b0c7b0ae17c43504",
+    "core/src/ics.rs": "113e04649e4d8cd809b6e3788f32e3f975286086e96bf872374ae0f6ac7a29e1",
+    "core/src/laboratory.rs": "63d7d50bfff2c77eb2babbcada56165092439006aa3a4f99ee77fcb6d94b5723",
+    "core/src/lib.rs": "96caa295e4e0000e327693c3ce391809898cf7f537cc615a558940796cc150b2",
+    "core/src/lpt.rs": "49e7efc4583ab148657caabce1f50e6176e33dc3e7c72303d762763a6ed57243",
+    "core/src/nbody.rs": "84491e9ef9d63ea4ec79a9e27bc2d8e3a19460a09f49e154628554860bd28e19",
+    "core/src/observables.rs": "09a2176de1a055e86a0ad11ba4f39bb25982e9587baa8312dd55a89d74f67b8a",
+    "core/src/r3d.rs": "85a4ee89d5480361960bb59b48c622c4a5678609255204078b86f63d00889f12",
+    "core/src/rng.rs": "0ed44efc2639c07b6303ffee983218799bc7cf56b4dbc6545a4e351b942f0a08",
+    "core/src/sheet.rs": "e4572dcfd7ec23a96b4eb69f737ef64a38a9161164ad611b12ff9896b4aa68e9",
+    "core/src/spectra.rs": "13158d7d0d68bc4d8f54a02a45ed9bba4eb6b73435bb8b12f51ebab34650e733",
+    "core/src/tangent.rs": "9dde544c22c697af361e02c953f05919ff4897fddf2423dee0d504457f0f03fe",
+    "core/src/wasm.rs": "643a000d73616f3e02ff6e89d267036f50aaee447b0a805afdcd548b350ef2e0",
+    "core/tests/cosmological.rs": "466adf1782be7b5a2839e978ce23499c7b23eadf74507bfcb6b7ca924c1064c9",
+    "core/tests/direct.rs": "7da8f54e8420502b824794f7b6cc6318b43fe8f1d7ae6ed755ddc551498b35e5",
+    "core/tests/gpu_lpt.rs": "04574f3477a297b511b8f38599d9ef69d22d8d3f403f9ed69435c3fa69089582",
+    "core/tests/laboratory.rs": "c69ecd6ec2ede9d8c55d02648e510f1a5f8c2e45107d38f8b8c4122b372ce8de",
+    "core/tests/nbody_tangent.rs": "386981a5533d67265c921d140ec9368ae528b2f432faa0ed949fee657bd849d2",
+    "core/tests/r3d_basic.rs": "b9320149b81573b7de2229a9a223f8b79dd9b657a283e23ee79b9bf7c786fbf0",
+    "core/tests/r3d_differential.rs": "118c004113cf3734bc83585500ddb9cfbad5485c61243cb72bc45e5aa9221fb5",
+    "core/tests/validate.rs": "ba21d83fc6e839d998d24b44fada700ccc0f4934c807748ddacc0d0e3a0e2a40",
+    "scripts/test_gpu.mjs": "695330b79b39a8657ce2b6060b822036ee8e8eeff8b8d70a35437d6c20cc46ea",
+    "scripts/test_wasm.mjs": "62f7885f59882121c44535b36730fe08625bf37ad189a517975dfaf4bd21c03e",
+    "scripts/test_worker.mjs": "ab79f1289c380202456f509dc0a509b4ea6567dd9c9876b704485477ae84bc93"
+  },
+  "builtArtifacts": {
+    "app/pkg/hcc_core.js": "e14c013a914ea2e3fd0e72e4e7f941cba5692f29c5566dda69589d4460ad0c2e",
+    "app/pkg/LICENSE": "c40bb25f2fa1f6b254a3cf254c20dbf40e1ed057fe9d201f9be95dbc990e2a07",
+    "app/pkg/hcc_core.d.ts": "b30dd958c1ebfe1e77577537f3fc22a24038d957b318ae9579ffeaed02680ad4",
+    "app/pkg/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "app/pkg/package.json": "fd5d737a253be980482761f57cd3eadcb4c28edf3b079cb83d9b9e71c89f4c94",
+    "app/pkg/hcc_core_bg.wasm.d.ts": "312f40a2e6c86b0524c60567301a336af6da80f61e82f0cec807039227748adb",
+    "app/pkg/hcc_core_bg.wasm": "9c97c38b2119afcb158ecb948b975b7bee7277b98fc98ee6a510edb0ef8c5bf0"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "wasmPack": "wasm-pack 0.13.1",
+    "node": "v26.8.1",
+    "quarto": "1.10.19"
+  },
+  "device": {
+    "deviceInfo": {
+      "limits": {
+        "maxTextureDimension1D": 8192,
+        "maxTextureDimension2D": 8192,
+        "maxTextureDimension3D": 2048,
+        "maxBindGroups": 4,
+        "maxBindingsPerBindGroup": 1000,
+        "maxDynamicUniformBuffersPerPipelineLayout": 8,
+        "maxDynamicStorageBuffersPerPipelineLayout": 4,
+        "maxSampledTexturesPerShaderStage": 16,
+        "maxSamplersPerShaderStage": 16,
+        "maxStorageBuffersPerShaderStage": 8,
+        "maxStorageTexturesPerShaderStage": 4,
+        "maxUniformBuffersPerShaderStage": 12,
+        "maxUniformBufferBindingSize": 65536,
+        "maxStorageBufferBindingSize": 536870912,
+        "maxBufferSize": 536870912,
+        "maxVertexBuffers": 8,
+        "maxVertexAttributes": 16,
+        "maxVertexBufferArrayStride": 2048,
+        "maxInterStageShaderVariables": 16,
+        "maxColorAttachments": 8,
+        "maxColorAttachmentBytesPerSample": 32,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxComputeInvocationsPerWorkgroup": 256,
+        "maxComputeWorkgroupSizeX": 256,
+        "maxComputeWorkgroupSizeY": 256,
+        "maxComputeWorkgroupSizeZ": 64,
+        "maxComputeWorkgroupsPerDimension": 65535
+      },
+      "features": [
+        "core-features-and-limits"
+      ],
+      "adapter": {
+        "vendor": "apple",
+        "architecture": "metal-3",
+        "device": "",
+        "description": ""
+      },
+      "context": {
+        "module": "precrossedsheet/app/js/gpu/context.js",
+        "policy": "compute-only; one owned device per caller unless injected",
+        "revision": "precrossedsheet-gpu-p0-2026-10-10",
+        "setupMs": 66.5
+      }
+    },
+    "browser": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/155.0.8059.40",
+      "revision": "@cfaadc5a132d78e1828635aa8405a499f3e14864",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+      "jsVersion": "15.5.35.20"
+    },
+    "machine": {
+      "cpu": "Apple M5 Max",
+      "logicalCpus": 18,
+      "memoryBytes": 137438953472,
+      "platform": "darwin",
+      "architecture": "arm64",
+      "release": "25.6.0"
+    }
+  },
+  "comparisonPolicy": {
+    "lpt": {
+      "absolute": 2e-06,
+      "relative": 0.0002
+    },
+    "compensated": {
+      "absolute": 1e-11,
+      "relative": 1e-08
+    },
+    "finiteDifference": {
+      "absolute": 1e-09,
+      "relative": 1e-05
+    },
+    "deposit": {
+      "absolute": 2e-05,
+      "relative": 0.0001,
+      "massAbsolute": 1e-06
+    }
+  },
+  "benchmarkPolicy": "Three paired cold-physical worker requests per lattice. Both arms use the optimized PM and centered-FD kernels. Baseline disables GPU spatial nLPT, exact deposit and analytic recovery. Cache-hot runs follow a compatible warmup and are separate.",
+  "summary": {
+    "32": {
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 32,
+        "forceMesh": 32,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 32
+      },
+      "baselineMs": {
+        "median": 3207.7000000476837,
+        "range": [
+          3186.2999999523163,
+          3232.2000000476837
+        ],
+        "samples": [
+          3232.2000000476837,
+          3186.2999999523163,
+          3207.7000000476837
+        ]
+      },
+      "optimizedMs": {
+        "median": 1056.3999998569489,
+        "range": [
+          1040.1999998092651,
+          1085.4000000953674
+        ],
+        "samples": [
+          1085.4000000953674,
+          1056.3999998569489,
+          1040.1999998092651
+        ]
+      },
+      "speedup": 3.0364445290439708,
+      "timeReductionPercent": 67.06674564824499,
+      "pairedQuality": [
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 3.5762786865234375e-07,
+              "maximumBudgetFraction": 0.00275226539882399,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 9.5367431640625e-07,
+              "maximumBudgetFraction": 0.0003170737032387629,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.027259556911303662,
+              "maximumBudgetFraction": 0.0020798328158186845,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 0.00012053440175918695,
+              "maximumBudgetFraction": 5.239311369268809e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        },
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 3.5762786865234375e-07,
+              "maximumBudgetFraction": 0.00275226539882399,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 4.76837158203125e-07,
+              "maximumBudgetFraction": 0.00018996413762027936,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.027259556911303662,
+              "maximumBudgetFraction": 0.0009350450271765099,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 2.94313410478253e-05,
+              "maximumBudgetFraction": 3.2770882072419175e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        },
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 3.5762786865234375e-07,
+              "maximumBudgetFraction": 0.00275226539882399,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 7.152557373046875e-07,
+              "maximumBudgetFraction": 0.00022943485529964308,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.027259556911303662,
+              "maximumBudgetFraction": 0.0019271356680565777,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 2.3705030969267682e-05,
+              "maximumBudgetFraction": 3.2192950662801185e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        }
+      ],
+      "stages": {
+        "baselineGpu": [
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 17.600000143051147,
+              "readbackMs": 0.39999985694885254,
+              "shaderHashMs": 0.09999990463256836,
+              "stages": {
+                "preparationMilliseconds": 955.2000000476837,
+                "directMilliseconds": 21.59999990463257,
+                "finiteDifferenceMilliseconds": 135.90000009536743,
+                "cpuRecoveryMilliseconds": 2029.8999998569489,
+                "finalizationMilliseconds": 2107.899999856949
+              },
+              "totalMs": 20.700000047683716,
+              "uploadMs": 0.5
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0.10000014305114746,
+              "uploadMs": 0.7000000476837158,
+              "kernelMs": 57.600000619888306,
+              "diagnosticMs": 0.7999999523162842,
+              "cpuCheckMs": 0,
+              "readbackMs": 0.7999999523162842,
+              "totalMs": 78.09999990463257
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 130.90000009536743,
+              "readbackMs": 0.5999999046325684,
+              "totalMs": 135.40000009536743,
+              "uploadMs": 0.5999999046325684
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 7.8999998569488525,
+              "readbackMs": 0.9000000953674316,
+              "shaderHashMs": 0.10000014305114746,
+              "stages": {
+                "preparationMilliseconds": 938.2999999523163,
+                "directMilliseconds": 10,
+                "finiteDifferenceMilliseconds": 126.90000009536743,
+                "cpuRecoveryMilliseconds": 2032.4000000953674,
+                "finalizationMilliseconds": 2103.7000000476837
+              },
+              "totalMs": 9.599999904632568,
+              "uploadMs": 0.5
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.5,
+              "kernelMs": 48.09999966621399,
+              "diagnosticMs": 0.9000000953674316,
+              "cpuCheckMs": 0,
+              "readbackMs": 0.5,
+              "totalMs": 65.60000014305115
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 124.20000004768372,
+              "readbackMs": 0.5,
+              "totalMs": 126.59999990463257,
+              "uploadMs": 0.5
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 7.900000095367432,
+              "readbackMs": 0.5999999046325684,
+              "shaderHashMs": 0,
+              "stages": {
+                "preparationMilliseconds": 960.6999998092651,
+                "directMilliseconds": 9.5,
+                "finiteDifferenceMilliseconds": 127.59999990463257,
+                "cpuRecoveryMilliseconds": 2032.1000001430511,
+                "finalizationMilliseconds": 2103.2999999523163
+              },
+              "totalMs": 9.400000095367432,
+              "uploadMs": 0.39999985694885254
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.6000001430511475,
+              "kernelMs": 55.60000014305115,
+              "diagnosticMs": 1.5999999046325684,
+              "cpuCheckMs": 0,
+              "readbackMs": 0.8000001907348633,
+              "totalMs": 88.79999995231628
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 124.90000009536743,
+              "readbackMs": 0.5999999046325684,
+              "totalMs": 127.20000004768372,
+              "uploadMs": 0.5
+            }
+          }
+        ],
+        "optimizedGpu": [
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 12.700000047683716,
+              "readbackMs": 0.7999999523162842,
+              "shaderHashMs": 0.09999990463256836,
+              "stages": {
+                "preparationMilliseconds": 821.6999998092651,
+                "directMilliseconds": 16.800000190734863,
+                "finiteDifferenceMilliseconds": 135.09999990463257,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 104.70000004768372
+              },
+              "totalMs": 16.200000047683716,
+              "uploadMs": 0.5
+            },
+            "lpt": {
+              "compileMs": 0.09999990463256836,
+              "uploadMs": 0.09999990463256836,
+              "kernelMs": 23.800000190734863,
+              "readbackMs": 6.8999998569488525,
+              "totalMs": 43.299999952316284
+            },
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.5999999046325684,
+              "kernelMs": 46.09999942779541,
+              "diagnosticMs": 1.9000000953674316,
+              "cpuCheckMs": 0,
+              "readbackMs": 1.2000000476837158,
+              "totalMs": 74.90000009536743
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 169,
+                "compileMs": 0,
+                "uploadMs": 1,
+                "kernelMs": 19.90000009536743,
+                "readbackMs": 0.5,
+                "totalMs": 191.29999995231628
+              },
+              "pm": {
+                "preflightMs": 168,
+                "compileMs": 0,
+                "uploadMs": 0.8999998569488525,
+                "kernelMs": 16.90000009536743,
+                "readbackMs": 1.4000000953674316,
+                "totalMs": 188
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.5,
+              "kernelMs": 28.100000143051147,
+              "readbackMs": 0.5999999046325684,
+              "totalMs": 31.899999856948853
+            },
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 130.09999990463257,
+              "readbackMs": 0.7999999523162842,
+              "totalMs": 134.5,
+              "uploadMs": 0.5
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 7.799999952316284,
+              "readbackMs": 0.5999999046325684,
+              "shaderHashMs": 0,
+              "stages": {
+                "preparationMilliseconds": 809.7999999523163,
+                "directMilliseconds": 9.799999952316284,
+                "finiteDifferenceMilliseconds": 126.70000004768372,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 103.39999985694885
+              },
+              "totalMs": 9.400000095367432,
+              "uploadMs": 0.6000001430511475
+            },
+            "lpt": {
+              "compileMs": 0,
+              "uploadMs": 0.09999990463256836,
+              "kernelMs": 17.5,
+              "readbackMs": 6.799999952316284,
+              "totalMs": 28.299999952316284
+            },
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.6000001430511475,
+              "kernelMs": 54.49999952316284,
+              "diagnosticMs": 1.9000000953674316,
+              "cpuCheckMs": 0,
+              "readbackMs": 0.5,
+              "totalMs": 86.59999990463257
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 171.09999990463257,
+                "compileMs": 0,
+                "uploadMs": 1.2000000476837158,
+                "kernelMs": 22.700000047683716,
+                "readbackMs": 0.39999985694885254,
+                "totalMs": 196
+              },
+              "pm": {
+                "preflightMs": 169,
+                "compileMs": 0,
+                "uploadMs": 0.7999999523162842,
+                "kernelMs": 8,
+                "readbackMs": 0.5,
+                "totalMs": 179.20000004768372
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.5,
+              "kernelMs": 28.09999990463257,
+              "readbackMs": 0.7999999523162842,
+              "totalMs": 31.800000190734863
+            },
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 124,
+              "readbackMs": 0.5,
+              "totalMs": 126.40000009536743,
+              "uploadMs": 0.5
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 14.399999856948853,
+              "readbackMs": 0.5999999046325684,
+              "shaderHashMs": 0,
+              "stages": {
+                "preparationMilliseconds": 781.9000000953674,
+                "directMilliseconds": 16.199999809265137,
+                "finiteDifferenceMilliseconds": 133.10000014305115,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 101.89999985694885
+              },
+              "totalMs": 16,
+              "uploadMs": 0.5
+            },
+            "lpt": {
+              "compileMs": 0,
+              "uploadMs": 0.10000014305114746,
+              "kernelMs": 19.59999990463257,
+              "readbackMs": 4.299999952316284,
+              "totalMs": 28.09999990463257
+            },
+            "pm": {
+              "compileMs": 0.09999990463256836,
+              "uploadMs": 0.5,
+              "kernelMs": 41.80000162124634,
+              "diagnosticMs": 2,
+              "cpuCheckMs": 0,
+              "readbackMs": 0.2999999523162842,
+              "totalMs": 62.5
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 168,
+                "compileMs": 0,
+                "uploadMs": 0.9000000953674316,
+                "kernelMs": 16.700000047683716,
+                "readbackMs": 1.5999999046325684,
+                "totalMs": 187.90000009536743
+              },
+              "pm": {
+                "preflightMs": 167.80000019073486,
+                "compileMs": 0,
+                "uploadMs": 0.8999998569488525,
+                "kernelMs": 16.600000143051147,
+                "readbackMs": 0.39999985694885254,
+                "totalMs": 186.5
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.6000001430511475,
+              "kernelMs": 28.09999990463257,
+              "readbackMs": 0.7000000476837158,
+              "totalMs": 29.90000009536743
+            },
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 130.40000009536743,
+              "readbackMs": 0.5999999046325684,
+              "totalMs": 132.70000004768372,
+              "uploadMs": 0.5
+            }
+          }
+        ]
+      },
+      "cacheHotMs": {
+        "median": 269.7000000476837,
+        "range": [
+          264.10000014305115,
+          274.30000019073486
+        ],
+        "samples": [
+          274.30000019073486,
+          264.10000014305115,
+          269.7000000476837
+        ]
+      },
+      "cache": {
+        "bytes": 37988984,
+        "initial": {
+          "bytes": 25272832,
+          "provenance": "gpu-f32",
+          "status": "hit"
+        },
+        "limitBytes": 268435456,
+        "observations": {
+          "bytes": 394104,
+          "depositSource": "gpu-f32-geometry-overlap",
+          "smoothing": "recomputed",
+          "status": "hit"
+        },
+        "pending": {
+          "bytes": 7079168,
+          "key": "epoch/order/steps/force",
+          "status": "hit"
+        },
+        "pm": {
+          "arithmetic": "f32",
+          "bytes": 5242880,
+          "status": "hit"
+        }
+      }
+    },
+    "64": {
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 64,
+        "forceMesh": 64,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 64
+      },
+      "baselineMs": {
+        "median": 21934.599999904633,
+        "range": [
+          21888.5,
+          22010.799999952316
+        ],
+        "samples": [
+          21934.599999904633,
+          21888.5,
+          22010.799999952316
+        ]
+      },
+      "optimizedMs": {
+        "median": 7342,
+        "range": [
+          7330.900000095367,
+          7402.600000143051
+        ],
+        "samples": [
+          7402.600000143051,
+          7342,
+          7330.900000095367
+        ]
+      },
+      "speedup": 2.9875510759881,
+      "timeReductionPercent": 66.52776891289595,
+      "pairedQuality": [
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 2.384185791015625e-07,
+              "maximumBudgetFraction": 0.0019851162731236516,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 5.960464477539062e-07,
+              "maximumBudgetFraction": 0.00023456474822101402,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.014454447009484284,
+              "maximumBudgetFraction": 0.002281235210894764,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 8.630288242272854e-05,
+              "maximumBudgetFraction": 6.483984657090243e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        },
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 2.384185791015625e-07,
+              "maximumBudgetFraction": 0.0019851162731236516,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 4.76837158203125e-07,
+              "maximumBudgetFraction": 0.0001816185829954698,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.014454447009484284,
+              "maximumBudgetFraction": 0.002281235210894764,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 8.288715935123037e-05,
+              "maximumBudgetFraction": 6.22735936708691e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        },
+        {
+          "comparison": {
+            "pass": true,
+            "density": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 2.384185791015625e-07,
+              "maximumBudgetFraction": 0.0019851162731236516,
+              "absolute": 2e-05,
+              "relative": 0.0001
+            },
+            "pmDensity": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "maximumAbsolute": 5.960464477539062e-07,
+              "maximumBudgetFraction": 0.00019332573073453028,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "spectra": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 48,
+              "maximumAbsolute": 0.025977234123274684,
+              "maximumBudgetFraction": 0.002281235210894764,
+              "absolute": 0.0005,
+              "relative": 0.002
+            },
+            "pdf": {
+              "pass": true,
+              "failedComponents": 0,
+              "nonfinite": 0,
+              "numericComponents": 373,
+              "maximumAbsolute": 0.00011619533020734707,
+              "maximumBudgetFraction": 8.729821375166596e-05,
+              "absolute": 0.002,
+              "relative": 0.02
+            },
+            "budgets": {
+              "rho": {
+                "absolute": 2e-05,
+                "relative": 0.0001
+              },
+              "pmRho": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "spectra": {
+                "absolute": 0.0005,
+                "relative": 0.002
+              },
+              "pdf": {
+                "absolute": 0.002,
+                "relative": 0.02
+              }
+            }
+          },
+          "pass": true
+        }
+      ],
+      "stages": {
+        "baselineGpu": [
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 73,
+              "readbackMs": 0.5,
+              "shaderHashMs": 0,
+              "stages": {
+                "preparationMilliseconds": 7072.200000047684,
+                "directMilliseconds": 80,
+                "finiteDifferenceMilliseconds": 834.7999999523163,
+                "cpuRecoveryMilliseconds": 13289.299999952316,
+                "finalizationMilliseconds": 13840.299999952316
+              },
+              "totalMs": 76.40000009536743,
+              "uploadMs": 0.2999999523162842
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0.09999990463256836,
+              "uploadMs": 0.20000004768371582,
+              "kernelMs": 91.3000009059906,
+              "diagnosticMs": 2.3999998569488525,
+              "cpuCheckMs": 0,
+              "readbackMs": 2.299999952316284,
+              "totalMs": 135.20000004768372
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 818.7999999523163,
+              "readbackMs": 3.0999999046325684,
+              "totalMs": 830.8999998569489,
+              "uploadMs": 0.5999999046325684
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 57.200000047683716,
+              "readbackMs": 0.5,
+              "shaderHashMs": 0.10000014305114746,
+              "stages": {
+                "preparationMilliseconds": 7115.299999952316,
+                "directMilliseconds": 62.59999990463257,
+                "finiteDifferenceMilliseconds": 824.5,
+                "cpuRecoveryMilliseconds": 13220.100000143051,
+                "finalizationMilliseconds": 13762.299999952316
+              },
+              "totalMs": 59.80000019073486,
+              "uploadMs": 0.19999980926513672
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.2999999523162842,
+              "kernelMs": 87.99999976158142,
+              "diagnosticMs": 1.2000000476837158,
+              "cpuCheckMs": 0,
+              "readbackMs": 3,
+              "totalMs": 128.09999990463257
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 807.5999999046326,
+              "readbackMs": 4.5,
+              "totalMs": 821,
+              "uploadMs": 0.5
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "cpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "cpu",
+                "provenance": "cpu-exact",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f64 geometry and accumulation",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-cpu-f64-and-gpu-f32",
+                  "precision": "f32 GPU input/kernel with f64 CPU mode recovery"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "cpu",
+                "provenance": "cpu-f64"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 68.10000014305115,
+              "readbackMs": 0.39999985694885254,
+              "shaderHashMs": 0.09999990463256836,
+              "stages": {
+                "preparationMilliseconds": 7171.699999809265,
+                "directMilliseconds": 73.09999990463257,
+                "finiteDifferenceMilliseconds": 838.1000001430511,
+                "cpuRecoveryMilliseconds": 13268,
+                "finalizationMilliseconds": 13806.799999952316
+              },
+              "totalMs": 70.70000004768372,
+              "uploadMs": 0.2999999523162842
+            },
+            "lpt": null,
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.2999999523162842,
+              "kernelMs": 88.50000047683716,
+              "diagnosticMs": 2.3000001907348633,
+              "cpuCheckMs": 0,
+              "readbackMs": 3.299999952316284,
+              "totalMs": 127.29999995231628
+            },
+            "deposit": null,
+            "analytic": null,
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 822.7999999523163,
+              "readbackMs": 3.200000047683716,
+              "totalMs": 834.6000001430511,
+              "uploadMs": 0.39999985694885254
+            }
+          }
+        ],
+        "optimizedGpu": [
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 58,
+              "readbackMs": 0.5999999046325684,
+              "shaderHashMs": 0,
+              "stages": {
+                "preparationMilliseconds": 5682.199999809265,
+                "directMilliseconds": 63.60000014305115,
+                "finiteDifferenceMilliseconds": 823.3999998569489,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 734.6000001430511
+              },
+              "totalMs": 60.89999985694885,
+              "uploadMs": 0.2999999523162842
+            },
+            "lpt": {
+              "compileMs": 0.10000014305114746,
+              "uploadMs": 0.39999985694885254,
+              "kernelMs": 34.200000047683716,
+              "readbackMs": 54,
+              "totalMs": 116.70000004768372
+            },
+            "pm": {
+              "compileMs": 0.09999990463256836,
+              "uploadMs": 0.20000004768371582,
+              "kernelMs": 96.1000006198883,
+              "diagnosticMs": 2.700000047683716,
+              "cpuCheckMs": 0,
+              "readbackMs": 2.200000047683716,
+              "totalMs": 130
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 1339.7000000476837,
+                "compileMs": 0,
+                "uploadMs": 1.2000000476837158,
+                "kernelMs": 101.59999990463257,
+                "readbackMs": 0.7000000476837158,
+                "totalMs": 1448.2000000476837
+              },
+              "pm": {
+                "preflightMs": 1340.1000001430511,
+                "compileMs": 0,
+                "uploadMs": 2.0999999046325684,
+                "kernelMs": 88.70000004768372,
+                "readbackMs": 0.6000001430511475,
+                "totalMs": 1436.5
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.2999999523162842,
+              "kernelMs": 177.09999990463257,
+              "readbackMs": 3.700000047683716,
+              "totalMs": 183.59999990463257
+            },
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 808.2000000476837,
+              "readbackMs": 3.1000001430511475,
+              "totalMs": 819.8999998569489,
+              "uploadMs": 0.5
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0,
+              "kernelMs": 63.89999985694885,
+              "readbackMs": 0.2999999523162842,
+              "shaderHashMs": 0.20000004768371582,
+              "stages": {
+                "preparationMilliseconds": 5574.700000047684,
+                "directMilliseconds": 69.10000014305115,
+                "finiteDifferenceMilliseconds": 821,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 745.8999998569489
+              },
+              "totalMs": 66.60000014305115,
+              "uploadMs": 0.20000004768371582
+            },
+            "lpt": {
+              "compileMs": 0.20000004768371582,
+              "uploadMs": 0.5999999046325684,
+              "kernelMs": 34.40000009536743,
+              "readbackMs": 33.69999980926514,
+              "totalMs": 100
+            },
+            "pm": {
+              "compileMs": 0.10000014305114746,
+              "uploadMs": 0.20000004768371582,
+              "kernelMs": 85.69999933242798,
+              "diagnosticMs": 2.200000047683716,
+              "cpuCheckMs": 0,
+              "readbackMs": 2.5,
+              "totalMs": 123.19999980926514
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 1307,
+                "compileMs": 0,
+                "uploadMs": 0.5,
+                "kernelMs": 92.80000019073486,
+                "readbackMs": 0.6999998092651367,
+                "totalMs": 1406.1000001430511
+              },
+              "pm": {
+                "preflightMs": 1314.2999999523163,
+                "compileMs": 0,
+                "uploadMs": 2.299999952316284,
+                "kernelMs": 88.90000009536743,
+                "readbackMs": 0.6999998092651367,
+                "totalMs": 1411.3999998569489
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.20000004768371582,
+              "kernelMs": 191.40000009536743,
+              "readbackMs": 2.700000047683716,
+              "totalMs": 197.69999980926514
+            },
+            "fd": {
+              "compileMs": 0.09999990463256836,
+              "kernelMs": 805.7000000476837,
+              "readbackMs": 3.1999998092651367,
+              "totalMs": 817.5,
+              "uploadMs": 0.40000009536743164
+            }
+          },
+          {
+            "backends": {
+              "trajectories": {
+                "backend": "mixed",
+                "lptBackend": "gpu",
+                "pmBackend": "gpu",
+                "spatialFieldPrecision": "f32 nLPT tensors",
+                "statePrecision": "LPT f64, PM f32",
+                "lptStatePrecision": "f64",
+                "pmStatePrecision": "f32",
+                "tangentPrecision": "LPT f64, PM f32",
+                "gpuPackedInputPrecision": "f32"
+              },
+              "exactDeposit": {
+                "backend": "gpu",
+                "provenance": "gpu-f32-geometry-overlap",
+                "inputPrecision": "f32 positions",
+                "arithmeticPrecision": "f32 cell-local simplex clipping and compensated cell-owner sums",
+                "outputPrecision": "f32 density field"
+              },
+              "pdfs": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density fields",
+                "arithmeticPrecision": "f64 histogram and moment accumulation",
+                "outputPrecision": "f64 summaries"
+              },
+              "griddedSpectra": {
+                "backend": "cpu",
+                "inputPrecision": "f32 density field",
+                "arithmeticPrecision": "f64 complex FFT and binning",
+                "outputPrecision": "f64 spectrum bins"
+              },
+              "directPrimal": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "directJvp": {
+                "lpt": {
+                  "provenance": "mixed-gpu-f32-and-gpu-compensated-f32",
+                  "precision": "high/low f32 inputs and compensated GPU arithmetic"
+                },
+                "pm": {
+                  "provenance": "gpu-f32",
+                  "precision": "f32 GPU input/kernel"
+                }
+              },
+              "analyticRecovery": {
+                "backend": "gpu",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finiteDifference": {
+                "backend": "gpu",
+                "precision": "high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference",
+                "provenance": "gpu-compensated-f32"
+              },
+              "finalization": {
+                "backend": "cpu",
+                "precision": "f64"
+              }
+            },
+            "timings": {
+              "compileMs": 0.09999990463256836,
+              "kernelMs": 53.09999990463257,
+              "readbackMs": 0.5,
+              "shaderHashMs": 0.10000014305114746,
+              "stages": {
+                "preparationMilliseconds": 5584.799999952316,
+                "directMilliseconds": 58.5,
+                "finiteDifferenceMilliseconds": 820.0999999046326,
+                "cpuRecoveryMilliseconds": 0,
+                "finalizationMilliseconds": 732.9000000953674
+              },
+              "totalMs": 55.799999952316284,
+              "uploadMs": 0.20000004768371582
+            },
+            "lpt": {
+              "compileMs": 0,
+              "uploadMs": 0.6999998092651367,
+              "kernelMs": 39,
+              "readbackMs": 32.40000009536743,
+              "totalMs": 94.40000009536743
+            },
+            "pm": {
+              "compileMs": 0,
+              "uploadMs": 0.2999999523162842,
+              "kernelMs": 84.79999995231628,
+              "diagnosticMs": 1.6999998092651367,
+              "cpuCheckMs": 0,
+              "readbackMs": 2.0999999046325684,
+              "totalMs": 116.70000004768372
+            },
+            "deposit": {
+              "lpt": {
+                "preflightMs": 1318.7000000476837,
+                "compileMs": 0.10000014305114746,
+                "uploadMs": 1,
+                "kernelMs": 101.29999995231628,
+                "readbackMs": 0.7999999523162842,
+                "totalMs": 1426.7000000476837
+              },
+              "pm": {
+                "preflightMs": 1323.5999999046326,
+                "compileMs": 0,
+                "uploadMs": 2.8000001907348633,
+                "kernelMs": 84.89999985694885,
+                "readbackMs": 0.7000000476837158,
+                "totalMs": 1417.0999999046326
+              }
+            },
+            "analytic": {
+              "compileMs": 0,
+              "uploadMs": 0.2999999523162842,
+              "kernelMs": 185,
+              "readbackMs": 2.6999998092651367,
+              "totalMs": 190.80000019073486
+            },
+            "fd": {
+              "compileMs": 0,
+              "kernelMs": 804.3999998569489,
+              "readbackMs": 3.0999999046325684,
+              "totalMs": 816.5,
+              "uploadMs": 0.7000000476837158
+            }
+          }
+        ]
+      },
+      "cacheHotMs": {
+        "median": 4885.099999904633,
+        "range": [
+          4857.899999856949,
+          4938.599999904633
+        ],
+        "samples": [
+          4885.099999904633,
+          4857.899999856949,
+          4938.599999904633
+        ]
+      },
+      "cache": {
+        "bytes": 252955768,
+        "initial": {
+          "bytes": 193184768,
+          "provenance": "gpu-f32",
+          "status": "hit"
+        },
+        "limitBytes": 268435456,
+        "observations": {
+          "bytes": 3146616,
+          "depositSource": "gpu-f32-geometry-overlap",
+          "reason": "computed",
+          "smoothing": "recomputed",
+          "status": "miss"
+        },
+        "pending": {
+          "bytes": 56624384,
+          "key": "epoch/order/steps/force",
+          "status": "hit"
+        },
+        "pm": {
+          "arithmetic": "f32",
+          "bytes": 41943040,
+          "reason": "session memory budget",
+          "status": "skipped"
+        }
+      }
+    }
+  },
+  "numericalCases": [
+    {
+      "kind": "lpt",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 2,
+        "n": 16
+      },
+      "fieldStride": 9,
+      "termCount": 9,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 5.960464477539063e-08,
+        "maximumBudgetFraction": 0.015831255292973776,
+        "absolute": 2e-06,
+        "relative": 0.0002
+      },
+      "gpu": {
+        "dim": 2,
+        "n": 16,
+        "termCount": 9,
+        "fieldCountPerCell": 9,
+        "outputBytes": 82944,
+        "complexBytes": 2048,
+        "sourceBytes": 1024,
+        "paramSlots": 116,
+        "estimatedBytes": 215120,
+        "finiteChecked": true,
+        "shaderHash": "8694e121441c8bc94f275e1d125281ffd49306a79d9449b8120526ce0f828817",
+        "fftShaderHash": "ba712ff61fb01e7e87ff265cd42cb3dce1d5f9a8a244b6212a266d922a747e65"
+      },
+      "timings": {
+        "compileMs": 4.299999952316284,
+        "uploadMs": 0,
+        "kernelMs": 5.8999998569488525,
+        "readbackMs": 0.40000009536743164,
+        "totalMs": 11.600000143051147
+      }
+    },
+    {
+      "kind": "lpt",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 16
+      },
+      "fieldStride": 15,
+      "termCount": 13,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 2.980232238769531e-07,
+        "maximumBudgetFraction": 0.02577097120693053,
+        "absolute": 2e-06,
+        "relative": 0.0002
+      },
+      "gpu": {
+        "dim": 3,
+        "n": 16,
+        "termCount": 13,
+        "fieldCountPerCell": 15,
+        "outputBytes": 3194880,
+        "complexBytes": 32768,
+        "sourceBytes": 16384,
+        "paramSlots": 242,
+        "estimatedBytes": 6703696,
+        "finiteChecked": true,
+        "shaderHash": "8694e121441c8bc94f275e1d125281ffd49306a79d9449b8120526ce0f828817",
+        "fftShaderHash": "ba712ff61fb01e7e87ff265cd42cb3dce1d5f9a8a244b6212a266d922a747e65"
+      },
+      "timings": {
+        "compileMs": 0.2999999523162842,
+        "uploadMs": 0,
+        "kernelMs": 11.299999952316284,
+        "readbackMs": 3.9000000953674316,
+        "totalMs": 20.299999952316284
+      }
+    },
+    {
+      "kind": "lpt",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 1,
+        "scaleFactor": 0.25,
+        "dim": 2,
+        "n": 16
+      },
+      "fieldStride": 9,
+      "termCount": 9,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 5.960464477539063e-08,
+        "maximumBudgetFraction": 0.015831255292973776,
+        "absolute": 2e-06,
+        "relative": 0.0002
+      },
+      "gpu": {
+        "dim": 2,
+        "n": 16,
+        "termCount": 9,
+        "fieldCountPerCell": 9,
+        "outputBytes": 82944,
+        "complexBytes": 2048,
+        "sourceBytes": 1024,
+        "paramSlots": 116,
+        "estimatedBytes": 215120,
+        "finiteChecked": true,
+        "shaderHash": "8694e121441c8bc94f275e1d125281ffd49306a79d9449b8120526ce0f828817",
+        "fftShaderHash": "ba712ff61fb01e7e87ff265cd42cb3dce1d5f9a8a244b6212a266d922a747e65"
+      },
+      "timings": {
+        "compileMs": 0,
+        "uploadMs": 0,
+        "kernelMs": 4.5,
+        "readbackMs": 0.3000001907348633,
+        "totalMs": 5.099999904632568
+      }
+    },
+    {
+      "kind": "lpt",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 1,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 16
+      },
+      "fieldStride": 15,
+      "termCount": 13,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 2.980232238769531e-07,
+        "maximumBudgetFraction": 0.02577097120693053,
+        "absolute": 2e-06,
+        "relative": 0.0002
+      },
+      "gpu": {
+        "dim": 3,
+        "n": 16,
+        "termCount": 13,
+        "fieldCountPerCell": 15,
+        "outputBytes": 3194880,
+        "complexBytes": 32768,
+        "sourceBytes": 16384,
+        "paramSlots": 242,
+        "estimatedBytes": 6703696,
+        "finiteChecked": true,
+        "shaderHash": "8694e121441c8bc94f275e1d125281ffd49306a79d9449b8120526ce0f828817",
+        "fftShaderHash": "ba712ff61fb01e7e87ff265cd42cb3dce1d5f9a8a244b6212a266d922a747e65"
+      },
+      "timings": {
+        "compileMs": 0.10000014305114746,
+        "uploadMs": 0,
+        "kernelMs": 10.099999904632568,
+        "readbackMs": 1,
+        "totalMs": 11.900000095367432
+      }
+    },
+    {
+      "kind": "lpt",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 32,
+        "forceMesh": 32,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 2650,
+        "ic": "gaussian",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 32
+      },
+      "fieldStride": 15,
+      "termCount": 13,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 1.7881393432617188e-07,
+        "maximumBudgetFraction": 0.03293009914682065,
+        "absolute": 2e-06,
+        "relative": 0.0002
+      },
+      "gpu": {
+        "dim": 3,
+        "n": 32,
+        "termCount": 13,
+        "fieldCountPerCell": 15,
+        "outputBytes": 25559040,
+        "complexBytes": 262144,
+        "sourceBytes": 131072,
+        "paramSlots": 242,
+        "estimatedBytes": 53153936,
+        "finiteChecked": true,
+        "shaderHash": "8694e121441c8bc94f275e1d125281ffd49306a79d9449b8120526ce0f828817",
+        "fftShaderHash": "ba712ff61fb01e7e87ff265cd42cb3dce1d5f9a8a244b6212a266d922a747e65"
+      },
+      "timings": {
+        "compileMs": 0,
+        "uploadMs": 0,
+        "kernelMs": 32.10000014305115,
+        "readbackMs": 8.5,
+        "totalMs": 45.09999990463257
+      }
+    },
+    {
+      "kind": "compensated-direct",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 2,
+        "n": 16
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 1.1799372243159745e-15,
+        "maximumBudgetFraction": 0.00010532415569954025,
+        "absolute": 1e-11,
+        "relative": 1e-08
+      },
+      "gpu": {
+        "dim": 2,
+        "n": 16,
+        "modeCount": 4,
+        "cells": 256,
+        "chunks": 8,
+        "batches": 1,
+        "cellBytes": 32768,
+        "partialBytes": 1024,
+        "resultBytes": 128,
+        "estimatedBytes": 50616,
+        "maxModeL1": 4,
+        "maxDisplacement": 0.022867862163885366,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "543f0f065966250675fe8bad5a79b66e4a152ebd9d708d1f7f4cf5e1222cd54f",
+        "reductionShaderHash": "2c39d9945f3bcb563ad7f5ce698b7231f4a87ea7b0f59a86e702926f745ac306"
+      },
+      "timings": {
+        "compileMs": 4.3999998569488525,
+        "uploadMs": 0,
+        "kernelMs": 6.8999998569488525,
+        "readbackMs": 0.5,
+        "totalMs": 12.599999904632568
+      }
+    },
+    {
+      "kind": "finite-difference",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 2,
+        "n": 16
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 4.8182811906993805e-14,
+        "maximumBudgetFraction": 1.1233925554609177e-06,
+        "absolute": 1e-09,
+        "relative": 1e-05
+      },
+      "h": 0.0001,
+      "diagnostics": {
+        "dim": 2,
+        "n": 16,
+        "modeCount": 4,
+        "cells": 256,
+        "endpointIntegrals": 1024,
+        "endpointDeltaQuadrature": "3-point Gauss-Legendre, exact continuous directional derivative along retained endpoints",
+        "maxComponentGap": 4.662263724530824e-06,
+        "maxHalfAngle": 5.8587733864336894e-05,
+        "halfAngleLimit": 0.005,
+        "h": 0.0001,
+        "estimatedBytes": 67648,
+        "inputBytes": 16448,
+        "perCellEndpointBytes": 49152,
+        "batches": 1,
+        "partialChunks": 8,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "bb9f714005d068a5c57636a0edda1e8967461814ab5a0a580c6e7734138699ca",
+        "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9",
+        "provenance": {
+          "method": "centered finite difference of continuous P0 simplex Fourier-mode power using retained high/low endpoint displacement expansions; stable endpoint amplitude delta from three-point Gauss integration of the exact continuous directional derivative along the two endpoints",
+          "arithmetic": "double-single f32 expansions with explicit runtime rounding barriers and Dekker product residuals; sin through degree 17, cos through degree 18",
+          "dividedDifferences": "fixed compare-swap sorting network; local Taylor series for angular spans <= 3 radians (40 normalized terms; conservative factorial-tail bound below 1e-17); Newton recursion otherwise",
+          "reduction": "per-cell plus/minus/delta endpoint values written to one interleaved storage buffer; one invocation sequentially double-single reduces each 32-cell chunk, then one invocation per mode sequentially reduces chunk partials",
+          "step": 0.0001,
+          "source": "core/src/observables.rs::sheet_mode and core/src/direct.rs::exp_divided_difference_with_scratch",
+          "shaderHash": "bb9f714005d068a5c57636a0edda1e8967461814ab5a0a580c6e7734138699ca",
+          "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9"
+        }
+      },
+      "timings": {
+        "compileMs": 4.099999904632568,
+        "uploadMs": 0,
+        "kernelMs": 15,
+        "readbackMs": 0.3000001907348633,
+        "totalMs": 20.100000143051147
+      }
+    },
+    {
+      "kind": "compensated-direct",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 16
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 2.9733160378242474e-15,
+        "maximumBudgetFraction": 6.815273008105779e-05,
+        "absolute": 1e-11,
+        "relative": 1e-08
+      },
+      "gpu": {
+        "dim": 3,
+        "n": 16,
+        "modeCount": 4,
+        "cells": 4096,
+        "chunks": 128,
+        "batches": 1,
+        "cellBytes": 524288,
+        "partialBytes": 16384,
+        "resultBytes": 128,
+        "estimatedBytes": 803256,
+        "maxModeL1": 4,
+        "maxDisplacement": 0.02529065350096249,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "1d45f23f9a7959b13672d98a8ef6021d15e8d040b02c2aeefc96cf4666a75cc3",
+        "reductionShaderHash": "2c39d9945f3bcb563ad7f5ce698b7231f4a87ea7b0f59a86e702926f745ac306"
+      },
+      "timings": {
+        "compileMs": 4.1000001430511475,
+        "uploadMs": 0.09999990463256836,
+        "kernelMs": 13.900000095367432,
+        "readbackMs": 1,
+        "totalMs": 20.699999809265137
+      }
+    },
+    {
+      "kind": "finite-difference",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 16,
+        "forceMesh": 16,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 7,
+        "ic": "waves",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 16
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 3.0330512407195087e-13,
+        "maximumBudgetFraction": 8.03297875720096e-06,
+        "absolute": 1e-09,
+        "relative": 1e-05
+      },
+      "h": 0.0001,
+      "diagnostics": {
+        "dim": 3,
+        "n": 16,
+        "modeCount": 4,
+        "cells": 4096,
+        "endpointIntegrals": 49152,
+        "endpointDeltaQuadrature": "3-point Gauss-Legendre, exact continuous directional derivative along retained endpoints",
+        "maxComponentGap": 5.246509526712906e-06,
+        "maxHalfAngle": 6.59295831444405e-05,
+        "halfAngleLimit": 0.005,
+        "h": 0.0001,
+        "estimatedBytes": 1073728,
+        "inputBytes": 262208,
+        "perCellEndpointBytes": 786432,
+        "batches": 1,
+        "partialChunks": 128,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "4f356d1f91fa4c45aa79535a961b9cbd6e94f52fe44a3e2aedfaf9ecccece766",
+        "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9",
+        "provenance": {
+          "method": "centered finite difference of continuous P0 simplex Fourier-mode power using retained high/low endpoint displacement expansions; stable endpoint amplitude delta from three-point Gauss integration of the exact continuous directional derivative along the two endpoints",
+          "arithmetic": "double-single f32 expansions with explicit runtime rounding barriers and Dekker product residuals; sin through degree 17, cos through degree 18",
+          "dividedDifferences": "fixed compare-swap sorting network; local Taylor series for angular spans <= 3 radians (40 normalized terms; conservative factorial-tail bound below 1e-17); Newton recursion otherwise",
+          "reduction": "per-cell plus/minus/delta endpoint values written to one interleaved storage buffer; one invocation sequentially double-single reduces each 32-cell chunk, then one invocation per mode sequentially reduces chunk partials",
+          "step": 0.0001,
+          "source": "core/src/observables.rs::sheet_mode and core/src/direct.rs::exp_divided_difference_with_scratch",
+          "shaderHash": "4f356d1f91fa4c45aa79535a961b9cbd6e94f52fe44a3e2aedfaf9ecccece766",
+          "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9"
+        }
+      },
+      "timings": {
+        "compileMs": 6.099999904632568,
+        "uploadMs": 0.10000014305114746,
+        "kernelMs": 38.09999990463257,
+        "readbackMs": 0.2999999523162842,
+        "totalMs": 46.700000047683716
+      }
+    },
+    {
+      "kind": "compensated-direct",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 32,
+        "forceMesh": 32,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 2650,
+        "ic": "gaussian",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 32
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 3.844831625385986e-15,
+        "maximumBudgetFraction": 0.000369133582539183,
+        "absolute": 1e-11,
+        "relative": 1e-08
+      },
+      "gpu": {
+        "dim": 3,
+        "n": 32,
+        "modeCount": 6,
+        "cells": 32768,
+        "chunks": 1024,
+        "batches": 4,
+        "cellBytes": 6291456,
+        "partialBytes": 196608,
+        "resultBytes": 192,
+        "estimatedBytes": 8585816,
+        "maxModeL1": 6,
+        "maxDisplacement": 0.010109289041298375,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "1d45f23f9a7959b13672d98a8ef6021d15e8d040b02c2aeefc96cf4666a75cc3",
+        "reductionShaderHash": "2c39d9945f3bcb563ad7f5ce698b7231f4a87ea7b0f59a86e702926f745ac306"
+      },
+      "timings": {
+        "compileMs": 0,
+        "uploadMs": 0.7000000476837158,
+        "kernelMs": 41.09999990463257,
+        "readbackMs": 0.7000000476837158,
+        "totalMs": 45.299999952316284
+      }
+    },
+    {
+      "kind": "finite-difference",
+      "request": {
+        "epoch": "scaleFactor",
+        "fraction": 0.35,
+        "steps": 32,
+        "mesh": 32,
+        "forceMesh": 32,
+        "omegaB": 0.049,
+        "h": 0.674,
+        "ns": 0.965,
+        "sigma8": 0.811,
+        "boxSize": 300,
+        "initialSmoothing": 14,
+        "initialCutoff": 3,
+        "seed": 2650,
+        "ic": "gaussian",
+        "smoothing": 0.03,
+        "order": 4,
+        "omegaM": 0.315,
+        "scaleFactor": 0.25,
+        "dim": 3,
+        "n": 32
+      },
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 6.246798868111969e-14,
+        "maximumBudgetFraction": 3.807373339492888e-05,
+        "absolute": 1e-09,
+        "relative": 1e-05
+      },
+      "h": 0.0001,
+      "diagnostics": {
+        "dim": 3,
+        "n": 32,
+        "modeCount": 6,
+        "cells": 32768,
+        "endpointIntegrals": 393216,
+        "endpointDeltaQuadrature": "3-point Gauss-Legendre, exact continuous directional derivative along retained endpoints",
+        "maxComponentGap": 2.003105827985685e-06,
+        "maxHalfAngle": 3.7757655321376365e-05,
+        "halfAngleLimit": 0.005,
+        "h": 0.0001,
+        "estimatedBytes": 11830048,
+        "inputBytes": 2097248,
+        "perCellEndpointBytes": 9437184,
+        "batches": 4,
+        "partialChunks": 1024,
+        "flags": 0,
+        "invalidCount": 0,
+        "shaderHash": "4f356d1f91fa4c45aa79535a961b9cbd6e94f52fe44a3e2aedfaf9ecccece766",
+        "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9",
+        "provenance": {
+          "method": "centered finite difference of continuous P0 simplex Fourier-mode power using retained high/low endpoint displacement expansions; stable endpoint amplitude delta from three-point Gauss integration of the exact continuous directional derivative along the two endpoints",
+          "arithmetic": "double-single f32 expansions with explicit runtime rounding barriers and Dekker product residuals; sin through degree 17, cos through degree 18",
+          "dividedDifferences": "fixed compare-swap sorting network; local Taylor series for angular spans <= 3 radians (40 normalized terms; conservative factorial-tail bound below 1e-17); Newton recursion otherwise",
+          "reduction": "per-cell plus/minus/delta endpoint values written to one interleaved storage buffer; one invocation sequentially double-single reduces each 32-cell chunk, then one invocation per mode sequentially reduces chunk partials",
+          "step": 0.0001,
+          "source": "core/src/observables.rs::sheet_mode and core/src/direct.rs::exp_divided_difference_with_scratch",
+          "shaderHash": "4f356d1f91fa4c45aa79535a961b9cbd6e94f52fe44a3e2aedfaf9ecccece766",
+          "reductionShaderHash": "9cfe87c39979cea9d2ba81320c82eaada081198048c383769a90cfc8f5278ab9"
+        }
+      },
+      "timings": {
+        "compileMs": 0,
+        "uploadMs": 0.5,
+        "kernelMs": 151.70000004768372,
+        "readbackMs": 0.6999998092651367,
+        "totalMs": 155
+      }
+    },
+    {
+      "kind": "deposit",
+      "dim": 2,
+      "n": 4,
+      "meshN": 8,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 7.152557373046875e-07,
+        "maximumBudgetFraction": 0.00598131759374863,
+        "absolute": 2e-05,
+        "relative": 0.0001
+      },
+      "massError": 1.7695128917694092e-08,
+      "densityMean": 0.9999999823048711,
+      "diagnostics": {
+        "dim": 2,
+        "n": 4,
+        "meshN": 8,
+        "simplexCount": 32,
+        "totalRecords": 242,
+        "estimatedBytes": 3568,
+        "bufferBytes": {
+          "positions": 256,
+          "descriptors": 512,
+          "heads": 256,
+          "records": 1936,
+          "density": 256,
+          "diagnostics": 16,
+          "readback": 272,
+          "batchUniforms": 32,
+          "gatherUniform": 32
+        },
+        "degenerateSimplices": 0,
+        "illConditionedSimplices": 0,
+        "flags": 0,
+        "batches": 1,
+        "accumulation": "positive f32 mass records, one Kahan-compensated f32 owner per cell",
+        "shaderHash": "9d359c23f4d14045c243d9956d420cb4dc5eb9aa719ddd2cc947046907af5daa",
+        "provenance": {
+          "method": "P0 positive-mass geometric clipping; one cell owner with compensated f32 sum",
+          "arithmetic": "WGSL f32 geometry in cell-local coordinates; f32 mass accumulation; f32 density output",
+          "upstream": "hopf-cole-cosmology@3a3a13b9ba817c5b4f8f9f26314715845e13d4ad (exact2d.js + exact3d.js clipper from 5ae0550eaea89c85781de8cebb78462cb50aca6c)",
+          "upstreamSha256": {
+            "exact2d": "a66431508af962f0aa428f12ff13cc0312e9999312eefb28122ffd7cd0781a40",
+            "exact3d": "22fdfab5a7ad21fc108c7145bad9dfb03c109c42457b79da399fbefcd320cbb4"
+          },
+          "accumulation": "atomic linked contribution lists, then one Kahan-compensated f32 owner per output cell",
+          "shaderHash": "9d359c23f4d14045c243d9956d420cb4dc5eb9aa719ddd2cc947046907af5daa"
+        }
+      },
+      "timings": {
+        "preflightMs": 0.39999985694885254,
+        "compileMs": 2.700000047683716,
+        "uploadMs": 0.10000014305114746,
+        "kernelMs": 2.0999999046325684,
+        "readbackMs": 1.7999999523162842,
+        "totalMs": 7.199999809265137
+      }
+    },
+    {
+      "kind": "deposit",
+      "dim": 3,
+      "n": 4,
+      "meshN": 8,
+      "comparison": {
+        "pass": true,
+        "failedComponents": 0,
+        "nonfinite": 0,
+        "maximumAbsolute": 4.76837158203125e-07,
+        "maximumBudgetFraction": 0.003950070867233911,
+        "absolute": 2e-05,
+        "relative": 0.0001
+      },
+      "massError": 7.82310962677002e-08,
+      "densityMean": 1.0000000782310963,
+      "diagnostics": {
+        "dim": 3,
+        "n": 4,
+        "meshN": 8,
+        "simplexCount": 384,
+        "totalRecords": 7986,
+        "estimatedBytes": 77296,
+        "bufferBytes": {
+          "positions": 1024,
+          "descriptors": 6144,
+          "heads": 2048,
+          "records": 63888,
+          "density": 2048,
+          "diagnostics": 16,
+          "readback": 2064,
+          "batchUniforms": 32,
+          "gatherUniform": 32
+        },
+        "degenerateSimplices": 0,
+        "illConditionedSimplices": 0,
+        "flags": 0,
+        "batches": 1,
+        "accumulation": "positive f32 mass records, one Kahan-compensated f32 owner per cell",
+        "shaderHash": "531a912fb782b105297bddb14f006af2339efb343ebb801e25c9ad34044c89ad",
+        "provenance": {
+          "method": "P0 positive-mass geometric clipping; one cell owner with compensated f32 sum",
+          "arithmetic": "WGSL f32 geometry in cell-local coordinates; f32 mass accumulation; f32 density output",
+          "upstream": "hopf-cole-cosmology@3a3a13b9ba817c5b4f8f9f26314715845e13d4ad (exact2d.js + exact3d.js clipper from 5ae0550eaea89c85781de8cebb78462cb50aca6c)",
+          "upstreamSha256": {
+            "exact2d": "a66431508af962f0aa428f12ff13cc0312e9999312eefb28122ffd7cd0781a40",
+            "exact3d": "22fdfab5a7ad21fc108c7145bad9dfb03c109c42457b79da399fbefcd320cbb4"
+          },
+          "accumulation": "atomic linked contribution lists, then one Kahan-compensated f32 owner per output cell",
+          "shaderHash": "531a912fb782b105297bddb14f006af2339efb343ebb801e25c9ad34044c89ad"
+        }
+      },
+      "timings": {
+        "preflightMs": 2.0999999046325684,
+        "compileMs": 3.5,
+        "uploadMs": 0,
+        "kernelMs": 8.799999952316284,
+        "readbackMs": 1.7999999523162842,
+        "totalMs": 16.299999952316284
+      }
+    }
+  ],
+  "benchmarkComparisonRows": [
+    {
+      "label": "32\u00b3 paired GPU benchmark 1 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000002582965,
+          "pmMean": 0.9999999998981366,
+          "rhoMassError": 2.582964953035116e-10,
+          "pmMassError": 1.0186340659856796e-10,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.761025459931458e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.000000058555088,
+          "pmMean": 1.0000000574291334,
+          "rhoMassError": 5.8555087889544666e-08,
+          "pmMassError": 5.742913344874978e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5179797744352755e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 3.5762786865234375e-07,
+          "maximumBudgetFraction": 0.00275226539882399,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 9.5367431640625e-07,
+          "maximumBudgetFraction": 0.0003170737032387629,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.027259556911303662,
+          "maximumBudgetFraction": 0.0020798328158186845,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 0.00012053440175918695,
+          "maximumBudgetFraction": 5.239311369268809e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    },
+    {
+      "label": "32\u00b3 paired GPU benchmark 2 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000002582965,
+          "pmMean": 0.9999999999727152,
+          "rhoMassError": 2.582964953035116e-10,
+          "pmMassError": 2.7284841053187847e-11,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.761025459931458e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.000000058349542,
+          "pmMean": 1.0000000576019374,
+          "rhoMassError": 5.8349542086943984e-08,
+          "pmMassError": 5.760193744208664e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5179797744352755e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 3.5762786865234375e-07,
+          "maximumBudgetFraction": 0.00275226539882399,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 4.76837158203125e-07,
+          "maximumBudgetFraction": 0.00018996413762027936,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.027259556911303662,
+          "maximumBudgetFraction": 0.0009350450271765099,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 2.94313410478253e-05,
+          "maximumBudgetFraction": 3.2770882072419175e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    },
+    {
+      "label": "32\u00b3 paired GPU benchmark 3 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000002582965,
+          "pmMean": 0.9999999998781277,
+          "rhoMassError": 2.582964953035116e-10,
+          "pmMassError": 1.2187229003757238e-10,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.761025459931458e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000584077497,
+          "pmMean": 1.000000057005309,
+          "rhoMassError": 5.840774974785745e-08,
+          "pmMassError": 5.7005308917723596e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5179797744352755e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 3.5762786865234375e-07,
+          "maximumBudgetFraction": 0.00275226539882399,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 7.152557373046875e-07,
+          "maximumBudgetFraction": 0.00022943485529964308,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.027259556911303662,
+          "maximumBudgetFraction": 0.0019271356680565777,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 2.3705030969267682e-05,
+          "maximumBudgetFraction": 3.2192950662801185e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    },
+    {
+      "label": "64\u00b3 paired GPU benchmark 1 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 0.9999999999768079,
+          "pmMean": 0.9999999999881766,
+          "rhoMassError": 2.319211489520967e-11,
+          "pmMassError": 1.1823431123048067e-11,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5441415885940972e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000589120646,
+          "pmMean": 1.0000000587378963,
+          "rhoMassError": 5.891206455999054e-08,
+          "pmMassError": 5.8737896324601024e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.6720762718745018e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 2.384185791015625e-07,
+          "maximumBudgetFraction": 0.0019851162731236516,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 5.960464477539062e-07,
+          "maximumBudgetFraction": 0.00023456474822101402,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.014454447009484284,
+          "maximumBudgetFraction": 0.002281235210894764,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 8.630288242272854e-05,
+          "maximumBudgetFraction": 6.483984657090243e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    },
+    {
+      "label": "64\u00b3 paired GPU benchmark 2 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 0.9999999999768079,
+          "pmMean": 1.0000000000757154,
+          "rhoMassError": 2.319211489520967e-11,
+          "pmMassError": 7.571543392259628e-11,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5441415885940972e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.0000000589272986,
+          "pmMean": 1.0000000589066076,
+          "rhoMassError": 5.892729859624524e-08,
+          "pmMassError": 5.89066075917799e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.6720762718745018e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 2.384185791015625e-07,
+          "maximumBudgetFraction": 0.0019851162731236516,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 4.76837158203125e-07,
+          "maximumBudgetFraction": 0.0001816185829954698,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.014454447009484284,
+          "maximumBudgetFraction": 0.002281235210894764,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 8.288715935123037e-05,
+          "maximumBudgetFraction": 6.22735936708691e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    },
+    {
+      "label": "64\u00b3 paired GPU benchmark 3 preserves mass, derivative gate, backend, and field budgets",
+      "pass": true,
+      "baselineQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 0.9999999999768079,
+          "pmMean": 1.0000000000477485,
+          "rhoMassError": 2.319211489520967e-11,
+          "pmMassError": 4.774847184307873e-11,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.5441415885940972e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "cpu",
+          "deposit": "cpu",
+          "depositProvenance": "cpu-exact",
+          "analyticRecovery": "cpu"
+        },
+        "executedBackend": "hybrid"
+      },
+      "optimizedQuality": {
+        "pass": true,
+        "mass": {
+          "pass": true,
+          "rhoMean": 1.000000058903879,
+          "pmMean": 1.0000000587128852,
+          "rhoMassError": 5.8903879107674584e-08,
+          "pmMassError": 5.871288522030227e-08,
+          "tolerance": 1e-06
+        },
+        "derivativeGate": {
+          "pass": true,
+          "maximum": 3.6720762718745018e-06,
+          "count": 6,
+          "tolerance": 1e-05
+        },
+        "backends": {
+          "pass": true,
+          "lpt": "gpu",
+          "deposit": "gpu",
+          "depositProvenance": "gpu-f32-geometry-overlap",
+          "analyticRecovery": "gpu"
+        },
+        "executedBackend": "gpu"
+      },
+      "comparison": {
+        "pass": true,
+        "density": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 2.384185791015625e-07,
+          "maximumBudgetFraction": 0.0019851162731236516,
+          "absolute": 2e-05,
+          "relative": 0.0001
+        },
+        "pmDensity": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "maximumAbsolute": 5.960464477539062e-07,
+          "maximumBudgetFraction": 0.00019332573073453028,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "spectra": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 48,
+          "maximumAbsolute": 0.025977234123274684,
+          "maximumBudgetFraction": 0.002281235210894764,
+          "absolute": 0.0005,
+          "relative": 0.002
+        },
+        "pdf": {
+          "pass": true,
+          "failedComponents": 0,
+          "nonfinite": 0,
+          "numericComponents": 373,
+          "maximumAbsolute": 0.00011619533020734707,
+          "maximumBudgetFraction": 8.729821375166596e-05,
+          "absolute": 0.002,
+          "relative": 0.02
+        },
+        "budgets": {
+          "rho": {
+            "absolute": 2e-05,
+            "relative": 0.0001
+          },
+          "pmRho": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "spectra": {
+            "absolute": 0.0005,
+            "relative": 0.002
+          },
+          "pdf": {
+            "absolute": 0.002,
+            "relative": 0.02
+          }
+        }
+      }
+    }
+  ],
+  "checks": {
+    "optimizationRows": 46,
+    "independent": {
+      "status": "pass",
+      "rows": 25418,
+      "suites": [
+        {
+          "name": "compensated observer",
+          "status": "pass",
+          "rows": 36,
+          "budget": {
+            "absolute": 2e-08,
+            "relative": 2e-07
+          },
+          "durationMs": 164.20000004768372,
+          "maximumAbsolute": 1.0103029524088925e-13
+        },
+        {
+          "name": "finite-difference endpoint path",
+          "status": "pass",
+          "rows": 23,
+          "budget": {
+            "weakScaledRelative": 1e-05,
+            "aim": 1e-06,
+            "weakModeDenominatorFloor": 1e-09
+          },
+          "durationMs": 91.89999985694885,
+          "maximumAbsolute": 5.329070518200751e-15
+        },
+        {
+          "name": "raw nLPT",
+          "status": "pass",
+          "rows": 25346,
+          "budget": {
+            "absolute": 2e-06,
+            "relative": 0.0002
+          },
+          "durationMs": 16.200000047683716,
+          "maximumAbsolute": 1.1920928955078125e-07
+        },
+        {
+          "name": "exact deposit",
+          "status": "pass",
+          "rows": 13,
+          "budget": {
+            "uniformAbsolute": 3e-05,
+            "foldedAbsolute": 5e-05,
+            "foldedRelative": 0.0005
+          },
+          "durationMs": 122.39999985694885,
+          "maximumAbsolute": 0
+        }
+      ]
+    },
+    "finiteDifference": {
+      "status": "pass",
+      "rows": 47
+    },
+    "frozenFiniteDifference": {
+      "status": "pass",
+      "repeats": 40,
+      "componentBudget": {
+        "absolute": 1e-12
+      }
+    },
+    "residentPm": {
+      "status": "pass",
+      "rows": 131
+    },
+    "observer": {
+      "status": "pass",
+      "kernelRows": 34,
+      "workerRows": 47
+    }
+  },
+  "completeArchive": {
+    "path": "webgpu-optimization-results-full.json.gz",
+    "sha256": "640cf2eccab4a634c729a5f58dd72f01f5665eb6bfbd17ca636a2edc20922305",
+    "uncompressedSha256": "6603c9f803403f08040923cea954e67acf1dcbe38dadb4fa3be52d76cf403d37",
+    "uncompressedBytes": 14566034
+  },
+  "commands": {
+    "self": "node scripts/test_gpu.mjs --require-gpu --optimization-self",
+    "complete": "node scripts/test_gpu.mjs --require-gpu --optimization-benchmark",
+    "fd": "node scripts/test_gpu.mjs --require-gpu --fd",
+    "repeat": "node scripts/test_gpu.mjs --require-gpu --fd-repeat",
+    "resident": "node scripts/test_gpu.mjs --require-gpu --resident",
+    "observer": "node scripts/test_gpu.mjs --require-gpu --full"
+  }
+}

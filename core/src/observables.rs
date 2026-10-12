@@ -248,20 +248,25 @@ pub fn sheet_mode_jvp(
 ) -> (Complex64, Complex64) {
     let mut value = Complex64::new(0., 0.);
     let mut tangent = Complex64::new(0., 0.);
+    let mut x = [[0.0; 3]; 4];
+    let mut dx = [[0.0; 3]; 4];
+    let mut workspace = crate::tangent::SimplexJvpWorkspace::new();
     for_each_simplex(grid, |verts, mass| {
-        let mut x = Vec::new();
-        let mut dx = Vec::new();
-        for &(id, lift) in verts {
-            let mut p = [0.; 3];
-            let mut dp = [0.; 3];
+        for (i, &(id, lift)) in verts.iter().enumerate() {
             for a in 0..grid.dim {
-                p[a] = pos[id * grid.dim + a] + lift[a];
-                dp[a] = dpos[id * grid.dim + a];
+                x[i][a] = pos[id * grid.dim + a] + lift[a];
+                dx[i][a] = dpos[id * grid.dim + a];
             }
-            x.push(p);
-            dx.push(dp);
         }
-        let (v, t) = crate::tangent::simplex_mass_transform_jvp(&x, &dx, grid.dim, k, mass);
+        let count = verts.len();
+        let (v, t) = crate::tangent::simplex_mass_transform_jvp_with_scratch(
+            &x[..count],
+            &dx[..count],
+            grid.dim,
+            k,
+            mass,
+            &mut workspace,
+        );
         value += v;
         tangent += t;
     });

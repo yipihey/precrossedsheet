@@ -31,7 +31,13 @@ export async function createGpuContext(options = {}) {
       ]);
     } finally { clearTimeout(timer); }
     if (!adapter) throw new Error('WebGPU returned no adapter');
-    const requested = options.requiredLimits ?? {};
+    // Request only adapter-supported buffer limits. The 64³ raw nLPT payload
+    // exceeds the portable 128 MiB storage-binding default; each stage still
+    // enforces its own complete 512 MiB allocation budget.
+    const supportedBufferLimits = Object.fromEntries(['maxStorageBufferBindingSize','maxBufferSize']
+      .filter(name => Number.isFinite(adapter.limits?.[name]))
+      .map(name => [name, Math.min(adapter.limits[name], 512 * 1024 * 1024)]));
+    const requested = { ...supportedBufferLimits, ...(options.requiredLimits ?? {}) };
     for (const [name, value] of Object.entries(requested)) {
       if ((adapter.limits?.[name] ?? 0) < value) throw new Error(`adapter limit ${name} is below required value ${value}`);
     }

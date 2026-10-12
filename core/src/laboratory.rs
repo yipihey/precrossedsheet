@@ -12,7 +12,10 @@ use crate::{
 use num_complex::Complex64;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::OnceLock;
+use std::{
+    ops::Deref,
+    sync::{Arc, OnceLock},
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -83,7 +86,7 @@ impl LabRequest {
         size.saturating_mul(2400)
             .saturating_add(mesh.saturating_mul(250))
     }
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         const GRIDS: &[usize] = &[16, 24, 32, 48, 64, 96, 128, 256, 512, 1024];
         if !(1..=3).contains(&self.dim)
             || !GRIDS.contains(&self.n)
@@ -148,8 +151,10 @@ impl LabRequest {
         Ok(())
     }
 }
-/// Construct the same Fourier realization at every supported refinement.
-pub fn initial_conditions(r: &LabRequest) -> Cosmo {
+/// Construct the same Fourier realization at every supported refinement,
+/// without building the CPU LPT expansion. This is the shared seed used by
+/// native sessions and by the optional GPU LPT initializer.
+pub fn initial_cosmo(r: &LabRequest) -> Cosmo {
     let mut c = Cosmo::new(r.dim, r.n, 1.0);
     c.keep_tensors = Some(true);
     c.set_cosmology(r.omega_m);
@@ -195,6 +200,12 @@ pub fn initial_conditions(r: &LabRequest) -> Cosmo {
             .sqrt()
             / c.grid.size as f64;
     }
+    c
+}
+
+/// Compatibility constructor for callers that need the CPU 4LPT fields.
+pub fn initial_conditions(r: &LabRequest) -> Cosmo {
+    let mut c = initial_cosmo(r);
     c.build_lpt(4);
     c
 }
@@ -265,6 +276,9 @@ pub struct PreparedLabRun {
     xminus: Vec<f64>,
     pmx: Vec<f64>,
     pmdpos: Vec<f64>,
+    lpt_displacement_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
+    lpt_direction_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
+    cache_status: Value,
     fd_channels: OnceLock<Vec<f64>>,
     fd_plus_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
     fd_minus_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
@@ -275,7 +289,18 @@ pub struct PreparedLabRun {
 /// can finish this exact run without rebuilding the realization or LPT fields.
 pub struct PendingLabRun {
     request: LabRequest,
-    c: Cosmo,
+    c: Arc<Cosmo>,
+    initial_source: String,
+    geometry: Arc<PendingGeometry>,
+    pm_reference_cache: OnceLock<Result<Arc<PmRun>, String>>,
+    pm_reference_quantized_cache: OnceLock<Result<Arc<PmRun>, String>>,
+    pm_reference_displacement_quantized_cache: OnceLock<Result<Arc<PmRun>, String>>,
+    cache_status: Value,
+}
+
+/// Request-specific, expensive geometry and PM seed. Sharing this Arc allows
+/// observation-only requests to update their manifest without copying fields.
+pub struct PendingGeometry {
     a: f64,
     a_start: f64,
     d: f64,
@@ -294,9 +319,851 @@ pub struct PendingLabRun {
     pm_initial_quantized_min_jacobian: f64,
     pm_initial_displacement_quantized_min_jacobian: f64,
     pm_clocks: Vec<f64>,
-    pm_reference_cache: OnceLock<Result<PmRun, String>>,
-    pm_reference_quantized_cache: OnceLock<Result<PmRun, String>>,
-    pm_reference_displacement_quantized_cache: OnceLock<Result<PmRun, String>>,
+}
+
+impl Deref for PendingLabRun {
+    type Target = PendingGeometry;
+    fn deref(&self) -> &Self::Target {
+        &self.geometry
+    }
+}
+
+/// A deliberately small cache for interactive laboratory sessions. Each tier
+/// retains one complete entry, so memory use is bounded and replacement is
+/// predictable. Failed calculations are never inserted.
+pub struct LabSession {
+    initial: Option<(String, String, Arc<Cosmo>, usize)>,
+    pending: Option<(String, Arc<PendingGeometry>, usize)>,
+    pm: Option<(String, String, Arc<PmRun>, usize)>,
+    observations: Option<(String, Arc<RawObservations>, usize)>,
+    last_status: Value,
+}
+
+impl Default for LabSession {
+    fn default() -> Self {
+        Self {
+            initial: None,
+            pending: None,
+            pm: None,
+            observations: None,
+            last_status: json!({"initial":{"status":"empty"},"pm":{"status":"empty"},"bytes":0}),
+        }
+    }
+}
+
+const SESSION_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+
+struct RawObservations {
+    rho: Vec<f32>,
+    pmrho: Vec<f32>,
+    cic: Vec<f32>,
+    ps: spectra::Spectrum,
+    psc: spectra::Spectrum,
+    psp: spectra::Spectrum,
+    deposit_source: String,
+}
+
+impl RawObservations {
+    fn estimated_bytes(&self) -> usize {
+        (self.rho.len() + self.pmrho.len() + self.cic.len()) * std::mem::size_of::<f32>()
+            + (self.ps.p.len() + self.psc.p.len() + self.psp.p.len())
+                * std::mem::size_of::<f64>()
+                * 3
+            + self.deposit_source.capacity()
+    }
+}
+
+fn raw_observations(pending: &PendingLabRun, pm: &PmRun) -> RawObservations {
+    let r = &pending.request;
+    let g = &pending.c.grid;
+    let rho = density(g, &pending.x, r.mesh);
+    let pmrho = density(g, &pm.state.x, r.mesh);
+    let eg = Grid::new(r.dim, r.mesh, 1.0);
+    let cic = sheet::cic_density(
+        r.dim,
+        &pending.x.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+        g.size,
+        1.0,
+        r.mesh,
+    );
+    let ps = power(&eg, &rho);
+    let psc = power(&eg, &cic);
+    let psp = power(&eg, &pmrho);
+    RawObservations {
+        rho,
+        pmrho,
+        cic,
+        ps,
+        psc,
+        psp,
+        deposit_source: "cpu-exact".into(),
+    }
+}
+
+fn validate_observed_density(r: &LabRequest, name: &str, values: &[f32]) -> Result<(), String> {
+    let expected = r
+        .mesh
+        .checked_pow(r.dim as u32)
+        .ok_or_else(|| "Observation mesh size overflow".to_string())?;
+    if values.len() != expected {
+        return Err(format!(
+            "{name} must contain {expected} unsmoothed density cells"
+        ));
+    }
+    if values.iter().any(|x| !x.is_finite() || *x < 0.0) {
+        return Err(format!(
+            "{name} must contain finite nonnegative mass densities"
+        ));
+    }
+    let mean = values.iter().map(|&x| x as f64).sum::<f64>() / expected as f64;
+    if !mean.is_finite() || (mean - 1.0).abs() > 1e-6 {
+        return Err(format!(
+            "{name} mass mean must be within 1e-6 of unity (got {mean:.9})"
+        ));
+    }
+    Ok(())
+}
+
+fn raw_observations_external(
+    pending: &PendingLabRun,
+    rho: &[f32],
+    pmrho: &[f32],
+    deposit_source: &str,
+) -> Result<RawObservations, String> {
+    validate_observed_density(&pending.request, "rho", rho)?;
+    validate_observed_density(&pending.request, "pmrho", pmrho)?;
+    if deposit_source.is_empty() {
+        return Err("External density provenance must be nonempty".into());
+    }
+    let r = &pending.request;
+    let g = &pending.c.grid;
+    let cic = sheet::cic_density(
+        r.dim,
+        &pending.x.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+        g.size,
+        1.0,
+        r.mesh,
+    );
+    let eg = Grid::new(r.dim, r.mesh, 1.0);
+    Ok(RawObservations {
+        rho: rho.to_vec(),
+        pmrho: pmrho.to_vec(),
+        cic: cic.clone(),
+        ps: power(&eg, rho),
+        psc: power(&eg, &cic),
+        psp: power(&eg, pmrho),
+        deposit_source: deposit_source.into(),
+    })
+}
+
+/// Compute the exact Rust reference deposit for an externally generated
+/// geometry. Positions are the packed f32 values crossing the JS boundary.
+pub fn exact_sheet_density(
+    dim: usize,
+    n: usize,
+    mesh: usize,
+    packed_positions: &[f32],
+) -> Result<Vec<f32>, String> {
+    if !(1..=3).contains(&dim) {
+        return Err("Density reference dimension must be 1, 2, or 3".into());
+    }
+    let cap = [0, 1024, 256, 128][dim];
+    if n < 2 || n > cap || mesh == 0 || mesh > cap {
+        return Err("Density reference grid exceeds the supported dimension limits".into());
+    }
+    let nv = n
+        .checked_pow(dim as u32)
+        .ok_or_else(|| "Density reference grid size overflow".to_string())?;
+    let expected = nv
+        .checked_mul(4)
+        .ok_or_else(|| "Density reference position size overflow".to_string())?;
+    if packed_positions.len() != expected {
+        return Err(format!(
+            "Packed density positions must contain {expected} f32 values"
+        ));
+    }
+    if packed_positions.iter().any(|v| !v.is_finite()) {
+        return Err("Packed density positions must be finite".into());
+    }
+    let mut positions = vec![0.0f64; nv * dim];
+    for i in 0..nv {
+        for a in 0..dim {
+            positions[i * dim + a] = packed_positions[4 * i + a] as f64;
+        }
+    }
+    Ok(density(&Grid::new(dim, n, 1.0), &positions, mesh))
+}
+
+fn initial_cache_key(r: &LabRequest, source: &str) -> String {
+    json!({"dim":r.dim,"n":r.n,"ic":r.ic,"seed":r.seed,
+        "omegaM":r.omega_m.to_bits(),"omegaB":r.omega_b.to_bits(),"h":r.h.to_bits(),
+        "ns":r.ns.to_bits(),"sigma8":r.sigma8.to_bits(),"boxSize":r.box_size.to_bits(),
+        "initialSmoothing":r.initial_smoothing.to_bits(),"initialCutoff":r.initial_cutoff,
+        "provenance":source})
+    .to_string()
+}
+
+fn pm_cache_key(pending: &PendingLabRun, arithmetic: &str) -> String {
+    json!({"initial":initial_cache_key(&pending.request, &pending.initial_source),"a":pending.a.to_bits(),
+        "steps":pending.request.steps,"forceMesh":pending.request.force_mesh,
+        "omegaM":pending.request.omega_m.to_bits(),"arithmetic":arithmetic,
+        "initialization":pending.initial_source})
+    .to_string()
+}
+
+fn pending_cache_key(r: &LabRequest, source: &str) -> String {
+    json!({"initial":initial_cache_key(r, source),"epoch":r.epoch,
+        "fraction":r.fraction.to_bits(),"scaleFactor":r.scale_factor.to_bits(),
+        "order":r.order,"steps":r.steps,"forceMesh":r.force_mesh,
+        "omegaM":r.omega_m.to_bits()})
+    .to_string()
+}
+
+fn observation_cache_key(
+    pending: &PendingLabRun,
+    arithmetic: &str,
+    deposit_source: &str,
+) -> String {
+    json!({"trajectory":pm_cache_key(pending, arithmetic),"order":pending.request.order,
+        "mesh":pending.request.mesh,"depositSource":deposit_source})
+    .to_string()
+}
+
+fn cosmo_cache_bytes(c: &Cosmo) -> usize {
+    let fft_plan_estimate = c
+        .grid
+        .n
+        .saturating_mul((usize::BITS - c.grid.n.leading_zeros()) as usize)
+        .saturating_mul(std::mem::size_of::<Complex64>())
+        .saturating_mul(2);
+    let mut bytes = c.delta0_hat.capacity() * std::mem::size_of::<Complex64>()
+        + c.phi0.capacity() * std::mem::size_of::<f64>()
+        + c.grid.n * std::mem::size_of::<Complex64>() // FFT scratch estimate
+        + fft_plan_estimate;
+    if let Some(lpt) = &c.lpt {
+        for term in &lpt.terms {
+            bytes += term.psi.iter().map(|v| v.capacity() * 4).sum::<usize>();
+            bytes += term
+                .m
+                .as_ref()
+                .map_or(0, |m| m.iter().map(|v| v.capacity() * 4).sum());
+            bytes += term.div.capacity() * 4;
+            bytes += term.curl.iter().map(|v| v.capacity() * 4).sum::<usize>();
+        }
+        bytes += match &lpt.growth {
+            crate::growth::Growth::Eds { coef, orders } => {
+                coef.capacity() * 8 + orders.capacity() * std::mem::size_of::<usize>()
+            }
+            crate::growth::Growth::Lcdm {
+                lna, g, gp, gpp, ..
+            } => {
+                lna.capacity() * 8
+                    + g.iter()
+                        .chain(gp)
+                        .chain(gpp)
+                        .map(|v| v.capacity() * 8)
+                        .sum::<usize>()
+            }
+        };
+    }
+    bytes
+}
+
+fn pending_geometry_bytes(g: &PendingGeometry) -> usize {
+    let vec = |v: &Vec<f64>| v.capacity() * std::mem::size_of::<f64>();
+    vec(&g.x)
+        + vec(&g.v)
+        + vec(&g.dpos)
+        + vec(&g.xplus)
+        + vec(&g.xminus)
+        + vec(&g.pm_initial.x)
+        + vec(&g.pm_initial.p)
+        + vec(&g.pm_initial_tangent.dx)
+        + vec(&g.pm_initial_tangent.dp)
+        + g.pm_clocks.capacity() * std::mem::size_of::<f64>()
+}
+
+fn pm_cache_bytes(r: &LabRequest) -> usize {
+    r.n.saturating_pow(r.dim as u32)
+        .saturating_mul(r.dim.saturating_mul(8).saturating_mul(4).saturating_add(64))
+}
+
+impl LabSession {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.initial = None;
+        self.pending = None;
+        self.pm = None;
+        self.observations = None;
+        self.last_status = json!({"initial":{"status":"cleared"},"pm":{"status":"cleared"},"observations":{"status":"cleared"},"bytes":0});
+    }
+
+    pub fn cache_status(&self) -> Value {
+        self.last_status.clone()
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.initial
+            .as_ref()
+            .map_or(0, |entry| entry.3)
+            .saturating_add(self.pending.as_ref().map_or(0, |entry| entry.2))
+            .saturating_add(self.pm.as_ref().map_or(0, |entry| entry.3))
+            .saturating_add(self.observations.as_ref().map_or(0, |entry| entry.2))
+    }
+
+    fn retained_bytes_without_pm(&self) -> usize {
+        self.initial
+            .as_ref()
+            .map_or(0, |entry| entry.3)
+            .saturating_add(self.pending.as_ref().map_or(0, |entry| entry.2))
+            .saturating_add(self.observations.as_ref().map_or(0, |entry| entry.2))
+    }
+
+    /// Evict a previous realization before a caller constructs an external
+    /// initial state. GPU seed builders should call this before allocating the
+    /// new Cosmo, then pass its Arc to `adopt_initial`.
+    pub fn prepare_initial_slot(&mut self, r: &LabRequest, source: &str) -> Result<bool, String> {
+        r.validate()?;
+        validate_initial_source(source)?;
+        let key = initial_cache_key(r, source);
+        let hit = self
+            .initial
+            .as_ref()
+            .is_some_and(|(old, old_source, _, _)| old == &key && old_source == source);
+        if !hit {
+            self.clear();
+            self.last_status = json!({"initial":{"status":"miss","reason":"slot cleared for new initialization","provenance":source},"pm":{"status":"empty"},"pending":{"status":"empty"},"observations":{"status":"empty"},"bytes":0,"limitBytes":SESSION_CACHE_LIMIT_BYTES});
+        }
+        Ok(hit)
+    }
+
+    pub fn prepare_pending(&mut self, r: &LabRequest) -> Result<PendingLabRun, String> {
+        self.prepare_pending_source(r, "cpu-f64")
+    }
+
+    pub fn prepare_pending_source(
+        &mut self,
+        r: &LabRequest,
+        source: &str,
+    ) -> Result<PendingLabRun, String> {
+        r.validate()?;
+        validate_initial_source(source)?;
+        let key = initial_cache_key(r, source);
+        let existing = self
+            .initial
+            .as_ref()
+            .and_then(|(cached_key, cached_source, c, bytes)| {
+                (cached_key == &key && cached_source == source).then(|| (Arc::clone(c), *bytes))
+            });
+        if let Some((c, bytes)) = existing {
+            return self.prepare_from_initial(
+                r,
+                c,
+                source,
+                json!({"status":"hit","bytes":bytes,"provenance":source}),
+                true,
+            );
+        }
+        if source == "gpu-f32" {
+            return Err("No adopted gpu-f32 initialization is cached for this request".into());
+        }
+        // Release the previous dataset before allocating another Cosmo.
+        self.clear();
+        let c = Arc::new(initial_conditions(r));
+        self.prepare_from_initial(r, c, source, json!({"status":"miss","reason":"initialization key changed or empty","provenance":source}), false)
+    }
+
+    pub fn adopt_initial(
+        &mut self,
+        r: &LabRequest,
+        c: Arc<Cosmo>,
+        source: &str,
+    ) -> Result<PendingLabRun, String> {
+        r.validate()?;
+        validate_initial_source(source)?;
+        if c.grid.dim != r.dim
+            || c.grid.n != r.n
+            || (c.cosmo.omega_m - r.omega_m).abs() > 1e-12
+            || c.lpt_ref().order < 4
+        {
+            return Err("Adopted initial state does not match the validated request or lacks order-four LPT fields".into());
+        }
+        let key = initial_cache_key(r, source);
+        let cached = self
+            .initial
+            .as_ref()
+            .and_then(|(old, old_source, cached, bytes)| {
+                (old == &key && old_source == source).then(|| (Arc::clone(cached), *bytes))
+            });
+        if let Some((cached, bytes)) = cached {
+            return self.prepare_from_initial(r, cached, source, json!({"status":"hit","bytes":bytes,"reason":"adopted initialization","provenance":source}), true);
+        }
+        self.clear();
+        self.prepare_from_initial(
+            r,
+            c,
+            source,
+            json!({"status":"miss","reason":"adopted initialization","provenance":source}),
+            false,
+        )
+    }
+
+    fn prepare_from_initial(
+        &mut self,
+        r: &LabRequest,
+        c: Arc<Cosmo>,
+        source: &str,
+        initial_status: Value,
+        initial_hit: bool,
+    ) -> Result<PendingLabRun, String> {
+        let initial_key = initial_cache_key(r, source);
+        let geometry_key = pending_cache_key(r, source);
+        let cosmo_bytes = cosmo_cache_bytes(&c);
+        let geometry_hit = self.pending.as_ref().and_then(|(key, geometry, bytes)| {
+            (key == &geometry_key).then(|| (Arc::clone(geometry), *bytes))
+        });
+        let mut pending = if let Some((geometry, bytes)) = geometry_hit {
+            pending_from_geometry(
+                r,
+                Arc::clone(&c),
+                source,
+                geometry,
+                json!({"initial":initial_status,"pending":{"status":"hit","bytes":bytes,"key":"epoch/order/steps/force"}}),
+            )
+        } else {
+            self.pending = None;
+            let computed = prepare_pending_from_initial_source(r, &c, source)?;
+            let geometry = Arc::clone(&computed.geometry);
+            let bytes = pending_geometry_bytes(&geometry);
+            let total = cosmo_bytes
+                .saturating_add(bytes)
+                .saturating_add(self.pm.as_ref().map_or(0, |entry| entry.3))
+                .saturating_add(self.observations.as_ref().map_or(0, |entry| entry.2));
+            if total <= SESSION_CACHE_LIMIT_BYTES {
+                self.pending = Some((geometry_key, geometry, bytes));
+            }
+            let mut computed = computed;
+            computed.cache_status["initial"] = initial_status;
+            computed.cache_status["pending"] = if total <= SESSION_CACHE_LIMIT_BYTES {
+                json!({"status":"miss","reason":"computed","bytes":bytes})
+            } else {
+                json!({"status":"skipped","reason":"session memory budget","bytes":bytes})
+            };
+            computed
+        };
+        if !initial_hit {
+            let total = cosmo_bytes
+                .saturating_add(self.pending.as_ref().map_or(0, |entry| entry.2))
+                .saturating_add(self.pm.as_ref().map_or(0, |entry| entry.3))
+                .saturating_add(self.observations.as_ref().map_or(0, |entry| entry.2));
+            if total <= SESSION_CACHE_LIMIT_BYTES {
+                self.initial = Some((initial_key, source.into(), Arc::clone(&c), cosmo_bytes));
+                pending.cache_status["initial"]["bytes"] = json!(cosmo_bytes);
+            } else {
+                pending.cache_status["initial"] = json!({"status":"skipped","reason":"session memory budget","bytes":cosmo_bytes,"provenance":source});
+            }
+        }
+        let total = self
+            .initial
+            .as_ref()
+            .map_or(0, |entry| entry.3)
+            .saturating_add(self.pending.as_ref().map_or(0, |entry| entry.2))
+            .saturating_add(self.pm.as_ref().map_or(0, |entry| entry.3))
+            .saturating_add(self.observations.as_ref().map_or(0, |entry| entry.2));
+        pending.cache_status["bytes"] = json!(total.min(SESSION_CACHE_LIMIT_BYTES));
+        pending.cache_status["limitBytes"] = json!(SESSION_CACHE_LIMIT_BYTES);
+        self.last_status = pending.cache_status.clone();
+        Ok(pending)
+    }
+
+    /// Return a prepared result when a completed PM trajectory matches the
+    /// current request and arithmetic. Smoothing and observation mesh remain
+    /// request-specific and are assembled from the retained trajectory.
+    pub fn try_cached(
+        &mut self,
+        r: &LabRequest,
+        arithmetic: &str,
+    ) -> Result<Option<PreparedLabRun>, String> {
+        self.try_cached_source(r, arithmetic, "cpu-f64")
+    }
+
+    pub fn try_cached_source(
+        &mut self,
+        r: &LabRequest,
+        arithmetic: &str,
+        initial_source: &str,
+    ) -> Result<Option<PreparedLabRun>, String> {
+        self.try_cached_observed_source(r, arithmetic, initial_source, "cpu-exact")
+    }
+
+    /// Reassemble a cached trajectory only when its unsmoothed deposit
+    /// provenance also matches. External deposits must already be retained;
+    /// this path never silently computes a CPU exact deposit for them.
+    pub fn try_cached_observed_source(
+        &mut self,
+        r: &LabRequest,
+        arithmetic: &str,
+        initial_source: &str,
+        deposit_source: &str,
+    ) -> Result<Option<PreparedLabRun>, String> {
+        if !["f64", "f32"].contains(&arithmetic) {
+            return Err("PM arithmetic must be f64 or f32".into());
+        }
+        if deposit_source.is_empty() {
+            return Err("Density deposit provenance must be nonempty".into());
+        }
+        r.validate()?;
+        validate_initial_source(initial_source)?;
+        if initial_source == "gpu-f32"
+            && !self.initial.as_ref().is_some_and(|(key, source, _, _)| {
+                key == &initial_cache_key(r, initial_source) && source == initial_source
+            })
+        {
+            self.last_status = json!({"initial":{"status":"miss","reason":"gpu-f32 initialization must be adopted before preparation","provenance":initial_source},"pm":{"status":"miss","reason":"initialization unavailable","arithmetic":arithmetic},"bytes":0,"limitBytes":SESSION_CACHE_LIMIT_BYTES});
+            return Ok(None);
+        }
+        let pending = self.prepare_pending_source(r, initial_source)?;
+        let key = pm_cache_key(&pending, arithmetic);
+        let cached = self
+            .pm
+            .as_ref()
+            .and_then(|(cached_key, cached_arithmetic, pm, bytes)| {
+                (cached_key == &key && cached_arithmetic == arithmetic)
+                    .then(|| (Arc::clone(pm), *bytes))
+            });
+        if let Some((pm, bytes)) = cached {
+            if deposit_source != "cpu-exact"
+                && !self
+                    .observations
+                    .as_ref()
+                    .is_some_and(|(cached_key, _, _)| {
+                        cached_key == &observation_cache_key(&pending, arithmetic, deposit_source)
+                    })
+            {
+                self.last_status = json!({"initial":{"status":"hit"},"pending":{"status":"hit"},"pm":{"status":"hit","arithmetic":arithmetic,"bytes":bytes},"observations":{"status":"miss","reason":"requested external deposit is not cached","depositSource":deposit_source},"bytes":self.retained_bytes().min(SESSION_CACHE_LIMIT_BYTES),"limitBytes":SESSION_CACHE_LIMIT_BYTES});
+                return Ok(None);
+            }
+            let mut hit = pending;
+            hit.cache_status["pm"] = json!({"status":"hit","arithmetic":arithmetic,"bytes":bytes});
+            self.last_status = hit.cache_status.clone();
+            return self
+                .assemble_cached(&mut hit, Arc::as_ref(&pm), arithmetic, deposit_source, None)
+                .map(Some);
+        }
+        let mut miss = pending;
+        miss.cache_status["pm"] =
+            json!({"status":"miss","reason":"trajectory key changed","arithmetic":arithmetic});
+        self.last_status = miss.cache_status.clone();
+        Ok(None)
+    }
+
+    /// Return the absolute PM positions for the pending trajectory when its
+    /// arithmetic-specific result is already retained. This lets callers
+    /// build a new observation-mesh deposit without rerunning PM evolution.
+    pub fn cached_pm_positions(
+        &self,
+        pending: &PendingLabRun,
+        arithmetic: &str,
+    ) -> Option<Vec<f32>> {
+        self.pm
+            .as_ref()
+            .and_then(|(key, cached_arithmetic, pm, _)| {
+                (cached_arithmetic == arithmetic && key == &pm_cache_key(pending, arithmetic))
+                    .then(|| packed_vec4(&pending.c.grid, &pm.state.x, false))
+            })
+    }
+
+    /// Finalize an already retained trajectory with CPU-exact observations.
+    /// This reuses the original PM result and never rematerializes its state.
+    pub fn finish_cached(
+        &mut self,
+        pending: &mut PendingLabRun,
+        arithmetic: &str,
+    ) -> Result<Option<PreparedLabRun>, String> {
+        let Some((cached_arithmetic, pm, bytes)) =
+            self.pm
+                .as_ref()
+                .and_then(|(key, cached_arithmetic, pm, bytes)| {
+                    (cached_arithmetic == arithmetic && key == &pm_cache_key(pending, arithmetic))
+                        .then(|| (cached_arithmetic.clone(), Arc::clone(pm), *bytes))
+                })
+        else {
+            return Ok(None);
+        };
+        pending.cache_status["pm"] =
+            json!({"status":"hit","arithmetic":cached_arithmetic,"bytes":bytes});
+        self.last_status = pending.cache_status.clone();
+        let mut prepared =
+            self.assemble_cached(pending, Arc::as_ref(&pm), arithmetic, "cpu-exact", None)?;
+        self.refresh_status(&mut prepared);
+        Ok(Some(prepared))
+    }
+
+    /// Finalize a retained trajectory using freshly supplied unsmoothed
+    /// densities. Supplied fields always replace matching-key raw observations.
+    pub fn finish_cached_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        arithmetic: &str,
+        rho: &[f32],
+        pmrho: &[f32],
+        deposit_source: &str,
+    ) -> Result<PreparedLabRun, String> {
+        if !["f64", "f32"].contains(&arithmetic) {
+            return Err("PM arithmetic must be f64 or f32".into());
+        }
+        if deposit_source.is_empty() {
+            return Err("Density deposit provenance must be nonempty".into());
+        }
+        validate_observed_density(&pending.request, "rho", rho)?;
+        validate_observed_density(&pending.request, "pmrho", pmrho)?;
+        let Some((pm, bytes)) = self
+            .pm
+            .as_ref()
+            .and_then(|(key, cached_arithmetic, pm, bytes)| {
+                (cached_arithmetic == arithmetic && key == &pm_cache_key(pending, arithmetic))
+                    .then(|| (Arc::clone(pm), *bytes))
+            })
+        else {
+            return Err("No matching cached PM trajectory is available".into());
+        };
+        pending.cache_status["pm"] = json!({"status":"hit","arithmetic":arithmetic,"bytes":bytes});
+        self.last_status = pending.cache_status.clone();
+        let mut prepared = self.assemble_cached(
+            pending,
+            Arc::as_ref(&pm),
+            arithmetic,
+            deposit_source,
+            Some((rho, pmrho)),
+        )?;
+        self.refresh_status(&mut prepared);
+        Ok(prepared)
+    }
+
+    pub fn finish_cpu(&mut self, pending: &mut PendingLabRun) -> Result<PreparedLabRun, String> {
+        let key = pm_cache_key(pending, "f64");
+        let (pm, hit) = match self.pm.as_ref() {
+            Some((cached_key, arithmetic, pm, _)) if cached_key == &key && arithmetic == "f64" => {
+                (Arc::clone(pm), true)
+            }
+            _ => (pending.pm_reference_arc()?, false),
+        };
+        let bytes = pm_cache_bytes(&pending.request);
+        pending.cache_status["pm"] = if hit {
+            json!({"status":"hit","arithmetic":"f64","bytes":bytes})
+        } else {
+            json!({"status":"miss","reason":"computed","arithmetic":"f64","bytes":bytes})
+        };
+        if !hit {
+            // A stale trajectory must not consume budget while the replacement
+            // raw observations and PM state are considered.
+            self.pm = None;
+        }
+        self.last_status = pending.cache_status.clone();
+        let mut prepared =
+            self.assemble_cached(pending, Arc::as_ref(&pm), "f64", "cpu-exact", None)?;
+        let retained = bytes.saturating_add(self.retained_bytes_without_pm())
+            <= SESSION_CACHE_LIMIT_BYTES
+            && !hit;
+        if retained {
+            self.pm = Some((key, "f64".into(), Arc::clone(&pm), bytes));
+        } else if !hit {
+            self.last_status["pm"] = json!({"status":"skipped","reason":"session memory budget","arithmetic":"f64","bytes":bytes});
+        }
+        if self.last_status["pm"]["status"] == "skipped" {
+            prepared.cache_status["pm"] = self.last_status["pm"].clone();
+        }
+        self.refresh_status(&mut prepared);
+        Ok(prepared)
+    }
+
+    pub fn finish_gpu_pm(
+        &mut self,
+        pending: &mut PendingLabRun,
+        x: &[f32],
+        p: &[f32],
+        dx: &[f32],
+        dp: &[f32],
+        drift_minima: &[f64],
+    ) -> Result<PreparedLabRun, String> {
+        let pm = Arc::new(gpu_pm_result(pending, x, p, dx, dp, drift_minima)?);
+        let key = pm_cache_key(pending, "f32");
+        let bytes = pm_cache_bytes(&pending.request);
+        pending.cache_status["pm"] =
+            json!({"status":"miss","reason":"computed","arithmetic":"f32","bytes":bytes});
+        self.pm = None;
+        // This is a newly evolved PM result, so any raw observation keyed to
+        // the same trajectory name must be rebuilt from this exact state.
+        self.observations = None;
+        self.last_status = pending.cache_status.clone();
+        let mut prepared =
+            self.assemble_cached(pending, Arc::as_ref(&pm), "f32", "cpu-exact", None)?;
+        let retained =
+            bytes.saturating_add(self.retained_bytes_without_pm()) <= SESSION_CACHE_LIMIT_BYTES;
+        if retained {
+            self.pm = Some((key, "f32".into(), Arc::clone(&pm), bytes));
+        } else {
+            self.last_status["pm"] = json!({"status":"skipped","reason":"session memory budget","arithmetic":"f32","bytes":bytes});
+        }
+        if self.last_status["pm"]["status"] == "skipped" {
+            prepared.cache_status["pm"] = self.last_status["pm"].clone();
+        }
+        self.refresh_status(&mut prepared);
+        Ok(prepared)
+    }
+
+    pub fn finish_cpu_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        rho: &[f32],
+        pmrho: &[f32],
+        deposit_source: &str,
+    ) -> Result<PreparedLabRun, String> {
+        let key = pm_cache_key(pending, "f64");
+        let (pm, hit) = match self.pm.as_ref() {
+            Some((cached_key, arithmetic, pm, _)) if cached_key == &key && arithmetic == "f64" => {
+                (Arc::clone(pm), true)
+            }
+            _ => (pending.pm_reference_arc()?, false),
+        };
+        self.finish_with_observed_pm(pending, pm, hit, "f64", rho, pmrho, deposit_source)
+    }
+
+    pub fn finish_gpu_pm_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        x: &[f32],
+        p: &[f32],
+        dx: &[f32],
+        dp: &[f32],
+        drift_minima: &[f64],
+        rho: &[f32],
+        pmrho: &[f32],
+        deposit_source: &str,
+    ) -> Result<PreparedLabRun, String> {
+        let pm = Arc::new(gpu_pm_result(pending, x, p, dx, dp, drift_minima)?);
+        self.finish_with_observed_pm(pending, pm, false, "f32", rho, pmrho, deposit_source)
+    }
+
+    fn finish_with_observed_pm(
+        &mut self,
+        pending: &mut PendingLabRun,
+        pm: Arc<PmRun>,
+        hit: bool,
+        arithmetic: &str,
+        rho: &[f32],
+        pmrho: &[f32],
+        deposit_source: &str,
+    ) -> Result<PreparedLabRun, String> {
+        if deposit_source.is_empty() {
+            return Err("Density deposit provenance must be nonempty".into());
+        }
+        // Validate before any observation or PM entry is inserted.
+        validate_observed_density(&pending.request, "rho", rho)?;
+        validate_observed_density(&pending.request, "pmrho", pmrho)?;
+        let key = pm_cache_key(pending, arithmetic);
+        let bytes = pm_cache_bytes(&pending.request);
+        pending.cache_status["pm"] = if hit {
+            json!({"status":"hit","arithmetic":arithmetic,"bytes":bytes})
+        } else {
+            json!({"status":"miss","reason":"computed","arithmetic":arithmetic,"bytes":bytes})
+        };
+        if !hit {
+            self.pm = None;
+        }
+        self.last_status = pending.cache_status.clone();
+        let mut prepared = self.assemble_cached(
+            pending,
+            Arc::as_ref(&pm),
+            arithmetic,
+            deposit_source,
+            Some((rho, pmrho)),
+        )?;
+        let retained = bytes.saturating_add(self.retained_bytes_without_pm())
+            <= SESSION_CACHE_LIMIT_BYTES
+            && !hit;
+        if retained {
+            self.pm = Some((key, arithmetic.into(), Arc::clone(&pm), bytes));
+        } else if !hit {
+            self.last_status["pm"] = json!({"status":"skipped","reason":"session memory budget","arithmetic":arithmetic,"bytes":bytes});
+        }
+        if self.last_status["pm"]["status"] == "skipped" {
+            prepared.cache_status["pm"] = self.last_status["pm"].clone();
+        }
+        self.refresh_status(&mut prepared);
+        Ok(prepared)
+    }
+
+    fn assemble_cached(
+        &mut self,
+        pending: &mut PendingLabRun,
+        pm: &PmRun,
+        arithmetic: &str,
+        deposit_source: &str,
+        external_fields: Option<(&[f32], &[f32])>,
+    ) -> Result<PreparedLabRun, String> {
+        let key = observation_cache_key(pending, arithmetic, deposit_source);
+        let (raw, hit) = match self.observations.as_ref() {
+            Some((cached_key, raw, _)) if external_fields.is_none() && cached_key == &key => {
+                (Arc::clone(raw), true)
+            }
+            _ => {
+                let raw = if let Some((rho, pmrho)) = external_fields {
+                    raw_observations_external(pending, rho, pmrho, deposit_source)?
+                } else if deposit_source == "cpu-exact" {
+                    raw_observations(pending, pm)
+                } else {
+                    return Err(format!(
+                        "No retained raw observations for deposit source {deposit_source}"
+                    ));
+                };
+                (Arc::new(raw), false)
+            }
+        };
+        let bytes = raw.estimated_bytes();
+        // Replacing a raw observation entry releases the old allocation before
+        // checking whether the new entry fits the combined session budget.
+        if !hit {
+            self.observations = None;
+        }
+        pending.cache_status["observations"] = if hit {
+            json!({"status":"hit","bytes":self.observations.as_ref().map_or(0,|v|v.2),"smoothing":"recomputed","depositSource":raw.deposit_source})
+        } else {
+            json!({"status":"miss","reason":"trajectory/order/mesh/deposit-source key changed","bytes":bytes,"smoothing":"recomputed","depositSource":deposit_source})
+        };
+        self.last_status = pending.cache_status.clone();
+        let prepared = assemble_prepared(pending, pm, arithmetic, Some(&raw))?;
+        let total = self
+            .initial
+            .as_ref()
+            .map_or(0, |v| v.3)
+            .saturating_add(self.pending.as_ref().map_or(0, |v| v.2))
+            .saturating_add(self.pm.as_ref().map_or(0, |v| v.3))
+            .saturating_add(bytes);
+        if !hit && total <= SESSION_CACHE_LIMIT_BYTES {
+            self.observations = Some((key, raw, bytes));
+        }
+        self.last_status["observations"] = if hit {
+            json!({"status":"hit","bytes":bytes,"smoothing":"recomputed","depositSource":deposit_source})
+        } else if total <= SESSION_CACHE_LIMIT_BYTES {
+            json!({"status":"miss","reason":"computed","bytes":bytes,"smoothing":"recomputed","depositSource":deposit_source})
+        } else {
+            json!({"status":"skipped","reason":"session memory budget","bytes":bytes})
+        };
+        self.last_status["bytes"] = json!(total.min(SESSION_CACHE_LIMIT_BYTES));
+        Ok(prepared)
+    }
+
+    fn refresh_status(&mut self, prepared: &mut PreparedLabRun) {
+        let bytes = self.retained_bytes();
+        self.last_status["bytes"] = json!(bytes.min(SESSION_CACHE_LIMIT_BYTES));
+        self.last_status["limitBytes"] = json!(SESSION_CACHE_LIMIT_BYTES);
+        prepared.cache_status = self.last_status.clone();
+        prepared.result["cache"] = self.last_status.clone();
+    }
 }
 
 fn packed_vec4(grid: &Grid, values: &[f64], displacement: bool) -> Vec<f32> {
@@ -314,10 +1181,71 @@ fn packed_vec4(grid: &Grid, values: &[f64], displacement: bool) -> Vec<f32> {
     out
 }
 
+fn pending_from_geometry(
+    r: &LabRequest,
+    c: Arc<Cosmo>,
+    source: &str,
+    geometry: Arc<PendingGeometry>,
+    cache_status: Value,
+) -> PendingLabRun {
+    PendingLabRun {
+        request: r.clone(),
+        c,
+        initial_source: source.into(),
+        geometry,
+        pm_reference_cache: OnceLock::new(),
+        pm_reference_quantized_cache: OnceLock::new(),
+        pm_reference_displacement_quantized_cache: OnceLock::new(),
+        cache_status,
+    }
+}
+
 /// Prepare the common realization and retain the initial PM state for either backend.
 pub fn prepare_pending(r: &LabRequest) -> Result<PendingLabRun, String> {
     r.validate()?;
-    let c = initial_conditions(r);
+    prepare_pending_from_initial_source(r, &Arc::new(initial_conditions(r)), "cpu-f64")
+}
+
+/// Build request-specific physical state from a validated, shared realization.
+/// The input must already contain the order-four LPT fields.
+pub fn prepare_pending_from_initial(
+    r: &LabRequest,
+    c: &Arc<Cosmo>,
+) -> Result<PendingLabRun, String> {
+    prepare_pending_from_initial_source(r, c, "cpu-f64")
+}
+
+pub fn prepare_pending_from_initial_source(
+    r: &LabRequest,
+    c: &Arc<Cosmo>,
+    source: &str,
+) -> Result<PendingLabRun, String> {
+    r.validate()?;
+    validate_initial_source(source)?;
+    prepare_pending_with_cosmo(
+        r,
+        Arc::clone(c),
+        source,
+        json!({
+            "initial": {"status":"miss", "reason":"not using a LabSession cache","provenance":source}
+        }),
+    )
+}
+
+fn validate_initial_source(source: &str) -> Result<(), String> {
+    if ["cpu-f64", "gpu-f32"].contains(&source) {
+        Ok(())
+    } else {
+        Err(format!("Unsupported initialization source: {source}"))
+    }
+}
+
+fn prepare_pending_with_cosmo(
+    r: &LabRequest,
+    c: Arc<Cosmo>,
+    initial_source: &str,
+    cache_status: Value,
+) -> Result<PendingLabRun, String> {
     let g = &c.grid;
     let sc = (1..=4)
         .map(|o| c.shell_crossing(o))
@@ -421,31 +1349,35 @@ pub fn prepare_pending(r: &LabRequest) -> Result<PendingLabRun, String> {
     Ok(PendingLabRun {
         request: r.clone(),
         c,
-        a,
-        a_start,
-        d,
-        d_da,
-        sc,
-        minj,
-        mins,
-        x,
-        v,
-        dpos,
-        xplus,
-        xminus,
-        pm_initial: PmState {
-            x: xi,
-            p,
-            a: a_start,
-        },
-        pm_initial_tangent: PmTangent { dx, dp },
-        pm_initial_min_jacobian,
-        pm_initial_quantized_min_jacobian,
-        pm_initial_displacement_quantized_min_jacobian,
-        pm_clocks,
+        initial_source: initial_source.into(),
+        geometry: Arc::new(PendingGeometry {
+            a,
+            a_start,
+            d,
+            d_da,
+            sc,
+            minj,
+            mins,
+            x,
+            v,
+            dpos,
+            xplus,
+            xminus,
+            pm_initial: PmState {
+                x: xi,
+                p,
+                a: a_start,
+            },
+            pm_initial_tangent: PmTangent { dx, dp },
+            pm_initial_min_jacobian,
+            pm_initial_quantized_min_jacobian,
+            pm_initial_displacement_quantized_min_jacobian,
+            pm_clocks,
+        }),
         pm_reference_cache: OnceLock::new(),
         pm_reference_quantized_cache: OnceLock::new(),
         pm_reference_displacement_quantized_cache: OnceLock::new(),
+        cache_status,
     })
 }
 
@@ -470,8 +1402,14 @@ impl PendingLabRun {
         let grid = Grid::new(self.request.dim, self.request.n, 1.0);
         packed_vec4(&grid, &self.pm_initial.x, true)
     }
+    /// Absolute pending LPT sheet positions in the packed f32 geometry used
+    /// by the external overlap deposit, with inactive vec4 lanes set to zero.
+    pub fn lpt_positions(&self) -> Vec<f32> {
+        let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        packed_vec4(&grid, &self.x, false)
+    }
     pub fn metadata(&self) -> Value {
-        json!({"dim":self.request.dim,"n":self.request.n,"forceMesh":self.request.force_mesh,
+        json!({"dim":self.request.dim,"n":self.request.n,"forceMesh":self.request.force_mesh,"initialSource":self.initial_source,
             "box":1.0,"omegaM":self.request.omega_m,"aStart":self.a_start,"aEnd":self.a,
             "steps":self.request.steps,"modeCount":(self.request.n/4).min(6),
             "pmArithmetic":"f32","pmInitialMinimumJacobianF64":self.pm_initial_min_jacobian,
@@ -513,8 +1451,20 @@ impl PendingLabRun {
         self.pm_reference_cache
             .get_or_init(|| {
                 self.evolve_pm(self.pm_initial.clone(), self.pm_initial_tangent.clone())
+                    .map(Arc::new)
             })
             .as_ref()
+            .map(Arc::as_ref)
+            .map_err(Clone::clone)
+    }
+    fn pm_reference_arc(&self) -> Result<Arc<PmRun>, String> {
+        self.pm_reference_cache
+            .get_or_init(|| {
+                self.evolve_pm(self.pm_initial.clone(), self.pm_initial_tangent.clone())
+                    .map(Arc::new)
+            })
+            .as_ref()
+            .map(Arc::clone)
             .map_err(Clone::clone)
     }
     fn pm_reference_quantized_run(&self) -> Result<&PmRun, String> {
@@ -543,8 +1493,10 @@ impl PendingLabRun {
                         dp: compact(&dp),
                     },
                 )
+                .map(Arc::new)
             })
             .as_ref()
+            .map(Arc::as_ref)
             .map_err(Clone::clone)
     }
     fn pm_reference_displacement_quantized_run(&self) -> Result<&PmRun, String> {
@@ -584,8 +1536,10 @@ impl PendingLabRun {
                         dp: compact(&dp),
                     },
                 )
+                .map(Arc::new)
             })
             .as_ref()
+            .map(Arc::as_ref)
             .map_err(Clone::clone)
     }
     fn evolve_pm(&self, initial: PmState, tangent: PmTangent) -> Result<PmRun, String> {
@@ -631,8 +1585,8 @@ impl PendingLabRun {
         out
     }
     pub fn finish_cpu(&self) -> Result<PreparedLabRun, String> {
-        let pm = self.pm_reference_run()?.clone();
-        assemble_prepared(self, pm, "f64")
+        let pm = self.pm_reference_run()?;
+        assemble_prepared(self, pm, "f64", None)
     }
     pub fn finish_gpu_pm(
         &self,
@@ -717,7 +1671,7 @@ impl PendingLabRun {
             crossed: first_crossing.is_some(),
             first_crossing,
         };
-        assemble_prepared(self, pm, "f32")
+        assemble_prepared(self, &pm, "f32", None)
     }
 }
 
@@ -731,10 +1685,91 @@ fn unpack_vec4_f32(dim: usize, nv: usize, packed: &[f32]) -> Vec<f64> {
     out
 }
 
+fn gpu_pm_result(
+    pending: &PendingLabRun,
+    x: &[f32],
+    p: &[f32],
+    dx: &[f32],
+    dp: &[f32],
+    drift_minima: &[f64],
+) -> Result<PmRun, String> {
+    let dim = pending.request.dim;
+    let nv = pending.request.n.pow(dim as u32);
+    let expected = nv * 4;
+    for (name, values) in [("x", x), ("p", p), ("dx", dx), ("dp", dp)] {
+        if values.len() != expected {
+            return Err(format!("GPU PM {name} length must be {expected}"));
+        }
+        if values.iter().any(|v| !v.is_finite()) {
+            return Err(format!("GPU PM {name} contains a nonfinite value"));
+        }
+    }
+    if drift_minima.len() != pending.request.steps {
+        return Err(format!(
+            "GPU PM needs {} verified drift minima",
+            pending.request.steps
+        ));
+    }
+    if drift_minima.iter().any(|v| !v.is_finite()) {
+        return Err("GPU PM drift minima must be finite".into());
+    }
+    let mut pmx = vec![0.0; nv * dim];
+    let mut p64 = pmx.clone();
+    let mut dx64 = pmx.clone();
+    let mut dp64 = pmx.clone();
+    for i in 0..nv {
+        for a in 0..dim {
+            let j = i * dim + a;
+            let k = i * 4 + a;
+            pmx[j] = x[k] as f64;
+            p64[j] = p[k] as f64;
+            dx64[j] = dx[k] as f64;
+            dp64[j] = dp[k] as f64;
+        }
+    }
+    let mut minimum = pending
+        .pm_initial_min_jacobian
+        .min(pending.pm_initial_displacement_quantized_min_jacobian);
+    let mut first_crossing = if minimum <= 0.0 {
+        Some(PmCrossing {
+            step: 0,
+            a_start: pending.a_start,
+            a_end: pending.a_start,
+            minimum_jacobian: minimum,
+        })
+    } else {
+        None
+    };
+    for (i, &jac) in drift_minima.iter().enumerate() {
+        minimum = minimum.min(jac);
+        if jac <= 0.0 && first_crossing.is_none() {
+            first_crossing = Some(PmCrossing {
+                step: i + 1,
+                a_start: pending.pm_clocks[5 * i + 3],
+                a_end: pending.pm_clocks[5 * i + 4],
+                minimum_jacobian: jac,
+            });
+        }
+    }
+    Ok(PmRun {
+        state: PmState {
+            x: pmx,
+            p: p64,
+            a: pending.a,
+        },
+        tangent: Some(PmTangent { dx: dx64, dp: dp64 }),
+        min_jacobian: minimum,
+        completed_steps: pending.request.steps,
+        crossed: first_crossing.is_some(),
+        first_crossing,
+    })
+}
+
 fn assemble_prepared(
     pending: &PendingLabRun,
-    pm: PmRun,
+    pm: &PmRun,
     pm_arithmetic: &str,
+    raw_cached: Option<&RawObservations>,
 ) -> Result<PreparedLabRun, String> {
     let r = &pending.request;
     let c = &pending.c;
@@ -760,8 +1795,15 @@ fn assemble_prepared(
         .iter()
         .map(|p| p / (a.powi(3) * c.cosmo.e(a)))
         .collect();
-    let rho = density(g, &x, r.mesh);
-    let pmrho = density(g, pmx, r.mesh);
+    let owned_raw;
+    let raw = if let Some(raw) = raw_cached {
+        raw
+    } else {
+        owned_raw = raw_observations(pending, &pm);
+        &owned_raw
+    };
+    let rho = &raw.rho;
+    let pmrho = &raw.pmrho;
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     let rs = observables::smooth_density(&eg, &rho, r.smoothing);
     let pms = observables::smooth_density(&eg, &pmrho, r.smoothing);
@@ -770,16 +1812,9 @@ fn assemble_prepared(
     let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
     let summary = observables::density_summary(&rs, &rho, &probabilities);
     let pm_summary = observables::density_summary(&pms, &pmrho, &probabilities);
-    let cic = sheet::cic_density(
-        r.dim,
-        &x.iter().map(|&v| v as f32).collect::<Vec<_>>(),
-        g.size,
-        1.0,
-        r.mesh,
-    );
-    let ps = power(&eg, &rho);
-    let psc = power(&eg, &cic);
-    let psp = power(&eg, &pmrho);
+    let ps = &raw.ps;
+    let psc = &raw.psc;
+    let psp = &raw.psp;
     let mut ks = Vec::new();
     let mut powers = Vec::new();
     let mut derivatives = Vec::new();
@@ -880,7 +1915,7 @@ fn assemble_prepared(
         "initialNormalization":"Gaussian spectrum sigma8 at z=0 before Gaussian filtering and radial cutoff; no realization RMS rescaling. Deterministic waves use fixed delta0 amplitudes independent of sigma8.",
         "initialFilter":"Gaussian exp(-k^2 R_initial^2/2) plus fixed radial integer-mode cutoff",
         "modeGenerator":"PSC Fourier mode hash v2, SplitMix64 and xoshiro256** Box-Muller, exact Hermitian pairing",
-        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices","pmArithmetic":pm_arithmetic,"crossingDiagnostic":crossing_diagnostic}});
+        "positionUnits":"x/L","velocityUnits":"d(x/L)/da","wavenumberUnits":"h/Mpc","powerUnits":format!("(Mpc/h)^{}",r.dim),"observationFilter":"Gaussian","powerField":"unsmoothed cell averages","pdfMassWeights":"unsmoothed cell mass","pmObservation":"exact P0 sheet attached to PM vertices","pmArithmetic":pm_arithmetic,"initialSource":pending.initial_source,"crossingDiagnostic":crossing_diagnostic},"cache":pending.cache_status});
     let grid = &c.grid;
     Ok(PreparedLabRun {
         request: r.clone(),
@@ -897,6 +1932,9 @@ fn assemble_prepared(
         xminus: xminus.clone(),
         pmx: pmx.clone(),
         pmdpos,
+        lpt_displacement_expansion: OnceLock::new(),
+        lpt_direction_expansion: OnceLock::new(),
+        cache_status: pending.cache_status.clone(),
         fd_channels: OnceLock::new(),
         fd_plus_expansion: OnceLock::new(),
         fd_minus_expansion: OnceLock::new(),
@@ -918,6 +1956,44 @@ impl PreparedLabRun {
     }
     pub fn lpt_direction(&self) -> &[f32] {
         &self.lpt_direction
+    }
+    fn lpt_expansion(&self, direction: bool) -> &(Vec<f32>, Vec<f32>) {
+        let cache = if direction {
+            &self.lpt_direction_expansion
+        } else {
+            &self.lpt_displacement_expansion
+        };
+        cache.get_or_init(|| {
+            let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+            let mut hi = vec![0.0f32; grid.size * 4];
+            let mut lo = vec![0.0f32; grid.size * 4];
+            for i in 0..grid.size {
+                let q = grid.unravel(i);
+                for axis in 0..grid.dim {
+                    let value = if direction {
+                        self.dpos[i * grid.dim + axis]
+                    } else {
+                        self.x[i * grid.dim + axis] - q[axis] as f64 * grid.dx()
+                    };
+                    let high = value as f32;
+                    hi[i * 4 + axis] = high;
+                    lo[i * 4 + axis] = (value - high as f64) as f32;
+                }
+            }
+            (hi, lo)
+        })
+    }
+    pub fn lpt_displacement_hi(&self) -> &[f32] {
+        &self.lpt_expansion(false).0
+    }
+    pub fn lpt_displacement_lo(&self) -> &[f32] {
+        &self.lpt_expansion(false).1
+    }
+    pub fn lpt_direction_hi(&self) -> &[f32] {
+        &self.lpt_expansion(true).0
+    }
+    pub fn lpt_direction_lo(&self) -> &[f32] {
+        &self.lpt_expansion(true).1
     }
     pub fn pm_displacement(&self) -> &[f32] {
         &self.pm_displacement
@@ -1045,7 +2121,7 @@ impl PreparedLabRun {
     }
 
     pub fn metadata(&self) -> Value {
-        json!({"dim":self.request.dim,"n":self.request.n,"modeCount":self.modes.len(),
+        json!({"dim":self.request.dim,"n":self.request.n,"modeCount":self.modes.len(),"cache":self.cache_status,
             "modes":self.modes.iter().map(|m| [m[0],m[1],m[2]]).collect::<Vec<_>>(),"h":self.h,
             "channelScalarsPerMode":8})
     }

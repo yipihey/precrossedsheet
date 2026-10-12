@@ -28,6 +28,193 @@ pub struct PendingLabRun {
 }
 
 #[wasm_bindgen]
+pub struct LabSession {
+    inner: crate::laboratory::LabSession,
+}
+
+#[wasm_bindgen]
+impl LabSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> LabSession {
+        Self {
+            inner: crate::laboratory::LabSession::new(),
+        }
+    }
+
+    pub fn prepare_pending(&mut self, request: &str) -> Result<PendingLabRun, JsValue> {
+        self.prepare_pending_source(request, "cpu-f64")
+    }
+
+    pub fn prepare_pending_source(
+        &mut self,
+        request: &str,
+        source: &str,
+    ) -> Result<PendingLabRun, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        self.inner
+            .prepare_pending_source(&request, source)
+            .map(|inner| PendingLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// Reuse a completed trajectory only when request epoch, force mesh and
+    /// PM arithmetic match. Observation mesh and smoothing are rebuilt for the
+    /// current request.
+    pub fn try_cached(
+        &mut self,
+        request: &str,
+        arithmetic: &str,
+    ) -> Result<Option<PreparedLabRun>, JsValue> {
+        self.try_cached_source(request, arithmetic, "cpu-f64")
+    }
+
+    pub fn try_cached_source(
+        &mut self,
+        request: &str,
+        arithmetic: &str,
+        initial_source: &str,
+    ) -> Result<Option<PreparedLabRun>, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        self.inner
+            .try_cached_source(&request, arithmetic, initial_source)
+            .map(|result| result.map(|inner| PreparedLabRun { inner }))
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn try_cached_observed_source(
+        &mut self,
+        request: &str,
+        arithmetic: &str,
+        initial_source: &str,
+        deposit_source: &str,
+    ) -> Result<Option<PreparedLabRun>, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        self.inner
+            .try_cached_observed_source(&request, arithmetic, initial_source, deposit_source)
+            .map(|result| result.map(|inner| PreparedLabRun { inner }))
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn cached_pm_positions(
+        &self,
+        pending: &PendingLabRun,
+        arithmetic: &str,
+    ) -> Option<Vec<f32>> {
+        self.inner.cached_pm_positions(&pending.inner, arithmetic)
+    }
+
+    pub fn finish_cached(
+        &mut self,
+        pending: &mut PendingLabRun,
+        arithmetic: &str,
+    ) -> Result<Option<PreparedLabRun>, JsValue> {
+        self.inner
+            .finish_cached(&mut pending.inner, arithmetic)
+            .map(|result| result.map(|inner| PreparedLabRun { inner }))
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn finish_cached_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        arithmetic: &str,
+        rho: &[f32],
+        pmrho: &[f32],
+    ) -> Result<PreparedLabRun, JsValue> {
+        self.inner
+            .finish_cached_observed(
+                &mut pending.inner,
+                arithmetic,
+                rho,
+                pmrho,
+                "gpu-f32-geometry-overlap",
+            )
+            .map(|inner| PreparedLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn finish_cpu(&mut self, pending: &mut PendingLabRun) -> Result<PreparedLabRun, JsValue> {
+        self.inner
+            .finish_cpu(&mut pending.inner)
+            .map(|inner| PreparedLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn finish_gpu_pm(
+        &mut self,
+        pending: &mut PendingLabRun,
+        x: &[f32],
+        p: &[f32],
+        dx: &[f32],
+        dp: &[f32],
+        minima: &[f64],
+    ) -> Result<PreparedLabRun, JsValue> {
+        self.inner
+            .finish_gpu_pm(&mut pending.inner, x, p, dx, dp, minima)
+            .map(|inner| PreparedLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn finish_cpu_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        rho: &[f32],
+        pmrho: &[f32],
+    ) -> Result<PreparedLabRun, JsValue> {
+        self.inner
+            .finish_cpu_observed(&mut pending.inner, rho, pmrho, "gpu-f32-geometry-overlap")
+            .map(|inner| PreparedLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn finish_gpu_pm_observed(
+        &mut self,
+        pending: &mut PendingLabRun,
+        x: &[f32],
+        p: &[f32],
+        dx: &[f32],
+        dp: &[f32],
+        minima: &[f64],
+        rho: &[f32],
+        pmrho: &[f32],
+    ) -> Result<PreparedLabRun, JsValue> {
+        self.inner
+            .finish_gpu_pm_observed(
+                &mut pending.inner,
+                x,
+                p,
+                dx,
+                dp,
+                minima,
+                rho,
+                pmrho,
+                "gpu-f32-geometry-overlap",
+            )
+            .map(|inner| PreparedLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn cache_status(&self) -> String {
+        self.inner.cache_status().to_string()
+    }
+
+    pub fn prepare_initial_slot(&mut self, request: &str, source: &str) -> Result<bool, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        self.inner
+            .prepare_initial_slot(&request, source)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+#[wasm_bindgen]
 impl PendingLabRun {
     #[wasm_bindgen(constructor)]
     pub fn new(request: &str) -> Result<PendingLabRun, JsValue> {
@@ -46,6 +233,9 @@ impl PendingLabRun {
     /// f32 vec4 lattice displacement ψ=x−q; the GPU reconstructs absolute x.
     pub fn pm_displacement(&self) -> Vec<f32> {
         self.inner.pm_displacement()
+    }
+    pub fn lpt_positions(&self) -> Vec<f32> {
+        self.inner.lpt_positions()
     }
     pub fn pm_p(&self) -> Vec<f32> {
         self.inner.pm_initial_component(1)
@@ -93,6 +283,19 @@ impl PendingLabRun {
             .map(|inner| PreparedLabRun { inner })
             .map_err(|e| JsValue::from_str(&e))
     }
+}
+
+/// Reference exact sheet-mass deposit for packed f32 positions. Used to
+/// validate external overlap deposits without changing production semantics.
+#[wasm_bindgen]
+pub fn exact_sheet_density(
+    dim: usize,
+    n: usize,
+    mesh: usize,
+    packed_positions: &[f32],
+) -> Result<Vec<f32>, JsValue> {
+    crate::laboratory::exact_sheet_density(dim, n, mesh, packed_positions)
+        .map_err(|e| JsValue::from_str(&e))
 }
 
 /// Exact f64 continuum minimum determinant for one affine drift, with packed
@@ -160,6 +363,18 @@ impl PreparedLabRun {
     }
     pub fn lpt_direction(&self) -> Vec<f32> {
         self.inner.lpt_direction().to_vec()
+    }
+    pub fn lpt_displacement_hi(&self) -> Vec<f32> {
+        self.inner.lpt_displacement_hi().to_vec()
+    }
+    pub fn lpt_displacement_lo(&self) -> Vec<f32> {
+        self.inner.lpt_displacement_lo().to_vec()
+    }
+    pub fn lpt_direction_hi(&self) -> Vec<f32> {
+        self.inner.lpt_direction_hi().to_vec()
+    }
+    pub fn lpt_direction_lo(&self) -> Vec<f32> {
+        self.inner.lpt_direction_lo().to_vec()
     }
     pub fn pm_displacement(&self) -> Vec<f32> {
         self.inner.pm_displacement().to_vec()
@@ -958,4 +1173,45 @@ pub fn sheet_density_1d(x: &[f64], l: f64, ne: usize) -> Vec<f64> {
 #[wasm_bindgen]
 pub fn lab_run(request: &str) -> String {
     crate::laboratory::run_json(request)
+}
+
+/// Initial Fourier modes and raw recursion descriptors for optional GPU nLPT.
+#[wasm_bindgen]
+pub struct GpuLptSeed {
+    inner: crate::gpu_lpt::GpuLptSeed,
+}
+
+#[wasm_bindgen]
+impl GpuLptSeed {
+    #[wasm_bindgen(constructor)]
+    pub fn new(request: &str) -> Result<GpuLptSeed, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        crate::gpu_lpt::GpuLptSeed::new(&request)
+            .map(|inner| Self { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn metadata(&self) -> String {
+        self.inner.metadata().to_string()
+    }
+    pub fn delta_hat(&self) -> Result<Vec<f32>, JsValue> {
+        self.inner.delta_hat().map_err(|e| JsValue::from_str(&e))
+    }
+    /// Independent CPU oracle, called only by explicit verification requests.
+    pub fn reference_fields(&self) -> Result<Vec<f32>, JsValue> {
+        self.inner
+            .reference_fields()
+            .map(|v| v.to_vec())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn finish_gpu(
+        &self,
+        session: &mut LabSession,
+        fields: &[f32],
+    ) -> Result<PendingLabRun, JsValue> {
+        self.inner
+            .finish_gpu_with_session(&mut session.inner, fields)
+            .map(|inner| PendingLabRun { inner })
+            .map_err(|e| JsValue::from_str(&e))
+    }
 }

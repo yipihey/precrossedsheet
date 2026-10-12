@@ -16,8 +16,11 @@ This is a scientific laboratory of the pre-shell-crossing cold sheet, using nLPT
 | Published PDF agreement | Packaged original summaries and source metadata | Original filters and small crossing contamination |
 | Physical initial modes | EH98 smooth transfer, $\sigma_8$ quadrature and Hermitian/refinement tests | Approximate transfer without BAO or massive neutrinos |
 | Optional GPU continuous modes/JVPs | Independent quadrature and complete-request comparisons | f32 precision; weak LPT mode recovery and CPU fallback; device-specific performance |
-| Optional resident GPU PM/JVP | Independent DFT force checks and original/quantized Rust PM references | f32 state, CIC and FFT; radix-2 force mesh; CPU nLPT and exact observations |
+| Optional resident GPU PM/JVP | Independent DFT force checks and original/quantized Rust PM references | f32 state, CIC and FFT; radix-2 force mesh; independent spatial-field and observation precision |
 | Optional GPU centered amplitude check | Independent endpoint integrals, retained Rust f64 comparison, repeat and recovery checks | Compensated f32 arithmetic; bounded endpoint phase gap; CPU fallback |
+| Optional GPU nLPT spatial fields | Axis and quadratic solutions, raw Rust-term comparisons and growth-boundary tests | f32 sources/FFT; radix lattice in 2D/3D; CPU growth/time factors |
+| Optional GPU exact sheet deposition | Geometric identity, translation, fold and Rust-cell comparisons; conservation gate | f32 cell-local clipping; explicit sliver/capacity recovery |
+| Compensated analytic recovery and retained work | Independent simplex quadrature, f64 mode checks, cache invalidation tests | CPU f64 recovery remains available; bounded local cache |
 | Higher resolution | Native benchmarks and explicit resource envelope | Browser wall time depends on device; grids are never silently reduced |
 | General sub-percent 4LPT accuracy | **Not asserted** | Must specify observable and validation domain |
 

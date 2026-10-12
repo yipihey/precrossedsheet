@@ -17,6 +17,7 @@ pub mod nbody;
 pub mod tangent;
 pub mod observables;
 pub mod laboratory;
+pub mod gpu_lpt;
 pub mod cosmological;
 pub mod r3d;
 pub mod rng;

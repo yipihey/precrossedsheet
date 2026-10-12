@@ -5,6 +5,8 @@ import init, * as wasmApi from '../pkg/hcc_core.js';
 
 let wasmReady;
 let gpuContext = null;
+let labSession = null;
+let lastPhysical = null;
 let gpuContextNeedsReinit = false;
 let active = null;
 let queued = null;
@@ -23,7 +25,7 @@ self.onmessage = ({ data }) => {
     shuttingDown = true;
     queued = null;
     if (active) { active.cancelled = true; active.controller?.abort(); return; }
-    disposeGpu().finally(() => send({ type: 'shutdown-ack' }));
+    disposeGpu().finally(() => { disposeSession(); send({ type: 'shutdown-ack' }); });
     return;
   }
   if (data.type === 'cancel') {
@@ -57,6 +59,7 @@ function start(data) {
     active = null;
     if (shuttingDown) {
       await disposeGpu();
+      disposeSession();
       send({ type: 'shutdown-ack' });
       return;
     }
@@ -91,7 +94,7 @@ async function execute(task) {
 
   const physical = await preparePhysical(task, wasm, preparedCtor);
   if (!physical || cancelled(task)) { physical?.prepared?.free?.(); return {}; }
-  const { prepared, pmExecution } = physical;
+  const { prepared, pmExecution, lptExecution, depositExecution } = physical;
   try {
   let metadata = parseJson(prepared.metadata(), 'prepared metadata');
   if (!Number.isInteger(metadata.modeCount) || !Number.isInteger(metadata.dim) || !Number.isInteger(metadata.n)) {
@@ -236,86 +239,99 @@ async function execute(task) {
     return finish(prepared, channels, execMeta, fdValues);
   };
   execMeta.pmEvolution = pmExecution;
+  execMeta.lptConstruction = lptExecution;
+  execMeta.exactDeposit = depositExecution;
   execMeta.timings = { ...(execMeta.timings || {}), stages: stageTimes };
 
   phase(task, 'finalizing', 'Finalizing f64 observables and the run manifest.');
   const finalizationStarted = performance.now();
   let result = finalize();
+  let analyticExecution = { backend: 'cpu', provenance: 'cpu-f64', fallbackReason: task.policy.disableCompensated ? 'Compensated GPU analytic recovery disabled for an explicit reference comparison.' : null };
   if (execMeta.executedBackend === 'gpu') {
-    const failedModes = failedDerivativeModes(result, metadata.modeCount);
-    if (failedModes == null) {
-      const gpuAttempt = execMeta;
-      const fallbackStarted = performance.now();
-      channels = copyF64(prepared.direct_cpu());
-      stageTimes.directMilliseconds += performance.now() - fallbackStarted;
-      execMeta = cpuExecution(requested, 'GPU run omitted the required finite-difference comparison.');
-      execMeta.gpuAttempt = gpuAttempt;
-      execMeta.timings = { stages: stageTimes };
-      result = finalize();
-    } else if (failedModes.length) {
-      const recoveryStarted = performance.now();
-      const failedIndices = Uint32Array.from(failedModes);
-      if (typeof prepared.direct_lpt_cpu_modes !== 'function') {
-        const gpuAttempt = execMeta;
-        const fallbackStarted = performance.now();
-        channels = copyF64(prepared.direct_cpu());
-        stageTimes.directMilliseconds += performance.now() - fallbackStarted;
-        execMeta = cpuExecution(requested, 'Selective weak-mode recovery is unavailable in this Wasm build.');
-        execMeta.gpuAttempt = gpuAttempt;
-        execMeta.timings = { stages: stageTimes };
-        result = finalize();
-      } else {
-        phase(task, 'direct-recovery', 'Recovering weak LPT derivative modes with the f64 CPU reference.', false);
-        const recovered = copyF64(prepared.direct_lpt_cpu_modes(failedIndices));
-        if (recovered.length !== failedModes.length * 4 || !allFinite(recovered)) {
-          throw new Error('Selective CPU recovery returned malformed direct-mode channels.');
+    let failedModes = failedDerivativeModes(result, metadata.modeCount);
+    if (failedModes != null) {
+      const targets = task.policy.forceCompensatedFailure ? Array.from({length:metadata.modeCount},(_,i)=>i) : failedModes;
+      if (!task.policy.disableCompensated && targets.length && typeof prepared.lpt_displacement_hi === 'function') {
+        let attempt = null;
+        try {
+          phase(task,'analytic-recovery','Evaluating weak LPT modes and their analytic amplitude response with compensated GPU arithmetic.',true);
+          const context=await getGpuContext(task),validation=await validateCompensatedContext(context,task);
+          attempt={device:deviceMetadata(context),validation};
+          const failure=task.policy.forceCompensatedFailure;
+          if(validation.status!=='pass'||failure==='validation')throw new Error('GPU analytic-recovery validation did not pass.');
+          const records=copyI32(prepared.mode_records()),modes=new Int32Array(targets.length*4);
+          targets.forEach((m,i)=>modes.set(records.subarray(m*4,m*4+4),i*4));
+          const {runCompensatedDirect}=await import('./gpu/compensated-direct.js');
+          const gpu=await runCompensatedDirect(context.device,{dim:metadata.dim,n:metadata.n,modes,
+            psiHi:copyF32(prepared.lpt_displacement_hi()),psiLo:copyF32(prepared.lpt_displacement_lo()),
+            directionHi:copyF32(prepared.lpt_direction_hi()),directionLo:copyF32(prepared.lpt_direction_lo())}, {
+            signal:task.controller.signal,shouldCancel:()=>cancelled(task),maxGpuBytes:failure==='limits'?1:512*1024*1024,
+            onProgress:p=>send({type:'progress',requestId:task.requestId,phase:'analytic-recovery',...p})});
+          if(cancelled(task))return {};
+          attempt={...attempt,timings:gpu.timings,diagnostics:gpu.diagnostics,kernelProvenance:gpu.provenance};
+          if(failure==='readback')throw new Error('Forced analytic-recovery readback failure.');
+          const values=copyF64(gpu.channels);
+          if(failure==='nonfinite')values[0]=NaN;
+          if(values.length!==targets.length*4||!allFinite(values))throw new Error('GPU analytic recovery returned malformed or nonfinite channels.');
+          targets.forEach((m,i)=>{channels.set(values.subarray(i*4,i*4+4),m*8);execMeta.modeProvenance[m].lpt='gpu-compensated-f32';});
+          analyticExecution={backend:'gpu',provenance:'gpu-compensated-f32',modes:targets.map(i=>metadata.modes[i]),...attempt};
+          execMeta.channelProvenance.lpt=targets.length===metadata.modeCount?'gpu-compensated-f32':'mixed-gpu-f32-and-gpu-compensated-f32';
+          execMeta.analyticRecovery=analyticExecution;
+          result=finalize();
+          failedModes=failedDerivativeModes(result,metadata.modeCount);
+        }catch(error){
+          if(cancelled(task))return {};
+          analyticExecution={backend:'cpu',provenance:'cpu-f64',fallbackReason:String(error?.message||error),gpuAttempt:attempt};
+          // A forced failure tests the reference recovery even if the ordinary
+          // observer happened to pass this particular request's derivative gate.
+          if(task.policy.forceCompensatedFailure)failedModes=targets;
         }
-        for (let ri = 0; ri < failedModes.length; ri++) {
-          const modeIndex = failedModes[ri];
-          channels.set(recovered.subarray(4 * ri, 4 * ri + 4), modeIndex * 8);
-          execMeta.modeProvenance[modeIndex].lpt = 'cpu-f64';
-        }
-        stageTimes.cpuRecoveryMilliseconds = performance.now() - recoveryStarted;
-        const labels = failedModes.map((i) => (metadata.modes?.[i] || [i]).join(','));
-        execMeta = {
-          ...execMeta,
-          executedBackend: 'hybrid',
-          fallbackReason: `Weak LPT mode derivative errors exceeded 1e-5; those ${failedModes.length} LPT mode(s) used the f64 CPU reference (${labels.join('; ')}).`,
-          precision: 'f32 GPU modes with selective f64 CPU LPT recovery and f64 CPU finalization',
-          channelProvenance: { lpt: 'mixed-cpu-f64-and-gpu-f32', pm: 'gpu-f32', finiteDifference: fdExecution.provenance },
-          diagnostics: { ...(execMeta.diagnostics || {}), cpuRecoveredLptModes: failedModes.map((i) => metadata.modes?.[i] || [i]), derivativeGate: 'relativeError <= 1e-5 per mode' },
-        };
-        result = finalize();
-        let unrecoveredModes = failedDerivativeModes(result, metadata.modeCount);
-        if ((unrecoveredModes == null || unrecoveredModes.length) && fdExecution.backend === 'gpu') {
-          const recoveryStarted = performance.now();
-          cpuFd('GPU finite differences did not satisfy the unchanged amplitude-derivative gate after f64 LPT recovery.', fdExecution);
-          stageTimes.finiteDifferenceMilliseconds += performance.now() - recoveryStarted;
-          result = finalize();
-          unrecoveredModes = failedDerivativeModes(result, metadata.modeCount);
-        }
-        if (unrecoveredModes == null || unrecoveredModes.length) {
-          const hybridAttempt = execMeta;
-          const fallbackStarted = performance.now();
-          channels = copyF64(prepared.direct_cpu());
-          stageTimes.directMilliseconds += performance.now() - fallbackStarted;
-          execMeta = cpuExecution(requested, 'The selective f64 LPT recovery did not satisfy the per-mode finite-difference gate; the complete f64 CPU reference was used.');
-          execMeta.gpuAttempt = hybridAttempt;
-          execMeta.timings = { stages: stageTimes };
-          result = finalize();
-        }
+      } else if (!task.policy.disableCompensated && !targets.length) analyticExecution={backend:'unused',provenance:null};
+    }
+    if (failedModes?.length && typeof prepared.direct_lpt_cpu_modes === 'function') {
+      phase(task,'direct-recovery','Recovering the remaining LPT modes with the f64 CPU reference.',false);
+      const recoveryStarted=performance.now(),values=copyF64(prepared.direct_lpt_cpu_modes(Uint32Array.from(failedModes)));
+      if(values.length!==failedModes.length*4||!allFinite(values))throw new Error('CPU recovery returned malformed direct-mode channels.');
+      failedModes.forEach((m,i)=>{channels.set(values.subarray(i*4,i*4+4),m*8);execMeta.modeProvenance[m].lpt='cpu-f64';});
+      stageTimes.cpuRecoveryMilliseconds=performance.now()-recoveryStarted;
+      execMeta.executedBackend='hybrid';
+      execMeta.fallbackReason=`${failedModes.length} LPT mode(s) required f64 CPU recovery at the unchanged 1e-5 amplitude-derivative gate.`;
+      execMeta.channelProvenance.lpt='mixed-cpu-f64-and-gpu-f32';
+      execMeta.diagnostics={...(execMeta.diagnostics||{}),cpuRecoveredLptModes:failedModes.map(i=>metadata.modes[i]),derivativeGate:'relativeError <= 1e-5 per mode'};
+      result=finalize();
+      failedModes=failedDerivativeModes(result,metadata.modeCount);
+      if((failedModes==null||failedModes.length)&&fdExecution.backend==='gpu'){
+        const recoveryStarted=performance.now();
+        cpuFd('GPU finite differences did not satisfy the unchanged amplitude-derivative gate after f64 LPT recovery.',fdExecution);
+        stageTimes.finiteDifferenceMilliseconds+=performance.now()-recoveryStarted;
+        result=finalize();failedModes=failedDerivativeModes(result,metadata.modeCount);
       }
     }
+    if(failedModes==null||failedModes.length){
+      const gpuAttempt=execMeta,fallbackStarted=performance.now();
+      channels=copyF64(prepared.direct_cpu());
+      stageTimes.cpuRecoveryMilliseconds+=performance.now()-fallbackStarted;
+      execMeta=cpuExecution(requested,'GPU observer recovery did not satisfy the per-mode derivative gate; the complete f64 CPU observer was used.');
+      execMeta.gpuAttempt=gpuAttempt;execMeta.timings={stages:stageTimes};
+      result=finalize();
+    }
   }
+  execMeta.analyticRecovery=analyticExecution;
   // Direct-mode fallback does not replace an already completed GPU trajectory.
   // Record those two decisions separately, including on complete direct recovery.
   execMeta.pmEvolution = pmExecution;
+  execMeta.lptConstruction = lptExecution;
+  execMeta.exactDeposit = depositExecution;
   if (result?.error) throw new Error(result.error);
   result.execution.pmEvolution = pmExecution;
+  result.execution.lptConstruction = lptExecution;
+  result.execution.exactDeposit = depositExecution;
+  result.execution.cache = result.cache || metadata.cache || null;
+  result.execution.analyticRecovery = analyticExecution;
   stageBackends(result.execution);
-  if (pmExecution.backend === 'gpu' && result.execution.executedBackend === 'cpu') {
+  if ([pmExecution,lptExecution,depositExecution].some(stage=>stage.backend==='gpu') && result.execution.executedBackend === 'cpu') {
     result.execution.executedBackend = 'hybrid';
-    result.execution.precision = 'f32 GPU PM evolution with f64 CPU direct modes and finalization';
+    result.execution.precision = 'GPU physical stages with f64 CPU direct modes and finalization';
   }
   if (fdExecution.backend === 'gpu' && result.execution.executedBackend === 'cpu') {
     result.execution.executedBackend = 'hybrid';
@@ -331,71 +347,197 @@ async function execute(task) {
   }
 }
 
+// Native caches own f64 state and validity diagnostics; JS retains only the
+// provenance of the last physical run. Policies that exercise failure paths
+// bypass the completed-run cache so the requested stage is actually reached.
+const DEPOSIT_SOURCE = 'gpu-f32-geometry-overlap';
+function disposeSession() { labSession?.free?.(); labSession = null; lastPhysical = null; }
+function reusedStage(record, fallback) {
+  const value = record || fallback;
+  return { ...value, reused: true, previousRunTimings: value.timings || value.previousRunTimings || null, timings: null };
+}
+function physicalKey(state) { const { smoothing, mesh, ...physical } = state; return JSON.stringify(physical); }
 async function preparePhysical(task, wasm, preparedCtor) {
-  const cpu = (reason) => ({ prepared: new preparedCtor(JSON.stringify(task.state)), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: reason } });
-  const requested = task.policy.requested || 'cpu';
-  if (requested !== 'gpu' || task.state.dim === 1) return cpu(null);
-  // Failure hooks intentionally test the original complete CPU recovery path.
-  if (task.policy.forceGpuFailure) return cpu('Resident PM bypassed for a forced GPU failure check.');
-  if (task.policy.disablePm) return cpu('Resident PM disabled for an explicit observer-only comparison.');
-  if (typeof wasm.PendingLabRun !== 'function') return cpu('Deferred PM boundary unavailable in this Wasm build.');
-  const pending = new wasm.PendingLabRun(JSON.stringify(task.state));
-  let attempt = null;
+  if (typeof wasm.LabSession !== 'function') return { prepared: new preparedCtor(JSON.stringify(task.state)),
+    lptExecution: { backend: 'cpu', precision: 'f32 spatial tensors; f64 growth/state' },
+    pmExecution: { backend: 'cpu', precision: 'f64' }, depositExecution: { backend: 'cpu', provenance: 'cpu-exact', arithmeticPrecision: 'f64 geometry and accumulation' } };
+  const ephemeral = Boolean(task.policy.disableCache);
+  const session = ephemeral ? new wasm.LabSession() : (labSession ||= new wasm.LabSession());
+  let pending = null, seed = null;
+  const request = JSON.stringify(task.state), requestedGpu = task.policy.requested === 'gpu' && task.state.dim > 1 && !task.policy.forceGpuFailure;
+  const radix = (n) => Number.isInteger(n) && n >= 2 && (n & (n-1)) === 0;
+  const gpuLpt = requestedGpu && !task.policy.disableLpt && radix(task.state.n) && typeof wasm.GpuLptSeed === 'function';
+  const gpuPm = requestedGpu && !task.policy.disablePm && radix(task.state.forceMesh);
+  const gpuDeposit = requestedGpu && !task.policy.disableDeposit;
+  const forcePhysical = ['forceLptFailure','forcePmFailure','forceDepositFailure'].some(k => task.policy[k]);
+  let lptExecution = { backend: 'cpu', precision: 'f32 nLPT tensors; f64 cosmological growth/state', fallbackReason: task.policy.disableLpt ? 'GPU nLPT disabled for an explicit reference comparison.' : requestedGpu && !gpuLpt ? 'GPU nLPT requires a radix lattice in 2D/3D.' : null };
+  let pmExecution = { backend: 'cpu', precision: 'f64', fallbackReason: task.policy.disablePm ? 'Resident PM disabled for an explicit reference comparison.' : requestedGpu && !gpuPm ? 'Resident PM requires a power-of-two force mesh.' : null };
+  let depositExecution = { backend: 'cpu', provenance: 'cpu-exact', arithmeticPrecision: 'f64 geometry and accumulation', fallbackReason: task.policy.disableDeposit ? 'GPU exact deposition disabled for an explicit reference comparison.' : null };
+  const source = gpuLpt ? 'gpu-f32' : 'cpu-f64', arithmetic = gpuPm ? 'f32' : 'f64', depositSource = gpuDeposit ? DEPOSIT_SOURCE : 'cpu-exact';
+  const key = physicalKey(task.state);
   try {
-    const meta = parseJson(pending.metadata(), 'pending PM metadata');
+    if (!ephemeral && !forcePhysical) {
+      const cached = session.try_cached_observed_source(request, arithmetic, source, depositSource);
+      if (cached) {
+        const previous = lastPhysical?.key === key && lastPhysical.source === source && lastPhysical.arithmetic === arithmetic && lastPhysical.depositSource === depositSource ? lastPhysical : null;
+        return { prepared: cached,
+          lptExecution: reusedStage(previous?.lptExecution, { ...lptExecution, backend: gpuLpt ? 'gpu' : 'cpu' }),
+          pmExecution: reusedStage(previous?.pmExecution, { ...pmExecution, backend: gpuPm ? 'gpu' : 'cpu' }),
+          depositExecution: parseJson(cached.metadata(),'cached metadata').cache?.observations?.status === 'hit'
+            ? reusedStage(previous?.depositExecution, { ...depositExecution, backend: gpuDeposit ? 'gpu' : 'cpu', provenance: depositSource })
+            : { ...depositExecution, reused: false } };
+      }
+    }
+    if (gpuLpt) {
+      let attempt = null;
+      try {
+        if (session.prepare_initial_slot(request, source) && !task.policy.forceLptFailure) {
+          pending = session.prepare_pending_source(request, source);
+          lptExecution = reusedStage(lastPhysical?.source === source ? lastPhysical.lptExecution : null, { backend: 'gpu', precision: 'f32 spectral nLPT fields; f64 cosmological growth/state' });
+        } else {
+          task.controller ||= new AbortController();
+          phase(task, 'lpt-construction', 'Constructing spectral nLPT sources and displacement tensors on GPU.', true);
+          const context = await getGpuContext(task), validation = await validateLptContext(context, task);
+          attempt = { device: deviceMetadata(context), validation };
+          if (validation.status !== 'pass' || task.policy.forceLptFailure === 'validation') throw new Error('GPU nLPT validation did not pass.');
+          seed = new wasm.GpuLptSeed(request);
+          const meta = parseJson(seed.metadata(), 'GPU nLPT seed metadata');
+          const { runLpt } = await import('./gpu/lpt.js');
+          const lpt = await runLpt(context.device, { dim: meta.dim, n: meta.n, deltaHat: copyF32(seed.delta_hat()), specs: meta.specs }, {
+            signal: task.controller.signal, shouldCancel: () => cancelled(task), maxGpuBytes: task.policy.forceLptFailure === 'limits' ? 1 : 512*1024*1024,
+            onProgress: p => send({ type: 'progress', requestId: task.requestId, phase: 'lpt-construction', ...p }) });
+          if (cancelled(task)) return null;
+          attempt = { ...attempt, timings: lpt.timings, diagnostics: lpt.diagnostics, kernelProvenance: lpt.provenance };
+          if (task.policy.forceLptFailure === 'readback') throw new Error('Forced nLPT readback failure.');
+          if (task.policy.forceLptFailure === 'nonfinite') lpt.fields[0] = NaN;
+          pending = seed.finish_gpu(session, lpt.fields);
+          lptExecution = { backend: 'gpu', precision: 'f32 spectral nLPT fields; f64 cosmological growth/state', ...attempt };
+        }
+      } catch (error) {
+        if (cancelled(task)) return null;
+        lptExecution = { ...lptExecution, backend: 'cpu', fallbackReason: String(error?.message || error), gpuAttempt: attempt };
+        phase(task, 'lpt-recovery', 'Recovering nLPT construction with the retained CPU algorithm.');
+        pending = session.prepare_pending(request);
+      }
+    } else pending = session.prepare_pending(request);
+    const meta = parseJson(pending.metadata(), 'pending physical metadata');
     await yieldToMessages();
     if (cancelled(task)) return null;
-    const meshN = meta.forceMesh;
-    if (!Number.isInteger(meshN) || meshN < 2 || (meshN & (meshN - 1)) !== 0) {
-      return { prepared: pending.finish_cpu(), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: `Resident force FFT requires a power-of-two force mesh; requested mesh ${meshN} was retained on CPU.` } };
+    let pm = null;
+    const cachedValue = !ephemeral && !task.policy.forcePmFailure ? session.cached_pm_positions(pending, arithmetic) : null;
+    const cachedPmPositions = cachedValue == null ? null : copyF32(cachedValue);
+    if (cachedPmPositions) {
+      if (cachedPmPositions.length !== meta.n**meta.dim*4 || !allFinite(cachedPmPositions)) throw new Error('Malformed cached PM positions.');
+      pmExecution = reusedStage(lastPhysical?.arithmetic === arithmetic ? lastPhysical.pmExecution : null, { ...pmExecution, backend: gpuPm ? 'gpu' : 'cpu' });
     }
-    task.controller = new AbortController();
-    phase(task, 'pm-evolution', 'Validating and evolving the cosmological PM state and tangent on GPU.', true);
-    const context = await getGpuContext(task);
-    if (cancelled(task)) return null;
-    const forcedPmFailure = task.policy.forcePmFailure;
-    attempt = { device: deviceMetadata(context), validation: null };
-    if (forcedPmFailure === 'validation') throw new Error('Forced PM device-validation failure.');
-    const validation = await validatePmContext(context, task);
-    attempt = { device: deviceMetadata(context), validation };
-    if (validation.status !== 'pass') throw new Error('The GPU cosmological PM self-check did not pass.');
-    if (forcedPmFailure === 'device-loss') {
-      context.device.destroy();
-      throw new Error('Forced PM device loss.');
+    if (gpuPm && !cachedPmPositions) {
+      let attempt = null;
+      try {
+        task.controller ||= new AbortController();
+        phase(task, 'pm-evolution', 'Evolving the cosmological PM state and tangent on GPU.', true);
+        const context = await getGpuContext(task), validation = await validatePmContext(context, task);
+        attempt = { device: deviceMetadata(context), validation };
+        const failure = task.policy.forcePmFailure;
+        if (validation.status !== 'pass' || failure === 'validation') throw new Error('GPU PM device validation did not pass.');
+        if (failure === 'device-loss') { context.device.destroy(); throw new Error('Forced PM device loss.'); }
+        const flat = copyF64(pending.pm_clocks()), steps = flat.length / 5;
+        if (!Number.isInteger(steps) || steps !== meta.steps) throw new Error('Malformed Rust PM clock schedule.');
+        const clocks = { kick0: new Float64Array(steps), drift: new Float64Array(steps), kick1: new Float64Array(steps) };
+        for (let i=0;i<steps;i++) { clocks.kick0[i]=flat[5*i]; clocks.drift[i]=flat[5*i+1]; clocks.kick1[i]=flat[5*i+2]; }
+        const { runPm } = await import('./gpu/pm.js');
+        pm = await runPm(context.device, { dim:meta.dim,n:meta.n,meshN:meta.forceMesh,boxSize:1,omegaM:meta.omegaM,
+          initialMinimum:Math.min(meta.pmInitialMinimumJacobianF64,meta.pmInitialMinimumJacobianDisplacementF32),positionRepresentation:'lattice-displacement',
+          x:copyF32(pending.pm_displacement()),p:copyF32(pending.pm_p()),dx:copyF32(pending.pm_dx()),dp:copyF32(pending.pm_dp()),clocks,forceKernel:'rust-spectral-cic-v1' }, {
+          signal:task.controller.signal,shouldCancel:()=>cancelled(task),maxGpuBytes:failure==='limits'?1:512*1024*1024,allowCrossing:true,
+          checkDrift:(start,end)=>wasm.pm_drift_minimum(meta.dim,meta.n,start,end),
+          onProgress:p=>send({type:'progress',requestId:task.requestId,phase:'pm-evolution',...p}) });
+        if (cancelled(task)) return null;
+        attempt = { ...attempt, timings:pm.timings,diagnostics:pm.diagnostics };
+        if (failure==='readback') throw new Error('Forced PM readback failure.');
+        if (failure==='nonfinite') pm.x[0]=NaN;
+        if (![pm.x,pm.p,pm.dx,pm.dp].every(allFinite)) throw new Error('GPU PM state is nonfinite.');
+        pmExecution={backend:'gpu',precision:'f32 state/tangent, CIC and FFT; Rust f64 clocks; near-zero drift checks in CPU f64',...attempt};
+      } catch(error) {
+        if (cancelled(task)) return null;
+        pm=null;
+        pmExecution={backend:'cpu',precision:'f64',fallbackReason:String(error?.message||error),gpuAttempt:attempt};
+        await disposeGpu();
+      }
     }
-    const clocksFlat = copyF64(pending.pm_clocks());
-    const steps = clocksFlat.length / 5;
-    if (!Number.isInteger(steps) || steps !== meta.steps) throw new Error('Malformed Rust PM clock schedule.');
-    const clocks = { kick0: new Float64Array(steps), drift: new Float64Array(steps), kick1: new Float64Array(steps) };
-    for (let i = 0; i < steps; i++) { clocks.kick0[i] = clocksFlat[5*i]; clocks.drift[i] = clocksFlat[5*i+1]; clocks.kick1[i] = clocksFlat[5*i+2]; }
-    const { runPm } = await import('./gpu/pm.js');
-    const pm = await runPm(context.device, {
-      dim: meta.dim, n: meta.n, meshN, boxSize: 1, omegaM: meta.omegaM,
-      initialMinimum: Math.min(meta.pmInitialMinimumJacobianF64, meta.pmInitialMinimumJacobianDisplacementF32),
-      positionRepresentation: 'lattice-displacement',
-      x: copyF32(pending.pm_displacement()), p: copyF32(pending.pm_p()),
-      dx: copyF32(pending.pm_dx()), dp: copyF32(pending.pm_dp()), clocks,
-      forceKernel: 'rust-spectral-cic-v1',
-    }, {
-      signal: task.controller.signal, shouldCancel: () => cancelled(task), maxGpuBytes: forcedPmFailure === 'limits' ? 1 : 512 * 1024 * 1024, allowCrossing: true,
-      checkDrift: (start, end) => wasm.pm_drift_minimum(meta.dim, meta.n, start, end),
-      onProgress: (progress) => send({ type: 'progress', requestId: task.requestId, phase: 'pm-evolution', ...progress }),
-    });
-    if (cancelled(task)) return null;
-    attempt = { ...attempt, diagnostics: pm.diagnostics, timings: pm.timings };
-    if (forcedPmFailure === 'readback') throw new Error('Forced PM readback failure.');
-    if (forcedPmFailure === 'nonfinite') pm.x[0] = Number.NaN;
-    phase(task, 'observations', 'Depositing the evolved sheet exactly and computing CPU density statistics.');
-    const observationStarted = performance.now();
-    const prepared = pending.finish_gpu_pm(pm.x, pm.p, pm.dx, pm.dp, Float64Array.from(pm.driftMinima));
-    return { prepared, pmExecution: { backend: 'gpu', precision: 'f32 state, tangent, CIC and FFT; Rust f64 clocks rounded to f32; near-zero drift checks in CPU f64', ...attempt, observationMilliseconds: performance.now() - observationStarted } };
-  } catch (error) {
-    if (cancelled(task)) return null;
-    phase(task, 'pm-recovery', 'Recovering cosmological PM evolution with the retained f64 CPU initial state.');
-    // A failed resident stage must release its device resources before reuse.
-    await disposeGpu();
-    return { prepared: pending.finish_cpu(), pmExecution: { backend: 'cpu', precision: 'f64', fallbackReason: String(error?.message || error), gpuAttempt: attempt } };
-  } finally { pending.free?.(); }
+    let prepared = null;
+    if (gpuDeposit) {
+      let attempt = null;
+      try {
+        task.controller ||= new AbortController();
+        phase(task,'exact-deposit','Clipping sheet simplices against Eulerian cells on GPU.',true);
+        const context=await getGpuContext(task),validation=await validateDepositContext(context,task,wasm);
+        attempt={device:deviceMetadata(context),validation};
+        const failure=task.policy.forceDepositFailure;
+        if(validation.status!=='pass'||failure==='validation')throw new Error('GPU exact-deposition validation did not pass.');
+        const {runExactDeposit}=await import('./gpu/deposit.js');
+        const options={signal:task.controller.signal,shouldCancel:()=>cancelled(task),maxGpuBytes:failure==='limits'?1:512*1024*1024,
+          onProgress:p=>send({type:'progress',requestId:task.requestId,phase:'exact-deposit',...p})};
+        const count=meta.n**meta.dim*4;
+        // CPU PM is computed once by the pending object's retained oracle when
+        // the force backend cannot run on this device; no sampling is involved.
+        const pmPositions=cachedPmPositions || (pm?pm.x:copyF32(pending.pm_reference()).subarray(0,count));
+        const input={dim:meta.dim,n:meta.n,meshN:task.state.mesh,boxSize:1};
+        const lpt=await runExactDeposit(context.device,{...input,positions:copyF32(pending.lpt_positions())},options);
+        const pmDensity=await runExactDeposit(context.device,{...input,positions:pmPositions},options);
+        if(cancelled(task))return null;
+        attempt={...attempt,timings:{lpt:lpt.timings,pm:pmDensity.timings},diagnostics:{lpt:lpt.diagnostics,pm:pmDensity.diagnostics},kernelProvenance:lpt.provenance};
+        if(failure==='readback')throw new Error('Forced exact-deposition readback failure.');
+        if(failure==='nonfinite')lpt.density[0]=NaN;
+        phase(task,'observations','Computing f64 spectra and PDF statistics from exact cell averages.');
+        prepared=cachedPmPositions?session.finish_cached_observed(pending,arithmetic,lpt.density,pmDensity.density):pm?session.finish_gpu_pm_observed(pending,pm.x,pm.p,pm.dx,pm.dp,Float64Array.from(pm.driftMinima),lpt.density,pmDensity.density):session.finish_cpu_observed(pending,lpt.density,pmDensity.density);
+        depositExecution={backend:'gpu',provenance:DEPOSIT_SOURCE,arithmeticPrecision:'f32 cell-local simplex clipping and compensated cell-owner sums',...attempt};
+      }catch(error){
+        if(cancelled(task))return null;
+        depositExecution={backend:'cpu',provenance:'cpu-exact',arithmeticPrecision:'f64 geometry and mass accumulation',fallbackReason:String(error?.message||error),gpuAttempt:attempt};
+      }
+    }
+    if(!prepared){
+      phase(task,'observations','Depositing exact cell averages and computing f64 density statistics.');
+      prepared=cachedPmPositions?session.finish_cached(pending,arithmetic):pm?session.finish_gpu_pm(pending,pm.x,pm.p,pm.dx,pm.dp,Float64Array.from(pm.driftMinima)):session.finish_cpu(pending);
+      if (!prepared) throw new Error('A matched cached PM state became unavailable before finalization.');
+    }
+    if(!ephemeral)lastPhysical={key,source:lptExecution.backend==='gpu'?'gpu-f32':'cpu-f64',arithmetic:pmExecution.backend==='gpu'?'f32':'f64',depositSource:depositExecution.provenance,lptExecution,pmExecution,depositExecution};
+    return {prepared,lptExecution,pmExecution,depositExecution};
+  }finally { pending?.free?.();seed?.free?.();if(ephemeral)session.free(); }
+}
+
+function compactValidation(validation,version){
+  const rows=validation.rows||[],failed=rows.filter(r=>r.pass===false||r.ok===false);
+  let maximumAbsolute=0,maximumBudgetFraction=0;
+  for(const row of rows){if(Number.isFinite(row.absoluteError))maximumAbsolute=Math.max(maximumAbsolute,row.absoluteError);if(Number.isFinite(row.absoluteError)&&row.tolerance>0)maximumBudgetFraction=Math.max(maximumBudgetFraction,row.absoluteError/row.tolerance);}
+  return {status:validation.status,version,budget:validation.budget,fixtures:validation.fixtures,checkCount:rows.length,failedCount:failed.length,maximumAbsolute,maximumBudgetFraction,
+    rows:[{label:'Independent closed-form nLPT component checks',pass:validation.status==='pass',components:rows.length,maximumAbsolute,maximumBudgetFraction}],failures:failed.slice(0,16)};
+}
+async function validateLptContext(context,task){
+  if(context.lptValidation)return context.lptValidation;
+  const {runLptSelfTests}=await import('./gpu/lpt-check.js');
+  const validation=await runLptSelfTests(context.device,{signal:task.controller.signal});
+  if(cancelled(task))throw new Error('nLPT validation cancelled.');
+  const summary=compactValidation(validation,'gpu-nlpt-axis-and-quadratic-v1');
+  if(summary.status==='pass')context.lptValidation=summary;
+  return summary;
+}
+async function validateDepositContext(context,task,wasm){
+  if(context.depositValidation)return context.depositValidation;
+  const {runExactDepositChecks}=await import('./gpu/deposit-check.js');
+  const validation=await runExactDepositChecks(context.device,{signal:task.controller.signal,
+    cpuReference:input=>copyF32(wasm.exact_sheet_density(input.dim,input.n,input.meshN,input.positions))});
+  if(cancelled(task))throw new Error('Exact-deposition validation cancelled.');
+  if(validation.status==='pass')context.depositValidation=validation;
+  return validation;
+}
+async function validateCompensatedContext(context,task){
+  if(context.compensatedValidation)return context.compensatedValidation;
+  const {runCompensatedDirectSelfTests}=await import('./gpu/compensated-check.js');
+  const validation=await runCompensatedDirectSelfTests(context.device,{signal:task.controller.signal});
+  if(cancelled(task))throw new Error('Analytic recovery validation cancelled.');
+  if(validation.status==='pass')context.compensatedValidation=validation;
+  return validation;
 }
 
 async function validatePmContext(context, task) {
@@ -472,15 +614,16 @@ function stageBackends(execution) {
   const channels = execution.channelProvenance || {};
   const directStage = (key) => {
     const provenance = channels[key] || 'cpu-f64';
-    return { provenance, precision: provenance.startsWith('mixed-') ? 'f32 GPU input/kernel with f64 CPU mode recovery' : provenance.includes('f32') ? 'f32 GPU input/kernel' : 'f64 CPU reference' };
+    return { provenance, precision: provenance.startsWith('mixed-cpu') ? 'f32 GPU input/kernel with f64 CPU mode recovery' : provenance.includes('compensated') ? 'high/low f32 inputs and compensated GPU arithmetic' : provenance.includes('f32') ? 'f32 GPU input/kernel' : 'f64 CPU reference' };
   };
   execution.stageBackends = {
-    trajectories: { backend: execution.pmEvolution?.backend === 'gpu' ? 'mixed' : 'cpu', lptBackend: 'cpu', pmBackend: execution.pmEvolution?.backend || 'cpu', spatialFieldPrecision: 'f32 nLPT tensors', statePrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', lptStatePrecision: 'f64', pmStatePrecision: execution.pmEvolution?.backend === 'gpu' ? 'f32' : 'f64', tangentPrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', gpuPackedInputPrecision: 'f32' },
-    exactDeposit: { backend: 'cpu', inputPrecision: 'f32 positions', arithmeticPrecision: 'f64 geometry and mass accumulation', outputPrecision: 'f32 density field' },
+    trajectories: { backend: execution.pmEvolution?.backend === 'gpu' ? 'mixed' : 'cpu', lptBackend: execution.lptConstruction?.backend || 'cpu', pmBackend: execution.pmEvolution?.backend || 'cpu', spatialFieldPrecision: 'f32 nLPT tensors', statePrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', lptStatePrecision: 'f64', pmStatePrecision: execution.pmEvolution?.backend === 'gpu' ? 'f32' : 'f64', tangentPrecision: execution.pmEvolution?.backend === 'gpu' ? 'LPT f64, PM f32' : 'f64', gpuPackedInputPrecision: 'f32' },
+    exactDeposit: { backend: execution.exactDeposit?.backend || 'cpu', provenance: execution.exactDeposit?.provenance || 'cpu-exact', inputPrecision: 'f32 positions', arithmeticPrecision: execution.exactDeposit?.arithmeticPrecision || 'f64 geometry and mass accumulation', outputPrecision: 'f32 density field' },
     pdfs: { backend: 'cpu', inputPrecision: 'f32 density fields', arithmeticPrecision: 'f64 histogram and moment accumulation', outputPrecision: 'f64 summaries' },
     griddedSpectra: { backend: 'cpu', inputPrecision: 'f32 density field', arithmeticPrecision: 'f64 complex FFT and binning', outputPrecision: 'f64 spectrum bins' },
     directPrimal: { lpt: directStage('lpt'), pm: directStage('pm') },
     directJvp: { lpt: directStage('lpt'), pm: directStage('pm') },
+    analyticRecovery: { backend: execution.analyticRecovery?.backend || 'unused', provenance: execution.analyticRecovery?.provenance || null },
     finiteDifference: { backend: execution.finiteDifference?.backend || 'cpu', precision: execution.finiteDifference?.precision || 'f64', provenance: channels.finiteDifference || 'cpu-f64' },
     finalization: { backend: 'cpu', precision: 'f64' },
   };

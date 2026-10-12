@@ -105,6 +105,15 @@ impl Lpt {
     /// `keep_tensors`: keep the gradient tensors of all terms (needed by the
     /// tests and by exact Jacobians; costs dim² fields per term).
     pub fn new(grid: &Grid, eng: &mut FftEngine, delta0_hat: &[C64], order: usize, cosmo: Cosmology, keep_tensors: bool) -> Self {
+        Self::new_impl(grid, eng, delta0_hat, order, cosmo, keep_tensors, true)
+    }
+
+    /// Raw spatial terms before EdS order merging, for independent backend checks.
+    pub fn new_unmerged(grid: &Grid, eng: &mut FftEngine, delta0_hat: &[C64], order: usize, cosmo: Cosmology, keep_tensors: bool) -> Self {
+        Self::new_impl(grid, eng, delta0_hat, order, cosmo, keep_tensors, false)
+    }
+
+    fn new_impl(grid: &Grid, eng: &mut FftEngine, delta0_hat: &[C64], order: usize, cosmo: Cosmology, keep_tensors: bool, merge_eds: bool) -> Self {
         let d = grid.dim;
         let specs = term_specs(order, d);
         let growth = if cosmo.is_eds() { Growth::new_eds(&specs) } else { Growth::new_lcdm(cosmo, &specs, 20.0, 4000) };
@@ -156,13 +165,65 @@ impl Lpt {
             }
             lpt.terms.push(Term { spec, psi, m: Some(m), div, curl });
         }
-        if lpt.growth.is_eds() {
+        if merge_eds && lpt.growth.is_eds() {
             lpt.merge_eds_orders();
         }
         if !keep_tensors {
             for t in lpt.terms.iter_mut() { t.m = None; }
         }
         lpt
+    }
+
+    /// Pack raw term fields for backend comparison. Each term stores per-cell
+    /// displacement, row-major gradient tensor, then three source components.
+    pub fn packed_fields(&self) -> Vec<f32> {
+        let d = self.grid.dim;
+        let n = self.grid.size;
+        let stride = n * (d + d*d + 3);
+        let mut out = vec![0.0; stride * self.terms.len()];
+        for (t, term) in self.terms.iter().enumerate() {
+            let off = t * stride;
+            for i in 0..n {
+                for a in 0..d { out[off + i*(d+d*d+3) + a] = term.psi[a][i]; }
+                if let Some(m) = &term.m {
+                    for a in 0..d*d { out[off + i*(d+d*d+3) + d + a] = m[a][i]; }
+                }
+            }
+            for i in 0..n {
+                let source = off+i*(d+d*d+3)+d+d*d;
+                if !term.div.is_empty() { out[source] = term.div[i]; }
+                for (a, field) in term.curl.iter().enumerate() { out[source+a] = field[i]; }
+            }
+        }
+        out
+    }
+
+    /// Install validated, raw spectral term outputs. Time evolution and EdS
+    /// merging use the same Rust growth functions as CPU construction.
+    pub fn from_packed_fields(grid: &Grid, order: usize, cosmo: Cosmology, fields: &[f32]) -> Result<Self, String> {
+        if !(1..=3).contains(&grid.dim) || !(1..=4).contains(&order) { return Err("Invalid GPU LPT dimension/order".into()); }
+        let d = grid.dim;
+        let n = grid.size;
+        let specs = term_specs(order, d);
+        let stride = n.checked_mul(d+d*d+3).ok_or("GPU LPT field length overflow")?;
+        let expected = stride.checked_mul(specs.len()).ok_or("GPU LPT field length overflow")?;
+        if fields.len() != expected { return Err(format!("Expected {expected} GPU LPT field scalars, got {}", fields.len())); }
+        if fields.iter().any(|v| !v.is_finite()) { return Err("GPU LPT fields must be finite".into()); }
+        let growth = if cosmo.is_eds() { Growth::new_eds(&specs) } else { Growth::new_lcdm(cosmo, &specs, 20.0, 4000) };
+        let mut terms = Vec::with_capacity(specs.len());
+        for (t, spec) in specs.into_iter().enumerate() {
+            let off = t * stride;
+            let psi = (0..d).map(|a| (0..n).map(|i| fields[off+i*(d+d*d+3)+a]).collect()).collect();
+            let m = (0..d*d).map(|a| (0..n).map(|i| fields[off+i*(d+d*d+3)+d+a]).collect()).collect();
+            let src = off + d+d*d;
+            let (div, curl) = if matches!(spec.parents, Parents::Curl(..)) {
+                (vec![], (0..if d==2 {1} else {3}).map(|a| (0..n).map(|i| fields[src+i*(d+d*d+3)+a]).collect()).collect())
+            } else { ((0..n).map(|i| fields[src+i*(d+d*d+3)]).collect(), vec![]) };
+            terms.push(Term { spec, psi, m: Some(m), div, curl });
+        }
+        let mut lpt = Lpt { grid: grid.clone(), order, terms, growth, cosmo };
+        if cosmo.is_eds() { lpt.merge_eds_orders(); }
+        Ok(lpt)
     }
 
     /// Solve ∇·S = Ŝ for a potential field: Ŝ_a = -i k_a Ŝ / k².

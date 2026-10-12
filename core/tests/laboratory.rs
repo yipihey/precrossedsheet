@@ -1,6 +1,6 @@
 use hcc_core::{
     grid::Grid,
-    laboratory::{prepare_pending, run, run_json, LabRequest},
+    laboratory::{exact_sheet_density, prepare_pending, run, run_json, LabRequest, LabSession},
     observables,
 };
 #[test]
@@ -32,6 +32,373 @@ fn checked_lab_conserves_mass_and_has_fixed_time_gradients_in_all_dimensions() {
         assert!(d["guard"]["minimumSimplexJacobian"].as_f64().unwrap() > 0.);
     }
 }
+
+#[test]
+fn lab_session_reuses_physical_trajectory_and_raw_observations_with_exact_keys() {
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        mesh: 16,
+        force_mesh: 16,
+        steps: 32,
+        ..Default::default()
+    };
+    let mut session = LabSession::new();
+    let mut pending = session.prepare_pending(&request).unwrap();
+    assert_eq!(pending.metadata()["pmArithmetic"], "f32");
+    assert_eq!(session.cache_status()["initial"]["status"], "miss");
+    assert_eq!(session.cache_status()["pending"]["status"], "miss");
+    let first = session.finish_cpu(&mut pending).unwrap();
+    let channels = first.direct_cpu();
+    let first_result = first.finish(&channels, r#"{"backend":"cpu"}"#).unwrap();
+    assert_eq!(first_result["cache"]["pm"]["arithmetic"], "f64");
+    let cache = &first_result["cache"];
+    let retained_stages = ["initial", "pending", "pm", "observations"]
+        .iter()
+        .map(|stage| cache[*stage]["bytes"].as_u64().unwrap_or(0))
+        .sum::<u64>();
+    assert!(retained_stages > 0);
+    assert_eq!(
+        cache["bytes"].as_u64().unwrap(),
+        retained_stages,
+        "cache={cache}"
+    );
+
+    let changed_smoothing = LabRequest {
+        smoothing: 0.07,
+        ..request.clone()
+    };
+    let cached = session
+        .try_cached(&changed_smoothing, "f64")
+        .unwrap()
+        .unwrap();
+    let cached_result = cached
+        .finish(&cached.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(cached_result["request"]["smoothing"], 0.07);
+    assert_eq!(cached_result["cache"]["initial"]["status"], "hit");
+    assert_eq!(cached_result["cache"]["pending"]["status"], "hit");
+    assert_eq!(cached_result["cache"]["pm"]["status"], "hit");
+    assert_eq!(cached_result["cache"]["observations"]["status"], "hit");
+    assert!(cached
+        .lpt_displacement_hi()
+        .iter()
+        .zip(cached.lpt_displacement())
+        .all(|(hi, x)| hi == x));
+    let positions = cached_result["x"].as_array().unwrap();
+    for particle in 0..16 * 16 {
+        let ix = particle / 16;
+        let iy = particle % 16;
+        for axis in 0..2 {
+            let q = (if axis == 0 { ix } else { iy }) as f64 / 16.0;
+            let packed = particle * 4 + axis;
+            let expected = positions[particle * 2 + axis].as_f64().unwrap() - q;
+            let reconstructed = cached.lpt_displacement_hi()[packed] as f64
+                + cached.lpt_displacement_lo()[packed] as f64;
+            assert!((reconstructed - expected).abs() < 1e-10);
+        }
+    }
+    assert!(cached
+        .lpt_direction_hi()
+        .iter()
+        .zip(cached.lpt_direction())
+        .all(|(hi, x)| hi == x));
+    assert!(cached.lpt_direction_lo().iter().all(|x| x.is_finite()));
+
+    let changed_observation = LabRequest {
+        order: 3,
+        mesh: 24,
+        ..request.clone()
+    };
+    let recalculated = session
+        .try_cached(&changed_observation, "f64")
+        .unwrap()
+        .unwrap();
+    let recalculated_result = recalculated
+        .finish(&recalculated.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(recalculated_result["request"]["order"], 3);
+    assert_eq!(recalculated_result["request"]["mesh"], 24);
+    assert_eq!(recalculated_result["cache"]["pm"]["status"], "hit");
+    assert_eq!(recalculated_result["cache"]["pending"]["status"], "miss");
+    assert_eq!(
+        recalculated_result["cache"]["observations"]["status"],
+        "miss"
+    );
+
+    let same_epoch = LabRequest {
+        epoch: "scaleFactor".into(),
+        scale_factor: first_result["a"].as_f64().unwrap(),
+        ..request.clone()
+    };
+    let same_epoch_cached = session.try_cached(&same_epoch, "f64").unwrap().unwrap();
+    let same_epoch_result = same_epoch_cached
+        .finish(&same_epoch_cached.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(same_epoch_result["request"]["epoch"], "scaleFactor");
+    assert_eq!(same_epoch_result["cache"]["initial"]["status"], "hit");
+    assert_eq!(same_epoch_result["cache"]["pending"]["status"], "miss");
+    assert_eq!(same_epoch_result["cache"]["pm"]["status"], "hit");
+
+    // The PM path is part of the key: an f32 request cannot consume an f64
+    // trajectory. An invalid request also leaves the completed entry intact.
+    assert!(session
+        .try_cached(&changed_smoothing, "f32")
+        .unwrap()
+        .is_none());
+    assert!(session
+        .try_cached(
+            &LabRequest {
+                force_mesh: 24,
+                ..request.clone()
+            },
+            "f64"
+        )
+        .unwrap()
+        .is_none());
+    assert!(session
+        .prepare_pending(&LabRequest {
+            n: 999,
+            ..request.clone()
+        })
+        .is_err());
+    assert!(session.try_cached(&request, "f64").unwrap().is_some());
+    assert!(session.prepare_initial_slot(&request, "cpu-f64").unwrap());
+
+    let mut gpu_only = LabSession::new();
+    assert!(gpu_only
+        .try_cached_source(&request, "f64", "gpu-f32")
+        .unwrap()
+        .is_none());
+    assert!(!gpu_only.prepare_initial_slot(&request, "gpu-f32").unwrap());
+    assert_eq!(gpu_only.cache_status()["initial"]["status"], "miss");
+    assert!(gpu_only
+        .prepare_pending_source(&request, "gpu-f32")
+        .is_err());
+    assert_eq!(gpu_only.cache_status()["initial"]["status"], "miss");
+
+    let changed_seed = LabRequest {
+        seed: request.seed + 1,
+        ic: "gaussian".into(),
+        initial_cutoff: 1,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.5,
+        ..request.clone()
+    };
+    let _pending = session.prepare_pending(&changed_seed).unwrap();
+    assert_eq!(session.cache_status()["initial"]["status"], "miss");
+
+    session.clear();
+    assert_eq!(session.cache_status()["bytes"], 0);
+    assert!(session.try_cached(&request, "f64").unwrap().is_none());
+}
+
+#[test]
+fn external_density_finish_matches_exact_reference_and_rejects_invalid_mass_without_poisoning_cache(
+) {
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        mesh: 16,
+        force_mesh: 16,
+        steps: 32,
+        ..Default::default()
+    };
+    let mut session = LabSession::new();
+    let mut pending = session.prepare_pending(&request).unwrap();
+    let lpt = pending.lpt_positions();
+    let rho = exact_sheet_density(2, 16, 16, &lpt).unwrap();
+    let pm_reference = pending.pm_reference().unwrap();
+    let pm_positions = pm_reference[..16 * 16 * 4]
+        .iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<_>>();
+    let pmrho = exact_sheet_density(2, 16, 16, &pm_positions).unwrap();
+
+    let mut bad_length = rho.clone();
+    bad_length.pop();
+    let err = session
+        .finish_cpu_observed(
+            &mut pending,
+            &bad_length,
+            &pmrho,
+            "gpu-f32-geometry-overlap",
+        )
+        .err()
+        .expect("short external density must be rejected");
+    assert!(err.contains("rho must contain"));
+    let mut bad_value = rho.clone();
+    bad_value[0] = f32::NAN;
+    let err = session
+        .finish_cpu_observed(&mut pending, &bad_value, &pmrho, "gpu-f32-geometry-overlap")
+        .err()
+        .expect("nonfinite external density must be rejected");
+    assert!(err.contains("finite nonnegative"));
+    let mut bad_mass = rho.clone();
+    bad_mass[0] += 0.01;
+    let err = session
+        .finish_cpu_observed(&mut pending, &bad_mass, &pmrho, "gpu-f32-geometry-overlap")
+        .err()
+        .expect("nonconserved external density must be rejected");
+    assert!(err.contains("mean must be within 1e-6"));
+    let external = session
+        .finish_cpu_observed(&mut pending, &rho, &pmrho, "gpu-f32-geometry-overlap")
+        .unwrap();
+    let external_json = external
+        .finish(&external.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(
+        external_json["cache"]["observations"]["depositSource"],
+        "gpu-f32-geometry-overlap"
+    );
+    assert_eq!(external_json["cache"]["observations"]["status"], "miss");
+    let externally_cached = session
+        .try_cached_observed_source(&request, "f64", "cpu-f64", "gpu-f32-geometry-overlap")
+        .unwrap()
+        .expect("matching external deposit should be reusable");
+    let externally_cached_json = externally_cached
+        .finish(&externally_cached.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(
+        externally_cached_json["cache"]["observations"]["depositSource"],
+        "gpu-f32-geometry-overlap"
+    );
+
+    let mut cpu_session = LabSession::new();
+    let mut cpu_pending = cpu_session.prepare_pending(&request).unwrap();
+    let cpu = cpu_session.finish_cpu(&mut cpu_pending).unwrap();
+    let cpu_json = cpu
+        .finish(&cpu.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    for key in ["rho", "pmRho", "spectra", "pdf", "diagnostics"] {
+        assert_eq!(
+            external_json[key], cpu_json[key],
+            "external exact deposit differs at {key}"
+        );
+    }
+    assert!(cpu_session
+        .try_cached_observed_source(&request, "f64", "cpu-f64", "gpu-f32-geometry-overlap",)
+        .unwrap()
+        .is_none());
+
+    assert!(exact_sheet_density(2, 16, 16, &lpt[..lpt.len() - 1]).is_err());
+    let mut nonfinite = lpt;
+    nonfinite[0] = f32::INFINITY;
+    assert!(exact_sheet_density(2, 16, 16, &nonfinite).is_err());
+}
+
+#[test]
+fn cached_pm_positions_rebuild_new_mesh_and_never_reuse_stale_external_deposits() {
+    let request = LabRequest {
+        dim: 2,
+        n: 16,
+        mesh: 16,
+        force_mesh: 16,
+        steps: 32,
+        ..Default::default()
+    };
+    let mut session = LabSession::new();
+    let mut pending = session.prepare_pending(&request).unwrap();
+    let cpu = session.finish_cpu(&mut pending).unwrap();
+    let _ = cpu
+        .finish(&cpu.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+
+    let mut pending = session.prepare_pending(&request).unwrap();
+    let cached = session
+        .finish_cached(&mut pending, "f64")
+        .unwrap()
+        .expect("matching PM should finalize from the retained result");
+    let cached = cached
+        .finish(&cached.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(cached["cache"]["pm"]["status"], "hit");
+    assert_eq!(cached["cache"]["observations"]["status"], "hit");
+
+    let changed_mesh = LabRequest {
+        mesh: 24,
+        ..request.clone()
+    };
+    let mut pending = session.prepare_pending(&changed_mesh).unwrap();
+    let pm_positions = session
+        .cached_pm_positions(&pending, "f64")
+        .expect("matching PM state should be available without evolving it again");
+    let rho = exact_sheet_density(2, 16, 24, &pending.lpt_positions()).unwrap();
+    let pmrho = exact_sheet_density(2, 16, 24, &pm_positions).unwrap();
+    let prepared = session
+        .finish_cached_observed(
+            &mut pending,
+            "f64",
+            &rho,
+            &pmrho,
+            "gpu-f32-geometry-overlap",
+        )
+        .unwrap();
+    let result = prepared
+        .finish(&prepared.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(result["cache"]["pm"]["status"], "hit");
+    assert_eq!(result["cache"]["observations"]["status"], "miss");
+    let observation_grid = Grid::new(2, 24, 1.0);
+    assert_eq!(
+        result["rho"],
+        serde_json::to_value(observables::smooth_density(
+            &observation_grid,
+            &rho,
+            changed_mesh.smoothing,
+        ))
+        .unwrap()
+    );
+    assert_eq!(
+        result["pmRho"],
+        serde_json::to_value(observables::smooth_density(
+            &observation_grid,
+            &pmrho,
+            changed_mesh.smoothing,
+        ))
+        .unwrap()
+    );
+
+    // Same observation key, deliberately different but conserved deposits.
+    // The supplied values must replace the previous cached fields.
+    let uniform = vec![1.0f32; 24 * 24];
+    let mut pending = session.prepare_pending(&changed_mesh).unwrap();
+    let prepared = session
+        .finish_cached_observed(
+            &mut pending,
+            "f64",
+            &uniform,
+            &uniform,
+            "gpu-f32-geometry-overlap",
+        )
+        .unwrap();
+    let result = prepared
+        .finish(&prepared.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(result["rho"], serde_json::to_value(&uniform).unwrap());
+    assert_eq!(result["pmRho"], serde_json::to_value(&uniform).unwrap());
+
+    let mut invalid = uniform.clone();
+    invalid[0] += 0.01;
+    assert!(session
+        .finish_cached_observed(
+            &mut pending,
+            "f64",
+            &invalid,
+            &uniform,
+            "gpu-f32-geometry-overlap",
+        )
+        .is_err());
+    let still_cached = session
+        .try_cached_observed_source(&changed_mesh, "f64", "cpu-f64", "gpu-f32-geometry-overlap")
+        .unwrap()
+        .expect("invalid payload must leave the previous valid observations intact");
+    let still_cached = still_cached
+        .finish(&still_cached.direct_cpu(), r#"{"backend":"cpu"}"#)
+        .unwrap();
+    assert_eq!(still_cached["rho"], serde_json::to_value(&uniform).unwrap());
+}
+
 #[test]
 fn requests_reject_unbounded_allocations_and_invalid_parameters() {
     for s in [
@@ -288,10 +655,9 @@ fn prepared_run_finishes_identically_and_validates_direct_channels() {
         for i in 0..grid.size {
             let q = grid.unravel(i);
             for axis in 0..grid.dim {
-                x[i * grid.dim + axis] =
-                    q[axis] as f64 * grid.dx()
-                        + hi[i * 4 + axis] as f64
-                        + lo.map_or(0.0, |values| values[i * 4 + axis] as f64);
+                x[i * grid.dim + axis] = q[axis] as f64 * grid.dx()
+                    + hi[i * 4 + axis] as f64
+                    + lo.map_or(0.0, |values| values[i * 4 + axis] as f64);
             }
         }
         x

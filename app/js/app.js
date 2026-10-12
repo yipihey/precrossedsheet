@@ -79,7 +79,7 @@ numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed se
 selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of time steps in the particle-mesh trajectory.');
-selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU until validated)']], 'CPU is the default. GPU attempts validated cosmological PM evolution, continuous sheet modes and compensated centered finite differences in 2D/3D. The PM force FFT requires a power-of-two force grid; other grids retain CPU PM. Weak LPT modes may use f64 CPU recovery. Exact sheet deposition stays on CPU; 1D and automatic selection use CPU.');
+selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU)']], 'CPU is the default and automatic selection uses the f64 CPU reference. A GPU request can construct nLPT fields on radix lattices, evolve PM on power-of-two force meshes, clip the exact P₀ sheet, and recover weak analytic modes with compensated arithmetic. CPU f64 recovery remains available when a GPU stage fails validation or a mode misses its accuracy gate. One-dimensional runs use CPU.');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Controls density, PDFs, and spectra; this does not change force resolution.');
 selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Independent force resolution. Change it separately to measure force-grid sensitivity.');
 activeControlGroup=controlSection('Density observation');
@@ -124,7 +124,7 @@ function ensureWorker(){
   if(worker)return worker;
   worker=new Worker('./js/worker.js',{type:'module'});
   worker.onmessage=({data})=>{
-    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','pm-evolution':'Evolving PM trajectories on GPU…','observations-sync':'Depositing the sheet exactly…','pm-recovery-sync':'Recovering PM trajectories on CPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
+    if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
     if(data.type==='cancelled'&&data.requestId===activeRequestId){clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}
     if(data.type==='shutdown-ack'){hardTerminateWorker();return;}
@@ -139,7 +139,7 @@ function ensureWorker(){
   return worker;
 }
 function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;execution=null;exportJsonButton.disabled=true;status.textContent='Preparing…';notice.textContent='Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,state:job.request,policy:job.policy});}
-function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;if(['preparing','preparing-sync','finalizing','finalizing-sync','direct-sync','direct-recovery-sync','finite-difference-sync','observations-sync','pm-recovery-sync','queued'].includes(activePhase)){hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}worker.postMessage({type:'cancel',requestId:id});status.textContent='Stopping obsolete GPU work…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},5000);}
+function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;if(['preparing','preparing-sync','finalizing','finalizing-sync','direct-sync','direct-recovery-sync','finite-difference-sync','lpt-recovery-sync','observations-sync','pm-recovery-sync','queued'].includes(activePhase)){hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}return;}worker.postMessage({type:'cancel',requestId:id});status.textContent='Stopping obsolete GPU work…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},5000);}
 function cancelObsoleteForCachedResult(){if(activeRequestId!=null||pendingRun)retireWorker();}
 function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
 function hardTerminateWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;if(!old)return;old.onmessage=null;old.onerror=null;old.terminate();}
@@ -289,15 +289,27 @@ function showExecution(meta){
   backendMeta.replaceChildren();
   $('h3','control-subheading',backendMeta,'Run backend and precision');
   const grid=$('div','execution-meta',backendMeta);
-  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','PM evolution','PM validation','PM timings','Finite difference','FD validation','FD timings','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  const compact=(label,value)=>{if(value==null||value==='')return;const wide=['Precision','GPU validation','Validation budget','nLPT construction','PM evolution','Exact deposit','Analytic recovery','Cache','PM validation','PM timings','Finite difference','FD validation','FD timings','Timings','Stage backends'].includes(label);const item=$('div',`execution-meta-item${wide?' execution-meta-item-wide':''}`,grid);$('span','metric-label',item,label);$('strong','metric-value',item,String(value));};
+  const stageSummary=stage=>[stage.backend,stage.precision||stage.arithmeticPrecision||stage.provenance,stage.reused?'reused from cache':null,stage.fallbackReason?`recovery: ${stage.fallbackReason}`:null].filter(Boolean).join(' · ');
   compact('Requested backend',meta.requestedBackend);
   compact('Executed backend',meta.executedBackend);
   compact('Precision',meta.precision);
+  if(meta.lptConstruction)compact('nLPT construction',stageSummary(meta.lptConstruction));
   const pm=meta.pmEvolution;
   if(pm){
-    compact('PM evolution',`${pm.backend} · ${pm.precision}${pm.fallbackReason?` · ${pm.fallbackReason}`:''}`);
+    compact('PM evolution',stageSummary(pm));
     if(pm.validation)compact('PM validation',`${pm.validation.status} · ${pm.validation.rows?.length||0} FFT/force/trajectory checks`);
     if(pm.timings){const labels={compileMs:'setup',uploadMs:'upload',kernelMs:'force/KDK',diagnosticMs:'initial orientation',cpuCheckMs:'CPU orientation rechecks',readbackMs:'final readback',totalMs:'total'};compact('PM timings',Object.entries(pm.timings).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${labels[k]||k} ${num(v,3)} ms`).join(' · '));}
+  }
+  if(meta.exactDeposit)compact('Exact deposit',stageSummary(meta.exactDeposit));
+  if(meta.analyticRecovery)compact('Analytic recovery',stageSummary(meta.analyticRecovery));
+  const cache=meta.cache;
+  if(cache){
+    const levels=['initial','pending','pm','observations'];
+    const hits=levels.filter(name=>cache[name]?.status==='hit');
+    const detail=levels.filter(name=>cache[name]?.status).map(name=>`${name} ${cache[name].status}${cache[name].bytes!=null?` ${(cache[name].bytes/1048576).toFixed(1)} MiB`:''}`).join(' · ');
+    const retained=Number.isFinite(cache.bytes)?`${(cache.bytes/1048576).toFixed(1)} / ${(Number(cache.limitBytes||0)/1048576).toFixed(1)} MiB retained`:null;
+    compact('Cache',[hits.length?`hit levels: ${hits.join(', ')}`:'no levels reused',detail,retained].filter(Boolean).join(' · '));
   }
   const fd=meta.finiteDifference;
   if(fd){
@@ -329,7 +341,7 @@ function showExecution(meta){
   }
 
   const timings=meta.timings||meta.gpuAttempt?.timings||{},stages=timings.stages||{};
-  const stageLabels={preparationMilliseconds:'preparation',directMilliseconds:device?'direct/setup':'CPU direct',finiteDifferenceMilliseconds:`${fd?.backend==='gpu'?'GPU':'CPU'} finite difference`,cpuRecoveryMilliseconds:'CPU recovery',finalizationMilliseconds:stages.cpuRecoveryMilliseconds>0?'finalization (includes recovery)':'finalization'};
+  const stageLabels={preparationMilliseconds:'preparation',directMilliseconds:device?'direct/setup':'CPU direct',finiteDifferenceMilliseconds:`${fd?.backend==='gpu'?'GPU':'CPU'} finite difference`,cpuRecoveryMilliseconds:'CPU recovery',finalizationMilliseconds:stages.cpuRecoveryMilliseconds>0||meta.analyticRecovery?.backend==='gpu'?'finalization (includes recovery)':'finalization'};
   const stageParts=Object.entries(stages).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)).map(([k,v])=>`${stageLabels[k]||k.replace(/Milliseconds$/,'')} ${num(v,3)} ms`);
   if(typeof timings.kernelMs==='number'&&Number.isFinite(timings.kernelMs))stageParts.unshift(`GPU kernel ${num(timings.kernelMs,3)} ms`);
   if(typeof timings.totalMs==='number'&&Number.isFinite(timings.totalMs))stageParts.unshift(`GPU total ${num(timings.totalMs,3)} ms`);
@@ -339,8 +351,8 @@ function showExecution(meta){
   const direct=backends.directPrimal||{};
   const directSummary=['LPT','PM'].map((name)=>{const item=direct[name.toLowerCase()];return item?`${name} ${item.provenance||item.backend||'unknown'}`:null;}).filter(Boolean);
   const precisionSummary=[];
-  if(backends.trajectories)precisionSummary.push(`nLPT fields f32 → LPT state/tangent f64 · PM ${backends.trajectories.pmBackend||'cpu'} ${backends.trajectories.pmStatePrecision||'f64'}`);
-  if(backends.exactDeposit)precisionSummary.push('deposit f32 positions→f64 geometry/mass→f32 density');
+  if(backends.trajectories)precisionSummary.push(`nLPT ${backends.trajectories.lptBackend||'cpu'} fields f32 / growth-state f64 · PM ${backends.trajectories.pmBackend||'cpu'} ${backends.trajectories.pmStatePrecision||'f64'} state`);
+  if(backends.exactDeposit)precisionSummary.push(`deposit ${backends.exactDeposit.backend||'cpu'} · ${backends.exactDeposit.arithmeticPrecision||'f64 geometry and mass accumulation'}`);
   if(backends.pdfs)precisionSummary.push('PDF f32 density→f64 stats');
   if(backends.griddedSpectra)precisionSummary.push('FFT f32 field→f64 transform/bins');
   if(backends.finiteDifference)precisionSummary.push(`FD ${backends.finiteDifference.backend} · ${backends.finiteDifference.precision}`);

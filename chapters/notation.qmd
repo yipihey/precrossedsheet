@@ -40,3 +40,5 @@ in that section bounds the absolute phase slope along this path, rather than a
 particle mass. For the local divided-difference series, $c$ is the knot count,
 $\beta_j$ a centered angular phase, and $e_r,h_m,g_m$ are elementary symmetric,
 complete homogeneous and factorial-normalized coefficients, respectively.
+
+For adaptive GPU series truncation in @eq-gpu-adaptive-tail, $R=\sum_j|\beta_j|$ is an angular knot radius and $K$ is the highest retained coefficient order. These are local numerical parameters, distinct from the physical filter scales $R_f,R_s$. GPU exact-deposit output is $r=\rho/\bar\rho$, so global unit mass means the arithmetic cell mean of $r$ is one.

@@ -267,3 +267,16 @@ conservative factorial-tail bound and normalized coefficient recurrence.
 An unmet tail bound at the resource cap returns nonfinite arithmetic for
 downstream rejection. Independent integral-series tests cover values and
 centered derivatives of symmetric repeated knots.
+
+
+## 2026-10-11 — complete GPU optimization paths (engine 0.6.0)
+
+Spatial nLPT construction is a separate backend boundary: Rust supplies actual Fourier initial modes and raw term specifications; WGSL builds sources and spectral fields; Rust installs them and applies existing growth and EdS merging. The explicit CPU raw-field oracle is used by tests, never invisibly in a successful GPU construction. The flat payload is term-major, with per-cell displacement, row-major gradient and three source components. Malformed fields fail before seed consumption.
+
+Exact GPU observation preserves geometric intersection and positive fixed simplex masses. Cell-local coordinates and an interior centroid for tetrahedron moment fans reduce cancellation. Per-cell Kahan floating sums replace upstream fixed-point accumulation; integer atomics only form contribution lists. Degeneracy, capacity, graph and nonfinite diagnostics are explicit. External laboratory fields require finite nonnegative entries and unit mean within 1e-6, without renormalization. CPU clipping can recover an observation while retaining successful PM and nLPT stages.
+
+Compensated analytic recovery receives the actual amplitude direction, independently of FD endpoint geometries. Only failing ordinary modes need this observer; an unchanged per-mode derivative gate still controls CPU recovery. CPU JVP integrals reuse fixed knot buffers and divided-difference storage. FD specializes recurrence/sorting by knot count and reuses vertex projections; an inflated factorial-tail bound selects terms up to the prior safe cap of 40. Completed submission boundaries and reduction ownership remain unchanged.
+
+The worker owns a bounded native session with one entry per level. Keys include physical initial modes/cosmology/filters, epoch/order, PM force mesh/steps, observation mesh, and each executed precision source. Observation smoothing does not invalidate unsmoothed fields. Prepared orientation diagnostics are retained with geometry. Combined initial/geometry/PM/raw-observation retention is limited to 256 MiB and all retained capacities enter the reported count. Failed input cannot replace a valid entry. Cache history is execution metadata rather than part of the physical request.
+
+GPU startup checks and full-request comparisons precede performance claims. Benchmarks compare the GPU path with new stages disabled against the optimized path at the same request, and report cache-hot runs separately. Initial-condition generation, growth, PDFs, gridded FFTs and finalization remain CPU. Portable compensated arithmetic is not a native-f64 guarantee. Scientific scope stays with established pre-shell-crossing results; crossed outputs remain diagnostic continuations.

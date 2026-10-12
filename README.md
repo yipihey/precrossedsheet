@@ -45,12 +45,13 @@ MIT license; upstream copyright retained. `CITATION.cff` describes this project.
 The optional WebGPU backend evaluates continuous 2D/3D sheet modes and JVPs,
 with selective f64 CPU recovery for weak LPT modes. It also evolves cosmological
 PM positions, canonical momenta and amplitude tangents on the GPU, using Rust
-kick/drift clocks and a reusable radix-2 FFT. CPU remains the default. Initial
-conditions, nLPT construction, exact meshing and PDFs use Rust/Wasm.
+kick/drift clocks and a reusable radix-2 FFT. Validated GPU paths also construct spectral nLPT fields, integrate exact geometric cell overlaps and recover weak analytic modes with compensated arithmetic. Initial Fourier conditions, growth functions, PDFs, gridded spectra and finalization use Rust/Wasm. CPU remains the default; automatic selection uses CPU.
 Centered amplitude finite differences use compensated GPU endpoint integrals
 after device validation, with f64 CPU recovery and the unchanged derivative gate. Non-power-of-two force meshes retain CPU PM with an explicit reason.
 Run `node scripts/test_gpu.mjs --require-gpu --full` and
 `node scripts/test_gpu.mjs --require-gpu --resident` after `make wasm`; see the
 [observer record](docs/webgpu-results.md), [resident PM record](docs/webgpu-pm-results.md),
 and [finite-difference record](docs/webgpu-fd-results.md).
-Run `node scripts/test_gpu.mjs --require-gpu --fd` for endpoint parity and worker checks.
+Run `node scripts/test_gpu.mjs --require-gpu --fd` for endpoint parity and worker checks, and `--optimization-benchmark` for the complete optimization checks and matched 32³/64³ measurements.
+
+Engine 0.6.0 adds optional GPU spectral nLPT construction, cell-local exact geometric sheet deposition and compensated analytic weak-mode recovery, plus bounded native preparation/observation caches and specialized centered-FD series kernels. CPU and automatic selection remain the reference policies. See [the optimization record](docs/webgpu-optimization-results.md) and [the implementation appendix](https://yipihey.github.io/precrossedsheet/chapters/implementation.html) for precision, recovery and reproduction commands.

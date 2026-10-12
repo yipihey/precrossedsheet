@@ -80,17 +80,19 @@ The checked `laboratory::run_json` facade accepts exported manifests as well as 
 
 ## Hybrid WebGPU observation backend {#sec-gpu-backend}
 
-The optional compute backend evaluates the continuous fixed-mass sheet modes and their analytic position directions. Rust/Wasm constructs the initial field, integrates growth, builds nLPT trajectories, clips the sheet onto the observation grid, and computes PDFs and gridded spectra. PM trajectories can use either the f64 CPU reference or the resident GPU solver described below. The continuous-mode estimator uses the same sheet connectivity and fixed simplex masses for either trajectory source.
+The optional compute backend evaluates the continuous fixed-mass sheet modes and their analytic position directions. Rust/Wasm constructs the initial Fourier field and integrates cosmological growth. Spectral nLPT construction and exact geometric deposition can also run on GPU, as described in @sec-gpu-lpt and @sec-gpu-exact-deposit. PDFs, gridded spectra and physical-unit finalization use Rust f64 arithmetic. PM trajectories can use either the f64 CPU reference or the resident GPU solver described below. The continuous-mode estimator uses the same sheet connectivity and fixed simplex masses for either trajectory source.
 
 The prepared-run boundary retains the double-precision trajectory and tangent arrays. A GPU failure therefore reuses the prepared CPU state rather than repeating the physical calculation. Finalization uses the same Rust power normalization and unit conversion as the synchronous facade. The boundary is exposed by {{< src laboratory::prepare >}} and {{< src laboratory::PreparedLabRun >}}, and its compatibility and selective-recovery contracts are pinned by {{< test prepared_run_finishes_identically_and_validates_direct_channels "prepared-run contract" >}}.
 
 | Stage | Arithmetic and execution |
 |---|---|
-| Initial conditions, growth and nLPT trajectory generation | Existing Rust/Wasm implementation |
+| Initial Fourier conditions and cosmological growth | Rust/Wasm reference |
+| nLPT spatial sources, displacements and tensors | Rust FFT reference or validated GPU FFT; f64 time factors and trajectory assembly |
 | Cosmological PM trajectory and tangent | Rust f64 reference or validated resident GPU f32 solver |
-| Exact density, PDFs and gridded power | Existing Rust/Wasm implementation |
+| Exact density | CPU f64 clipping or validated GPU f32 cell-local clipping and compensated accumulation |
+| PDFs and gridded power | Rust f64 statistics and FFT on f32 density fields |
 | Continuous LPT/PM modes and analytic JVPs | Optional WGSL f32 kernel; CPU reference remains available |
-| Weak LPT mode recovery | Retained CPU f64 trajectory and direction |
+| Weak LPT mode recovery | Compensated GPU analytic observer, then retained CPU f64 reference when required |
 | Centered finite difference | Optional compensated GPU endpoint observer; cached CPU f64 reference and recovery |
 | Power, derivative and physical units | Rust f64 finalization |
 
@@ -104,7 +106,7 @@ The first backend covers 2D and 3D, including supported non-power-of-two lattice
 
 The portable [WGSL floating-point contract](https://www.w3.org/TR/WGSL/#floating-point-types) supplies f32 rather than an f64 path. The [GPU self-check](../app/gpu-test.html) compares primal and JVP components with independently converged barycentric quadrature. The complete-request harness separately compares full-f64 Rust inputs, f64 kernels on quantized inputs, and GPU arithmetic. Its comparison target is $|\Delta F|\le10^{-6}+10^{-4}|F_{\rm ref}|$ component by component, with the same target for the JVP. This absolute floor makes cancellation-dominated modes interpretable; it does not assert uniform relative accuracy for arbitrarily weak modes.
 
-The existing amplitude derivative gate remains $|\partial_A P-P_{\rm FD}|/\max(|\partial_A P|,10^{-9})\le10^{-5}$ in internal unit-box units, at $h=10^{-4}$. The centered finite difference uses the compensated endpoint kernel in @sec-gpu-fd when its device check passes; it retains the f64 CPU reference and recovery route. Ordinary independently reduced f32 endpoint powers are insufficient for this check. When an LPT mode exceeds the gate, its value and tangent are recovered together on CPU f64; PM channels and passing LPT modes can remain on GPU. The manifest records the executed backend of each mode. This recovery is a numerical precision policy, independent of the shell-crossing caution.
+The existing amplitude derivative gate remains $|\partial_A P-P_{\rm FD}|/\max(|\partial_A P|,10^{-9})\le10^{-5}$ in internal unit-box units, at $h=10^{-4}$. The centered finite difference uses the compensated endpoint kernel in @sec-gpu-fd when its device check passes; it retains the f64 CPU reference and recovery route. Ordinary independently reduced f32 endpoint powers are insufficient for this check. When an LPT mode exceeds the gate, its value and analytic tangent are first recomputed together with compensated GPU arithmetic. Any remaining failure uses the CPU f64 reference; PM channels and passing LPT modes can remain on GPU. The manifest records the executed backend of each mode. This recovery is a numerical precision policy, independent of the shell-crossing caution.
 
 CPU is the default. Selecting GPU attempts the accelerated observer and reports resource, capability or numerical fallback. Automatic selection remains on CPU until a device/workload policy is supported by accuracy and end-to-end measurements. Rendering uses the existing Canvas2D/SVG tier independently. Device limits, adapter metadata when exposed, shader hashes, reduction layout, stage durations and recovery decisions accompany the numerical results. Cross-device GPU replay uses stated tolerances rather than bitwise equality.
 
@@ -120,7 +122,7 @@ python3 scripts/profile_native_stages.py --dim 3 --repeats 3 --output native-pro
 
 The browser runner requires Chrome (or `CHROME_PATH`) and has no npm dependencies. A missing adapter is reported as a skip; `--require-gpu` makes that a failing requirement. Normal hosted CI runs the native, Wasm and worker contracts, while GPU checks require a GPU-capable runner. See the [implementation plan](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-backend-plan.md) and [measurement record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-results.md) for the tested requests and device-specific limits.
 
-GPU nLPT construction, geometric clipping and more precise analytic mode/JVP arithmetic remain subsequent stages. Selective CPU recovery of weak LPT analytic modes remains part of the hybrid observer policy.
+The independently checked extensions below retain selective CPU recovery for refused or numerically unsuccessful stages. The [optimization validation record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-optimization-results.md) separates raw-field comparisons, full-request recovery and measured timings.
 
 ## Resident cosmological PM evolution {#sec-gpu-pm}
 
@@ -132,13 +134,13 @@ Each force evaluation performs CIC deposition of both density and its direction,
 
 The FFT is a Stockham radix-2 complex transform adapted from the pinned MIT [Hopf–Cole implementation](https://github.com/yipihey/hopf-cole-cosmology/blob/3a3a13b9ba817c5b4f8f9f26314715845e13d4ad/app/js/gpu/fft3d.js). It preserves last-axis-fast storage, the forward sign, and inverse normalization. The force denominator retains Nyquist contributions to $|\boldsymbol k|^2$, while odd derivatives use the zeroed Nyquist component from {{< src grid::Grid::kd >}}. A non-power-of-two force mesh retains CPU PM with an explicit reason; the requested lattice and observation grid are unchanged.
 
-CIC deposition uses integer atomics to build per-node lists of particle contributions. One invocation sums the list for each node in floating point. This avoids fixed-point mass quantization and conflicting floating writes, but insertion order can depend on device scheduling, so cross-device and repeated-run agreement is assessed with tolerances. These CIC fields are force inputs. Displayed sheet density still uses exact geometric cell overlaps on CPU, with the same positive-stream-mass accounting, PDF weighting and smoothing conventions.
+CIC deposition uses integer atomics to build per-node lists of particle contributions. One invocation sums the list for each node in floating point. This avoids fixed-point mass quantization and conflicting floating writes, but insertion order can depend on device scheduling, so cross-device and repeated-run agreement is assessed with tolerances. These CIC fields are force inputs. Displayed sheet density uses the separate exact geometric overlap observer, with the same positive-stream-mass accounting, PDF weighting and smoothing conventions; it can use CPU or GPU clipping.
 
 ### Drift orientation and precision
 
 Every drift evaluates the determinant polynomial on each interval, triangle or Kuhn tetrahedron at both endpoints and at all interior stationary points. A flag records nonfinite polynomial arithmetic. When the GPU candidate is at most $10^{-3}$, or is invalid, Rust recomputes the complete drift minimum in f64 from the f32 endpoints actually evolved. The threshold is a recheck policy, not a universal error bound. Initial orientation is checked for both the original f64 and quantized f32 initial sheet. The first failed drift is retained as a bracket, and evolution continues with the shell-crossing caution. The CPU extrema calculation is exposed by {{< src nbody::minimum_drift_jacobian >}}, with an interior-fold test {{< test drift_guard_detects_interior_fold_with_positive_endpoint_jacobians "continuous drift extrema" >}} and boundary-bracket test {{< test pending_gpu_result_records_first_verified_drift_bracket "crossing bracket" >}}.
 
-PM state, tangents, CIC sums and FFT fields use f32; Rust clocks are rounded to f32 when uploaded. Exact observation integration and final power/unit conversion retain the existing CPU arithmetic. The per-device gate compares FFT modes, a direct-DFT CIC force/JVP reference, and complete PM states against Rust with both original and quantized initial inputs. A separate full suite checks observation statistics, crossings, resource refusal and cancellation. The measured requests, tolerances, source hashes and timings are recorded in [the resident-backend validation record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-pm-results.md).
+PM state, tangents, CIC sums and FFT fields use f32; Rust clocks are rounded to f32 when uploaded. Exact observation integration uses its separately recorded CPU or GPU arithmetic; final power and unit conversion remain CPU f64. The per-device gate compares FFT modes, a direct-DFT CIC force/JVP reference, and complete PM states against Rust with both original and quantized initial inputs. A separate full suite checks observation statistics, crossings, resource refusal and cancellation. The measured requests, tolerances, source hashes and timings are recorded in [the resident-backend validation record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-pm-results.md).
 
 ```sh
 node scripts/test_gpu.mjs --require-gpu --resident --output resident-checks.json
@@ -226,8 +228,7 @@ The WGSL evaluator carries high/low pairs through phase construction,
 exponential divided differences and fixed-order reductions. It uses explicit
 rounding barriers and split-product residuals, with reduced-phase polynomials
 for the complex exponential and the same periodic simplex lifts and fixed
-masses as the other continuous observer. Phase spans below 3 radians use
-40 normalized series terms; wider separated knots use divided differences. Both
+masses as the other continuous observer. Phase spans below 3 radians use a factorial-tail rule to select the retained normalized series terms, capped at 40; wider separated knots use divided differences. Both
 endpoint sheets retain their own geometry, including orientation reversals.
 The four vec4 input arrays occupy 16 MiB at $64^3$. For the six observed modes,
 per-cell complex plus/minus/delta expansions occupy another 72 MiB. Separate passes
@@ -257,7 +258,14 @@ coefficients; the
 keeps them in registers. A phase span below 3 radians gives
 $R=\sum_j|\beta_j|\le7.5$ for at most five knots, and
 $|h_m|\le R^m$ bounds the omitted factorial tail after 40 terms below
-$10^{-17}g_0$. Normalization avoids separately constructing large $h_m$ and
+$10^{-17}g_0$. The optimized kernel specializes each knot count and selects the shortest retained order $K\le40$ satisfying a conservative tail estimate. For $R<K+c+1$, the exact-arithmetic bound is
+
+$$
+\left|\sum_{m>K}i^m g_m\right|\le
+\frac{R^{K+1}}{(K+c)!}\frac{1}{1-R/(K+c+1)}.
+$$ {#eq-gpu-adaptive-tail}
+
+The GPU inflates the computed radius and ratio before comparison with $5\times10^{-18}g_0$; device and retained-f64 checks still determine acceptance of its rounded arithmetic. A zero individual coefficient never ends the series. Projected midpoint displacements and endpoint gaps are computed once per cell vertex and reused at all three Gauss nodes. The completed submission boundaries and 32-cell reduction layout are retained. Normalization avoids separately constructing large $h_m$ and
 very small inverse factorials. Independent arithmetic, repeated-knot and
 complete-request fixtures check the resulting observer.
 
@@ -293,3 +301,50 @@ See the [finite-difference validation record](https://github.com/yipihey/precros
 for requests, observed discrepancies, measured timing scopes and device limits.
 
 {{< lab "v=3&dim=3&n=32&epoch=scaleFactor&a=0.25&steps=32&mesh=32&force=32&backend=gpu&view=gradient" "GPU centered finite-difference response" >}}
+
+
+## Spectral nLPT construction on GPU {#sec-gpu-lpt}
+
+Spatial nLPT fields depend on the initial modes and their polynomial source recursion, while cosmological time factors depend on the background and epoch. The GPU boundary preserves this separation. Rust generates the actual initial Fourier coefficients, including the physical spectrum normalization and filters. The GPU builds every unmerged longitudinal and transverse term through fourth order from its parent gradient tensors, then returns displacements, gradients and scalar or curl sources. Rust installs these fields, applies the existing Einstein–de Sitter merging policy where appropriate, and evaluates the same f64 growth functions and initial-amplitude directions.
+
+The source operators are the $\mu_2$, $\mu_3$ and curl contractions used by the CPU recurrence. Their FFT solves retain the last-axis-fast layout, forward sign, inverse $1/N$ normalization, full $|\boldsymbol k|^2$ denominator and derivative-safe Nyquist convention. A longitudinal solve therefore uses the full Laplacian denominator with the zeroed odd derivative $k_a^{\rm D}$ in its numerator; transverse solves preserve the curl orientation. Changing the arithmetic backend does not change the initial realization, input bandwidth, time normalization, or perturbative coefficients.
+
+The boundary {{< src gpu_lpt::GpuLptSeed >}} constructs the initial Fourier field without building a hidden CPU nLPT reference. Its explicitly requested raw-field oracle supports numerical comparisons. The constructor {{< src lpt::Lpt::from_packed_fields >}} rejects malformed or nonfinite payloads before installing them. Tests reconstruct the CPU raw terms through this boundary and compare all four orders, EdS and $\Lambda$CDM time factors, trajectories, Jacobians and actual amplitude directions; rejected payloads leave the seed usable {{< test raw_lpt_boundary_preserves_growth_merge_and_actual_amplitude_direction "raw nLPT boundary" >}}.
+
+The GPU spectral path requires a power-of-two Lagrangian lattice in 2D or 3D. Every acquired device first checks plane waves along each axis and an independent quadratic two-wave solution. Complete fixtures then compare every raw field with Rust. The device requests adapter-supported storage/buffer limits up to 512 MiB, following the [WebGPU limits contract](https://www.w3.org/TR/webgpu/#limits). The 64³ raw fourth-order payload exceeds the portable 128 MiB storage-binding default, so a device with only that limit recovers on CPU. Complete per-stage allocations still have a separate 512 MiB cap. A resource, finite-value, validation or readback failure retains the requested experiment and rebuilds nLPT with the CPU algorithm. Initial-condition generation and cosmological growth integration remain CPU stages. This is a spatial-field backend, rather than a new physical approximation.
+
+## Exact geometric deposition on GPU {#sec-gpu-exact-deposit}
+
+For the represented affine sheet, a cell receives the fixed positive simplex mass multiplied by the fraction of its Eulerian image intersecting that cell. The observer clips a triangle or tetrahedron against each candidate Cartesian cell, measures the intersection, and accumulates its mass according to @eq-exact-deposition. It uses the same periodic lifts and Kuhn connectivity as Rust. Candidate bounding boxes limit the cells visited; no quadrature samples, virtual particles, or shot-noise subtraction enter this estimator.
+
+The GPU translates and scales each clipping problem into the local cell $[0,1]^d$. This avoids forming small intersection volumes by subtracting distant absolute coordinates. Each simplex writes positive f32 contribution records. Integer atomic links assign these records to cells; one invocation owns each cell's Kahan-compensated floating sum. The resulting density is $\rho/\bar\rho$, so its **mean**, rather than its sum, must be one. Insertion order can vary with GPU scheduling, and reproduction uses stated component budgets rather than bitwise equality.
+
+The geometric port adapts the pinned Hopf–Cole triangle clipper and the R3D-style tetrahedron graph clipper. It replaces upstream fixed-point deposition with floating contribution records and explicit capacity accounting. Overflow, malformed graph walks, nonfinite measures and poorly conditioned slivers produce a failed GPU stage and CPU recovery. Exactly degenerate elements follow the represented-sheet convention of the CPU observer; global conservation is checked before accepting a laboratory density. No missing mass is hidden by renormalization.
+
+The external-density boundary {{< src laboratory::LabSession::finish_gpu_pm_observed >}} checks field length, finite nonnegative entries and a unit mean within $10^{-6}$ before caching or computing statistics. Invalid density can therefore recover CPU observation without repeating a successful GPU trajectory. Native tests pin exact-oracle compatibility, rejection, recovery and provenance partitioning {{< test external_density_finish_matches_exact_reference_and_rejects_invalid_mass_without_poisoning_cache "external density contract" >}}. Device checks include identity, periodic translation, folds, seam streams and thin-element refusal; complete requests separately compare cell fields, spectra and PDF summaries with the CPU reference.
+
+The clipping algorithm integrates the affine sheet geometrically, but its GPU geometry and accumulation use f32. The CPU f64 clipper remains the accuracy reference. This arithmetic qualification is separate from exact integration of the represented element and from the validity of the supplied LPT trajectory after shell crossing.
+
+## Compensated analytic recovery and retained work {#sec-gpu-retained-work}
+
+Weak Fourier modes can result from cancellation between large simplex contributions. The ordinary f32 observer may then fail the amplitude-derivative gate even when its absolute error is small. The recovery observer uses high/low f32 expansions of the actual retained f64 displacement and **analytic** amplitude direction. It evaluates the same exponential divided differences and repeated-node JVP in @eq-amplitude-jvp with compensated phase, integral and reduction arithmetic. It supplies no endpoint finite difference as an analytic derivative. The endpoint-path check in @sec-gpu-fd remains independent.
+
+Only modes requiring recovery need this more expensive arithmetic. Their value and tangent are replaced together, the unchanged per-mode gate is evaluated again, and any remaining failures use CPU f64 integration. The CPU simplex JVP now reuses a fixed-size knot workspace and retained divided-difference storage across elements, avoiding repeated heap allocations while preserving signed directions and repeated-knot limits. The [closed repeated-knot unit regression](https://github.com/yipihey/precrossedsheet/blob/main/core/src/tangent.rs#:~:text=fn%20repeated_knot_workspace_matches_closed_form_without_capacity_growth) also checks that workspace capacity remains stable. Independent centered derivatives check the simplex observer {{< test simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference "simplex JVP" >}}.
+
+A persistent {{< src laboratory::LabSession >}} retains one compatible entry at each of four levels: initial Fourier/nLPT fields, prepared geometry and validity diagnostics, completed PM evolution, and unsmoothed density/spectrum observations. The combined retention budget is 256 MiB. Entries are keyed by the complete physical input and executed precision source. Epoch and force/timestep changes invalidate dependent work; changing the LPT output order can reuse the common fourth-order PM initialization; changing the observation mesh reuses the completed PM state and rebuilds deposition; changing only observation smoothing reuses the unsmoothed observations. Validation diagnostics travel with the retained geometry rather than being inferred from a previous plot.
+
+CPU/GPU initialization, f64/f32 PM arithmetic and CPU/GPU deposition have distinct keys. Failed or nonconserved external fields cannot poison a later hit. A fresh PM evolution invalidates the previous raw observations, and newly supplied density fields are consumed rather than replaced with a previous entry. Reusing a trajectory across observation-mesh changes retains its original state and crossing diagnostics {{< test cached_pm_positions_rebuild_new_mesh_and_never_reuse_stale_external_deposits "PM observation reuse" >}}. An oversized entry is skipped, with its reason and retained bytes recorded. A cache is local to the worker and can be discarded on cancellation during synchronous Rust work; exported manifests reproduce the experiment independently of its cache history. Cache reuse tests compare changed observation controls with fresh computations and exercise physical invalidation {{< test lab_session_reuses_physical_trajectory_and_raw_observations_with_exact_keys "session cache contract" >}}.
+
+```sh
+node scripts/test_gpu.mjs --require-gpu --optimization-self --output optimization-self.json
+node scripts/test_gpu.mjs --require-gpu --optimizations --output optimization-checks.json
+node scripts/test_gpu.mjs --require-gpu --optimization-benchmark --output optimization-benchmark.json
+```
+
+::: {.callout-tip title="Inspect the complete execution path"}
+Use a radix lattice and force mesh, inspect nLPT construction, PM evolution, exact deposition, analytic recovery and cache status, then change observation smoothing. Export the manifest to retain every stage's executed arithmetic, device checks, kernel hashes and fallback reason. A crossed result remains visible with its existing validity caution.
+
+{{< lab "v=3&backend=gpu&dim=3&n=32&mesh=32&force=32&steps=32&epoch=scaleFactor&a=0.25&ic=waves&view=gradient" "Open the GPU stage laboratory" >}}
+:::
+
+The recorded complete cold-request medians are 3,207.7 to 1,056.4 ms at $32^3$ and 21,934.6 to 7,342.0 ms at $64^3$, comparing CPU spatial nLPT/clipping/analytic recovery with the enabled GPU additions. Both policies use the optimized PM and FD kernels. All timed mass, derivative and field budgets pass. The [measurement record](https://github.com/yipihey/precrossedsheet/blob/main/docs/webgpu-optimization-results.md) gives ranges, device details and complete source fingerprints. A smoothing-only $32^3$ cache hit has a 269.7 ms median; at $64^3$, the bounded cache retains initial fields and geometry but recomputes PM and deposition. These results characterize the measured requests and adapter.

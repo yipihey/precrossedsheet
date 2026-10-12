@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import init, {lab_run, PendingLabRun, pm_drift_minimum} from '../app/pkg/hcc_core.js';
+import init, {lab_run, PendingLabRun, pm_drift_minimum, LabSession, GpuLptSeed, exact_sheet_density} from '../app/pkg/hcc_core.js';
 await init({module_or_path:await readFile(new URL('../app/pkg/hcc_core_bg.wasm',import.meta.url))});
 for(const dim of [1,2,3]) {
   const n=dim===3?24:32;
@@ -19,6 +19,77 @@ assert.equal(crossed.guard?.ok,false);
 assert.ok(crossed.rho.every(Number.isFinite));
 assert.ok(Math.abs(crossed.diagnostics.mass-1)<1e-6);
 console.log('Wasm crossing: finite fields remain visible and mass is conserved.');
+
+// The external exact-density boundary consumes vec4<f32> lattice positions.
+// Identity maps in both supported dimensions have the independent analytic
+// result rho=1 in every Eulerian cell.
+for(const dim of [2,3]) {
+  const n=4,mesh=8,positions=new Float32Array(n**dim*4);
+  for(let i=0;i<n**dim;i++) {
+    let q=i;
+    for(let axis=dim-1;axis>=0;axis--){positions[4*i+axis]=(q%n)/n;q=Math.floor(q/n);}
+  }
+  const rho=exact_sheet_density(dim,n,mesh,positions);
+  assert.ok(rho instanceof Float32Array);assert.equal(rho.length,mesh**dim);
+  assert.ok(rho.every(value=>Number.isFinite(value)&&Math.abs(value-1)<1e-6),`${dim}D identity deposit`);
+  const mean=rho.reduce((sum,value)=>sum+value,0)/rho.length;
+  assert.ok(Math.abs(mean-1)<1e-7,`${dim}D identity mass mean`);
+}
+console.log('Wasm exact deposit: 2D/3D identity sheets have unit cell density.');
+
+// A smoothing-only update should reuse all retained physical/cache tiers while
+// recomputing smoothed observations identically to a fresh CPU session.
+const cacheRequest={dim:2,n:16,mesh:16,forceMesh:16,steps:32,epoch:'scaleFactor',scaleFactor:.25,smoothing:0};
+const cachedSession=new LabSession(),coldPending=cachedSession.prepare_pending(JSON.stringify(cacheRequest));
+let coldPrepared,hotPrepared,freshSession,freshPending,freshPrepared;
+try {
+  coldPrepared=cachedSession.finish_cpu(coldPending);
+  const coldResult=JSON.parse(coldPrepared.finish(coldPrepared.direct_cpu(),'{}'));
+  const smoothRequest={...cacheRequest,smoothing:.05};
+  hotPrepared=cachedSession.try_cached_observed_source(JSON.stringify(smoothRequest),'f64','cpu-f64','cpu-exact');
+  assert.ok(hotPrepared,'Smoothing-only request should reuse the cached physical run.');
+  const hotResult=JSON.parse(hotPrepared.finish(hotPrepared.direct_cpu(),'{}'));
+  for(const level of ['initial','pending','pm','observations'])assert.equal(hotResult.cache?.[level]?.status,'hit',`${level} cache hit`);
+  assert.equal(hotResult.cache.observations.smoothing,'recomputed');
+  assert.ok(hotResult.cache.bytes>0&&hotResult.cache.bytes<=hotResult.cache.limitBytes);
+
+  freshSession=new LabSession();freshPending=freshSession.prepare_pending(JSON.stringify(smoothRequest));
+  freshPrepared=freshSession.finish_cpu(freshPending);
+  const freshResult=JSON.parse(freshPrepared.finish(freshPrepared.direct_cpu(),'{}'));
+  for(const key of ['rho','rhoPm','spectra','pdf','diagnostics','guard','gradient'])
+    assert.deepEqual(hotResult[key],freshResult[key],`cached smoothing result matches fresh ${key}`);
+  assert.notDeepEqual(coldResult.rho,hotResult.rho,'Changing smoothing changes the output field.');
+  console.log('Wasm cache: smoothing-only update hits all four retained levels and matches a fresh run.');
+} finally {
+  coldPrepared?.free();hotPrepared?.free();freshPrepared?.free();coldPending.free();freshPending?.free();cachedSession.free();freshSession?.free();
+}
+
+// Exercise the nLPT construction boundary using its independent CPU raw-term
+// oracle as the packed-field input, without requiring a GPU device.
+const seedRequest={dim:2,n:16,mesh:16,forceMesh:16,steps:32,epoch:'scaleFactor',scaleFactor:.25};
+const seed=new GpuLptSeed(JSON.stringify(seedRequest)),seedSession=new LabSession();
+let seedPending,seedPrepared;
+try {
+  const seedMeta=JSON.parse(seed.metadata());
+  assert.equal(seedMeta.fieldStride,9);
+  assert.equal(seedMeta.termScalars,seedRequest.n**2*9);
+  const delta=seed.delta_hat();
+  assert.ok(delta instanceof Float32Array&&delta.length>0&&delta.every(Number.isFinite));
+  const fields=seed.reference_fields();
+  assert.ok(fields instanceof Float32Array);
+  assert.equal(fields.length,seedMeta.totalScalars);
+  assert.ok(fields.every(Number.isFinite));
+  assert.throws(()=>seed.finish_gpu(seedSession,fields.subarray(1)),/length|packed|field/i);
+  assert.deepEqual(seed.delta_hat(),delta,'Malformed fields must leave the seed available for retry.');
+  seedPending=seed.finish_gpu(seedSession,fields);
+  assert.equal(JSON.parse(seedPending.metadata()).initialSource,'gpu-f32');
+  seedPrepared=seedSession.finish_cpu(seedPending);
+  const seedResult=JSON.parse(seedPrepared.finish(seedPrepared.direct_cpu(),'{}'));
+  assert.equal(seedResult.conventions.initialSource,'gpu-f32');
+  assert.ok(seedResult.guard?.ok===true);
+  assert.ok(seedResult.rho.every(Number.isFinite));
+  console.log('Wasm nLPT seed: CPU oracle fields pass the GPU-input lifecycle and CPU finish.');
+} finally {seedPrepared?.free();seedPending?.free();seed.free();seedSession.free();}
 
 // Exercise the actual typed-array/ownership boundary used before resident PM.
 const pending=new PendingLabRun(JSON.stringify({dim:2,n:16,mesh:16,forceMesh:16,steps:32,epoch:'scaleFactor',scaleFactor:.25}));

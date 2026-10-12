@@ -63,6 +63,9 @@ try {
   if(args.has('--fd-repeat'))query.set('fd-repeat','1');
   if(args.has('--fd')||args.has('--fd-benchmark'))query.set('fd','1');
   if(args.has('--fd-benchmark'))query.set('fd-benchmark','1');
+  if(args.has('--optimization-self'))query.set('opt-self','1');
+  if(args.has('--optimizations'))query.set('opt','1');
+  if(args.has('--optimization-benchmark'))query.set('opt-benchmark','1');
   const url=`http://127.0.0.1:${server.address().port}/app/gpu-test.html?${query}`;
   await send('Page.navigate',{url},sessionId);
   const timeoutMs=Number(process.env.GPU_TEST_TIMEOUT_MS||900000),start=Date.now();
@@ -71,7 +74,7 @@ try {
     const result=await send('Runtime.evaluate',{expression:'({report:window.gpuTestReport || null,stage:document.querySelector("#status")?.textContent})',returnByValue:true},sessionId);
     report=result.result?.value?.report;
     const stage=result.result?.value?.stage;
-    if(stage&&stage!==lastStage){lastStage=stage;if(args.has('--resident-benchmark')||args.has('--fd-benchmark'))console.error(stage);}
+    if(stage&&stage!==lastStage){lastStage=stage;if(args.has('--resident-benchmark')||args.has('--fd-benchmark')||args.has('--optimization-benchmark'))console.error(stage);}
     if(report&&['pass','fail','skip'].includes(report.status))break;
     if(events.length)throw new Error(JSON.stringify(events));
     await new Promise(r=>setTimeout(r,500));
@@ -87,6 +90,7 @@ try {
     kernelRows:report.kernel?.rows.length??report.rows?.length,labRows:report.lab?.rows.length,
     residentRows:report.resident?.rows?.length,residentBenchmarks:report.resident?.timings,
     probe:report.probe,fdRepeat:report.fdRepeat?{status:report.fdRepeat.status,repeatsPerCase:report.fdRepeat.repeatsPerCase,totalRepeats:report.fdRepeat.totalRepeats,endpointRepeatBudget:report.fdRepeat.endpointRepeatBudget,cases:report.fdRepeat.cases?.map(({label,request,repeats,status,inputHashes,outputsStable,runs})=>({label,request,repeats,status,inputHashes,cpuFiniteDifferenceHash:inputHashes?.cpuFiniteDifference,outputsStable,maximumComponentAbsoluteDifferenceVsFirst:Math.max(0,...(runs??[]).map(run=>run.componentRepeatError?.maximumAbsolute??Infinity)),runs:runs?.map(({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes})=>({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes}))})),runs:report.fdRepeat.runs?.map(({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes})=>({caseLabel,repeat,finite,inputsUnchanged,sameAsFirst,accuracy,componentRepeatError,outputHashes}))}:null,fdRows:report.fd?.rows?.length,fdSelfTest:{status:report.fd?.selfTest?.status,rows:report.fd?.selfTest?.rows?.map(r=>({label:r.label,pass:r.pass,maximumWeakScaledRelative:r.maximumWeakScaledRelative,maximumAbsoluteError:r.maximumAbsoluteError,failedModes:r.failedModes}))},fdNumericalCases:report.fd?.cases?.map(c=>({label:c.label,request:c.request,pass:c.pass,maximumWeakScaledRelative:c.accuracy?.maximumWeakScaledRelative,failedModes:c.accuracy?.failedModes,finalizerGatePass:c.finalizer?.gatePass,crossing:c.crossing})),fdTimings,
+    optimizationSuites:report.suites?.map(s=>({name:s.name,status:s.status,durationMs:s.durationMs})),optimizationRows:report.optimization?.rows?.length??report.rows?.length,optimizationTimings:report.optimization?.timings??report.timings,
     gpuEligibleRequests:report.lab?.cases?.filter(c=>c.gpuEligible).length,totalRequests:report.lab?.cases?.length,
     failures:report.rows?.filter(r=>r.ok===false||r.pass===false),
     benchmarks:report.lab?.timings?.filter(t=>t.benchmark).map(t=>t.endToEndWorker
