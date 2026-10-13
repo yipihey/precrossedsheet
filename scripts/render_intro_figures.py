@@ -181,8 +181,6 @@ def plot_bao(summary):
     ax.loglog(kk, np.asarray(b['spectra']['rhoDeconvolved'])[sel], color=BLUE, lw=1.6, label='4LPT sheet, BAO')
     ax.loglog(kk, np.asarray(b['spectra']['pmRhoDeconvolved'])[sel], color=ORANGE, lw=1.2, ls='--', label='PM sheet, BAO')
     ax.loglog(kk, np.asarray(s2['spectra']['rhoDeconvolved'])[sel], color=GREEN, lw=1.0, ls='-.', label='4LPT sheet, smooth')
-    if b['spectra'].get('coreRealizedK'):
-        ax.loglog(b['spectra']['coreRealizedK'], b['spectra']['coreRealized'], 'o', color='#444444', ms=3.5, mfc='none', label='linear input, this realization (lab bins)')
     ax.set(xlabel='k [h/Mpc]', ylabel='P(k) [(Mpc/h)²]', title='Power spectra at z = 0, same phases'); ax.legend(frameon=False, fontsize=8)
     ax = axs[1]
     lin_ratio = np.asarray(b['spectra']['linear'])[sel] / np.asarray(s2['spectra']['linear'])[sel]
