@@ -121,6 +121,8 @@ def summarize(name, d, req):
          'positionRelativeRms': diag['positionRelativeRms'], 'powerRelativeError': diag['powerRelativeError'],
          'variance': d['pdf']['variance'], 'pmVariance': d['pdf']['pmVariance'], 'mass': diag['mass'], 'pmMass': diag['pmMass'], 'cicMass': diag['cicMass'], 'tscMass': diag['tscMass']}
     s['spectra'] = fine_spectra(d, req)
+    s['spectra']['coreRealizedK'] = d['spectra'].get('realizedK', [])
+    s['spectra']['coreRealized'] = d['spectra'].get('realized', [])
     if name == 'estimators2d':
         s['cells'] = {}
         for key in ('rho', 'pmRho', 'cicRho', 'tscRho'):
@@ -131,24 +133,38 @@ def band_mean_abs(k, a, b, lo, hi):
     k, a, b = map(np.asarray, (k, a, b)); sel = (k >= lo) & (k <= hi) & (b > 0)
     return float(np.mean(np.abs(a[sel] / b[sel] - 1)))
 
+def transmission_error(summary, name, lo, hi, key):
+    """Mean |(P_bao/P_smooth)_measured / (P_bao/P_smooth)_linear - 1| over the band: how well the
+    acoustic modulation of the input is carried through the nonlinear map and the estimator."""
+    b, sm = summary[f'{name}_bao']['spectra'], summary[f'{name}_smooth']['spectra']
+    k = np.asarray(b['k']); sel = (k >= lo) & (k <= hi)
+    linear = np.asarray(b['linear'])[sel] / np.asarray(sm['linear'])[sel]
+    measured = np.asarray(b[key])[sel] / np.asarray(sm[key])[sel]
+    return float(np.mean(np.abs(measured / linear - 1)))
+
 def write_tables(summary):
-    rows = ['| LPT order | Min. vertex $J$ (LPT) | Min. simplex $J$ (PM drift) | Inverted mass LPT / PM | Position RMS / displacement RMS | $\\langle\\lvert P_{\\rm LPT}/P_{\\rm PM}-1\\rvert\\rangle$, $k\\le0.1$ | $\\sigma^2_{\\rm LPT}/\\sigma^2_{\\rm PM}$ at $R_s=9\\,h^{-1}$Mpc |',
-            '|---|---|---|---|---|---|---|']
+    reference = summary['lcdm3d_o4']['spectra']
+    rows = ['| LPT order $n$ | Min. vertex $J$ | Inverted mass LPT / PM | $\\langle\\lvert P_n/P_4-1\\rvert\\rangle$, $k\\le0.1$ | $\\sigma^2_n/\\sigma^2_4$ | Position RMS vs PM / displacement RMS | $\\langle\\lvert P_n/P_{\\rm PM}-1\\rvert\\rangle$, $k\\le0.1$ | $\\sigma^2_n/\\sigma^2_{\\rm PM}$ |',
+            '|---|---|---|---|---|---|---|---|']
     for order in (1, 2, 3, 4):
         s = summary[f'lcdm3d_o{order}']; sp = s['spectra']
-        rows.append(f"| {order} | {s['minimumVertexJacobian']:.3f} | {s['pmMinimumSimplexJacobian']:.4f} | {100*s['lptInvertedMass']:.2f}% / {100*s['pmInvertedMass']:.2f}% | {100*s['positionRelativeRms']:.1f}% | {100*band_mean_abs(sp['k'], sp['rho'], sp['pmRho'], 0, .1):.1f}% | {s['variance']/s['pmVariance']:.3f} |")
+        rows.append(f"| {order} | {s['minimumVertexJacobian']:.3f} | {100*s['lptInvertedMass']:.2f}% / {100*s['pmInvertedMass']:.2f}% | {100*band_mean_abs(sp['k'], sp['rho'], reference['rho'], 0, .1):.2f}% | {s['variance']/summary['lcdm3d_o4']['variance']:.4f} | {100*s['positionRelativeRms']:.1f}% | {100*band_mean_abs(sp['k'], sp['rho'], sp['pmRho'], 0, .1):.1f}% | {s['variance']/s['pmVariance']:.3f} |")
     s = summary['lcdm3d_o4']
-    caption = (f": Fourth-order LPT against the particle-mesh reference for the fiducial $64^3$ run at $a=1$ ($z=0$). The displacement residual is the RMS of $\\mathbf x_{\\rm LPT}-\\mathbf x_{\\rm PM}$ over the LPT displacement RMS; the power column averages the absolute ratio residual over fine bins up to $0.1\\,h\\,\\mathrm{Mpc}^{-1}$; the variance ratio uses the Gaussian-smoothed cell fields. The PM trajectory is the same at every order, so its minimum drift Jacobian repeats. Engine {s['engineVersion']}; requests in `scripts/render_intro_figures.py`. {{#tbl-intro-orders}}")
+    caption = (": Orders one to four for the fiducial $64^3$ run at $a=1$ ($z=0$), with the same PM trajectory as reference (its minimum drift Jacobian is "
+               + f"{s['pmMinimumSimplexJacobian']:.4f}" + " and it inverts no element). The middle columns measure the convergence of the expansion itself: the exact-sheet power of order $n$ against order four, averaged over fine bins up to $0.1\\,h\\,\\mathrm{Mpc}^{-1}$, and the variance of the Gaussian-smoothed field ($R_s=9\\,h^{-1}$Mpc). The right columns compare with the $64^3$, 128-step PM run: the RMS of $\\mathbf x_n-\\mathbf x_{\\rm PM}$ over the LPT displacement RMS, and the same power and variance ratios. Engine "
+               + str(s['engineVersion']) + "; requests in `scripts/render_intro_figures.py`. {#tbl-intro-orders}")
     (ROOT / 'chapters' / '_intro-order-table.qmd').write_text('\n'.join(rows) + '\n\n' + caption + '\n')
-    rows = ['| Run | Transfer | Min. vertex $J$ | Inverted mass LPT / PM | Position RMS / displacement RMS | $\\langle\\lvert P_{\\rm 4LPT}/P_{\\rm PM}-1\\rvert\\rangle$ in the BAO band | $\\langle\\lvert P_{\\rm 2LPT}/P_{\\rm PM}-1\\rvert\\rangle$ in the BAO band |',
-            '|---|---|---|---|---|---|---|']
-    for name, label, lo, hi in (('bao2d', '2D, $1000\\,h^{-1}$Mpc, $256^2$', .04, .19), ('bao3d', '3D, $600\\,h^{-1}$Mpc, $64^3$', .04, .073)):
-        for t in ('bao', 'smooth'):
-            s = summary[f'{name}_{t}']; sp = s['spectra']
-            second = summary.get(f'{name}_{t}_o2')
-            o2 = f"{100*band_mean_abs(second['spectra']['k'], second['spectra']['rho'], second['spectra']['pmRho'], lo, hi):.1f}%" if second else '—'
-            rows.append(f"| {label} | {'EH98 with BAO' if t == 'bao' else 'EH98 smooth'} | {s['minimumVertexJacobian']:.3f} | {100*s['lptInvertedMass']:.2f}% / {100*s['pmInvertedMass']:.2f}% | {100*s['positionRelativeRms']:.1f}% | {100*band_mean_abs(sp['k'], sp['rho'], sp['pmRho'], lo, hi):.1f}% | {o2} |")
-    caption = (": The BAO runs at $z=0$: the same seed with the oscillating and the smooth transfer. The band averages run over fine bins between $0.04\\,h\\,\\mathrm{Mpc}^{-1}$ and the radial cutoff of each box. The second-order column uses the same realization evolved with 2LPT where it was run. {#tbl-intro-bao}")
+    rows = ['| Box | Band | Min. vertex $J$ (BAO / smooth) | Inverted mass | Position RMS vs PM / displacement RMS | Modulation error, 4LPT sheet | Modulation error, 2LPT sheet | Modulation error, PM sheet | $\\langle\\lvert P_{\\rm 4LPT}/P_{\\rm PM}-1\\rvert\\rangle$ |',
+            '|---|---|---|---|---|---|---|---|---|']
+    for name, label, lo, hi, pm_hi in (('bao2d', '2D, $1000\\,h^{-1}$Mpc, $256^2$', .03, .19, .1), ('bao3d', '3D, $600\\,h^{-1}$Mpc, $64^3$', .03, .073, .073)):
+        b, sm = summary[f'{name}_bao'], summary[f'{name}_smooth']
+        if f'{name}_bao_o2' in summary:
+            o2 = {'x_bao': summary[f'{name}_bao_o2'], 'x_smooth': summary[f'{name}_smooth_o2']}
+            second = f"{100*transmission_error(o2, 'x', lo, hi, 'rho'):.2f}%"
+        else:
+            second = '—'
+        rows.append(f"| {label} | ${lo}$–${hi}\\,h\\,\\mathrm{{Mpc}}^{{-1}}$ | {b['minimumVertexJacobian']:.3f} / {sm['minimumVertexJacobian']:.3f} | {100*max(b['lptInvertedMass'], b['pmInvertedMass'], sm['lptInvertedMass'], sm['pmInvertedMass']):.2f}% | {100*b['positionRelativeRms']:.1f}% | {100*transmission_error(summary, name, lo, hi, 'rho'):.2f}% | {second} | {100*transmission_error(summary, name, lo, hi, 'pmRho'):.2f}% | {100*band_mean_abs(b['spectra']['k'], b['spectra']['rho'], b['spectra']['pmRho'], .03, pm_hi):.1f}% |")
+    caption = (": The BAO runs at $z=0$: one seed evolved with the oscillating and with the smooth transfer. The modulation error is the band average of $\\lvert(P_{\\rm BAO}/P_{\\rm smooth})_{\\rm measured}/(P_{\\rm BAO}/P_{\\rm smooth})_{\\rm linear}-1\\rvert$, the departure of the measured acoustic modulation from the one put in; because both runs share their phases it has no sample variance. The last column compares the 4LPT and PM sheets where the filtered input still carries most of the power (up to $0.1\\,h\\,\\mathrm{Mpc}^{-1}$ in 2D); beyond that the PM reference at this resolution adds discreteness power where the input is damped by the $14\\,h^{-1}$Mpc filter. {#tbl-intro-bao}")
     (ROOT / 'chapters' / '_intro-bao-table.qmd').write_text('\n'.join(rows) + '\n\n' + caption + '\n')
 
 def plot_bao(summary):
@@ -165,6 +181,8 @@ def plot_bao(summary):
     ax.loglog(kk, np.asarray(b['spectra']['rhoDeconvolved'])[sel], color=BLUE, lw=1.6, label='4LPT sheet, BAO')
     ax.loglog(kk, np.asarray(b['spectra']['pmRhoDeconvolved'])[sel], color=ORANGE, lw=1.2, ls='--', label='PM sheet, BAO')
     ax.loglog(kk, np.asarray(s2['spectra']['rhoDeconvolved'])[sel], color=GREEN, lw=1.0, ls='-.', label='4LPT sheet, smooth')
+    if b['spectra'].get('coreRealizedK'):
+        ax.loglog(b['spectra']['coreRealizedK'], b['spectra']['coreRealized'], 'o', color='#444444', ms=3.5, mfc='none', label='linear input, this realization (lab bins)')
     ax.set(xlabel='k [h/Mpc]', ylabel='P(k) [(Mpc/h)²]', title='Power spectra at z = 0, same phases'); ax.legend(frameon=False, fontsize=8)
     ax = axs[1]
     lin_ratio = np.asarray(b['spectra']['linear'])[sel] / np.asarray(s2['spectra']['linear'])[sel]
@@ -179,25 +197,25 @@ def plot_bao(summary):
 def plot_estimators(d, req, summary):
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 10, 'svg.hashsalt': 'precrossedsheet-intro'})
-    mesh = req['mesh']; fields = [('rho', 'Exact sheet, 4LPT vertices'), ('cicRho', 'CIC, the same vertices as points'), ('tscRho', 'TSC, the same vertices as points')]
-    vmax = max(np.asarray(d[key], float).max() for key, _ in fields)
-    fig, axs = plt.subplots(1, 4, figsize=(15, 3.9), gridspec_kw={'width_ratios': [1, 1, 1, 1.25]})
-    for ax, (key, title) in zip(axs[:3], fields):
+    mesh = req['mesh']; fields = [('rho', 'Exact sheet, 4LPT vertices'), ('cicRho', 'CIC, same vertices as points'), ('tscRho', 'TSC, same vertices as points')]
+    fig = plt.figure(figsize=(15.5, 4.3), constrained_layout=True)
+    gs = fig.add_gridspec(1, 5, width_ratios=[1, 1, 1, .05, 1.35])
+    axs = [fig.add_subplot(gs[0, i]) for i in range(3)]; cax = fig.add_subplot(gs[0, 3]); axp = fig.add_subplot(gs[0, 4])
+    for ax, (key, title) in zip(axs, fields):
         f = np.asarray(d[key], float).reshape(mesh, mesh)
-        im = ax.imshow(np.log10(np.maximum(f, 1e-3)).T, origin='lower', extent=[0, req['boxSize'], 0, req['boxSize']], cmap='cividis', vmin=-2, vmax=math.log10(vmax))
+        im = ax.imshow(f.T, origin='lower', extent=[0, req['boxSize'], 0, req['boxSize']], cmap='cividis', vmin=0, vmax=2)
         cells = summary['estimators2d']['cells'][key]
-        ax.set(title=title, xlabel='x₀ [Mpc/h]'); ax.text(.02, .97, f"{cells['empty']} empty of {mesh**2} cells", transform=ax.transAxes, va='top', fontsize=8, color='white')
-    axs[0].set_ylabel('x₁ [Mpc/h]')
-    cbar = fig.colorbar(im, ax=axs[:3], fraction=.02, pad=.01); cbar.set_label('log₁₀ ρ/mean')
+        ax.set(title=title, xlabel='x₀ [Mpc/h]'); ax.text(.03, .97, f"{cells['empty']} empty of {mesh**2} cells", transform=ax.transAxes, va='top', fontsize=8.5, color='white', bbox={'facecolor': 'black', 'alpha': .45, 'pad': 2, 'lw': 0})
+    axs[0].set_ylabel('x₁ [Mpc/h]'); axs[1].set_yticklabels([]); axs[2].set_yticklabels([])
+    cbar = fig.colorbar(im, cax=cax); cbar.set_label('ρ / mean (clipped at 2)')
     sp = summary['estimators2d']['spectra']; k = np.asarray(sp['k'])
-    ax = axs[3]
-    ax.loglog(k, sp['rho'], color='#0072B2', lw=1.6, label='exact sheet')
-    ax.loglog(k, sp['cicRho'], color='#D55E00', lw=1.1, label='CIC')
-    ax.loglog(k, sp['tscRho'], color='#009E73', lw=1.1, label='TSC')
+    axp.loglog(k, sp['rho'], color='#0072B2', lw=1.6, label='exact sheet')
+    axp.loglog(k, sp['cicRho'], color='#D55E00', lw=1.1, label='CIC')
+    axp.loglog(k, sp['tscRho'], color='#009E73', lw=1.1, label='TSC')
     shot = req['boxSize'] ** 2 / req['n'] ** 2
-    ax.axhline(shot, color='#CC79A7', ls='--', lw=1, label='Poisson L²/N')
-    ax.axvline(math.pi * req['n'] / req['boxSize'], color='#999999', ls=':', lw=1, label='particle Nyquist')
-    ax.set(xlabel='k [h/Mpc]', ylabel='P(k) [(Mpc/h)²]', title='Spectra of the three maps'); ax.legend(frameon=False, fontsize=8)
+    axp.axhline(shot, color='#CC79A7', ls='--', lw=1, label='Poisson L²/N')
+    axp.axvline(math.pi * req['n'] / req['boxSize'], color='#999999', ls=':', lw=1, label='particle Nyquist')
+    axp.set(xlabel='k [h/Mpc]', ylabel='P(k) [(Mpc/h)²]', title='Spectra of the three maps'); axp.legend(frameon=False, fontsize=8)
     fig.savefig(FIG / 'intro-estimators.svg', bbox_inches='tight', metadata={'Date': None}); fig.savefig(FIG / 'intro-estimators.png', dpi=170, bbox_inches='tight'); plt.close(fig)
 
 def main():
