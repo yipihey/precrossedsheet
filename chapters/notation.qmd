@@ -19,6 +19,8 @@ title: "Notation and conventions"
 | $r=1+\delta=\rho/\bar\rho$ | Dimensionless positive total density; stream contributions use absolute volume |
 | $L,N_q,N_e$ | Box side, vertices per axis, Eulerian cells per axis |
 | $R_f,R_s$ | Initial-condition filter scale and observable filter scale |
+| $P_{{\rm lin},d}$ | Filtered, growth-scaled linear input spectrum realized in $d$ dimensions (@eq-filtered-linear-input) |
+| $M$, $N$ | In the introduction widget: observation cells and sheet vertices of the 1D box |
 | $A$ | Amplitude multiplier of the initial field; tangent at $A=1$ |
 | $y=\log_{10}r$ | PDF coordinate; ordinate is probability per unit $y$ |
 | $V_B=L^d$, $M_B=\bar\rho V_B$ | Box volume and total mass |

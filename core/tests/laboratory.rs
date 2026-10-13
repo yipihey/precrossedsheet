@@ -983,3 +983,102 @@ fn selected_lpt_mode_recovery_matches_full_cpu_channels_and_checks_indices() {
         .direct_lpt_cpu_modes(&[prepared.metadata()["modeCount"].as_u64().unwrap() as u32])
         .is_err());
 }
+
+#[test]
+fn particle_deposits_conserve_mass_and_leave_a_uniform_lattice_uniform() {
+    use hcc_core::sheet::{cic_density, tsc_density};
+    for dim in 1..=3 {
+        let n = if dim == 3 { 8 } else { 16 };
+        let g = Grid::new(dim, n, 1.0);
+        let dx = g.dx();
+        let pos: Vec<f32> = (0..g.size)
+            .flat_map(|i| {
+                let ijk = g.unravel(i);
+                (0..dim).map(move |d| (ijk[d] as f64 * dx) as f32)
+            })
+            .collect();
+        for mesh in [n, 2 * n] {
+            for rho in [cic_density(dim, &pos, g.size, 1.0, mesh), tsc_density(dim, &pos, g.size, 1.0, mesh)] {
+                let mean = rho.iter().map(|&v| v as f64).sum::<f64>() / rho.len() as f64;
+                assert!((mean - 1.).abs() < 1e-6, "dim {dim} mesh {mesh}");
+                if mesh == n {
+                    assert!(rho.iter().all(|&v| (v - 1.).abs() < 1e-5), "dim {dim}: a lattice coincident with the mesh must deposit uniformly");
+                }
+            }
+        }
+    }
+    // One particle: TSC spreads over three cells per axis with symmetric quadratic weights.
+    let rho = tsc_density(1, &[0.5 + 0.0625 / 8.], 1, 1.0, 8);
+    let weights: Vec<f64> = rho.iter().map(|&v| v as f64 / 8.).collect();
+    assert!((weights.iter().sum::<f64>() - 1.).abs() < 1e-6);
+    // x = 0.5078 is nearest the center of cell 4 (0.5625), then cell 3 (0.4375), then cell 5.
+    assert!(weights[4] > weights[3] && weights[3] > weights[5] && weights[5] > 0.);
+    assert!(weights.iter().enumerate().all(|(i, &w)| (3..=5).contains(&i) || w == 0.));
+}
+
+#[test]
+fn gaussian_runs_report_particle_deposits_and_the_filtered_linear_input() {
+    use hcc_core::cosmological::LinearSpectrum;
+    use std::f64::consts::PI;
+    let request = LabRequest {
+        dim: 2,
+        n: 32,
+        mesh: 32,
+        force_mesh: 32,
+        steps: 32,
+        ic: "gaussian".into(),
+        initial_cutoff: 3,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.4,
+        transfer: "bao".into(),
+        ..Default::default()
+    };
+    let d = run(&request).unwrap();
+    assert_eq!(d["conventions"]["transfer"], "bao");
+    for key in ["cicMass", "tscMass", "mass"] {
+        assert!((d["diagnostics"][key].as_f64().unwrap() - 1.).abs() < 1e-6, "{key}");
+    }
+    let count = d["spectra"]["k"].as_array().unwrap().len();
+    assert_eq!(d["spectra"]["tsc"].as_array().unwrap().len(), count);
+    assert_eq!(d["cicRho"].as_array().unwrap().len(), 32 * 32);
+    assert_eq!(d["tscRho"].as_array().unwrap().len(), 32 * 32);
+    let linear_k: Vec<f64> = d["spectra"]["linearK"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let linear: Vec<f64> = d["spectra"]["linear"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(!linear_k.is_empty() && linear_k.len() == linear.len());
+    let spectrum = LinearSpectrum::new(0.315, 0.049, 0.674, 0.965, 0.811, true);
+    let growth_ratio = d["D"].as_f64().unwrap() / d["growthAtOne"].as_f64().unwrap();
+    for (k, p) in linear_k.iter().zip(&linear) {
+        assert!(*k <= 2. * PI * 3. / 300. + 1e-9);
+        let expected = spectrum.filtered_power(*k, 2, 300., 14., growth_ratio, 3);
+        assert!((p / expected - 1.).abs() < 1e-9);
+    }
+    let axis: Vec<f64> = d["spectra"]["directLinearK"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert_eq!(axis.len(), 3, "first-axis modes m=1..3 lie inside the cutoff");
+    // The realized linear power of this seed: in the linear regime (1LPT, tiny growth) it equals
+    // the measured sheet power mode by mode and bin by bin, up to the cell window and tiny
+    // second-order terms; at later times it is the reference the nonlinear curves are read against.
+    // n=64 keeps the piecewise-linear element error of the m=3 mode below one percent.
+    let early = run(&LabRequest { order: 1, scale_factor: 0.02, n: 64, mesh: 64, force_mesh: 64, ..request.clone() }).unwrap();
+    let f = |v: &serde_json::Value| -> Vec<f64> { v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
+    let (direct, direct_realized, direct_k) = (f(&early["spectra"]["direct"]), f(&early["spectra"]["directRealized"]), f(&early["spectra"]["directRealizedK"]));
+    assert_eq!(direct_realized.len(), 3);
+    for i in 0..3 {
+        assert!((direct_k[i] - 2. * PI * (i + 1) as f64 / 300.).abs() < 1e-12);
+        assert!((direct[i] / direct_realized[i] - 1.).abs() < 0.02, "mode {}: {} vs {}", i + 1, direct[i], direct_realized[i]);
+    }
+    let (sheet, k, realized, realized_k) = (f(&early["spectra"]["sheet"]), f(&early["spectra"]["k"]), f(&early["spectra"]["realized"]), f(&early["spectra"]["realizedK"]));
+    assert!(!realized.is_empty() && realized_k.iter().all(|k| *k <= 2. * PI * 3. / 300. + 1e-9));
+    for (kr, pr) in realized_k.iter().zip(&realized) {
+        let i = k.iter().position(|kk| (kk - kr).abs() < 1e-12).expect("realized bins share the measured bin centers");
+        assert!((sheet[i] / pr - 1.).abs() < 0.04, "bin k={kr}: sheet {} vs realized {pr}", sheet[i]);
+    }
+    let realized_late: Vec<f64> = f(&d["spectra"]["realized"]);
+    assert!(realized_late.iter().zip(&linear).all(|(r, l)| *r > 0.05 * l && *r < 20. * l), "the realization scatters around its expectation");
+    // The deterministic benchmark has no linear input spectrum, and unknown fits are rejected.
+    let waves = run(&LabRequest { dim: 1, n: 32, steps: 32, ..Default::default() }).unwrap();
+    assert!(waves["spectra"]["linear"].as_array().unwrap().is_empty());
+    assert_eq!(waves["conventions"]["transfer"], "smooth");
+    assert!(run(&LabRequest { transfer: "wiggly".into(), ..Default::default() }).is_err());
+    let parsed: LabRequest = serde_json::from_str(r#"{"dim":2,"n":16}"#).unwrap();
+    assert_eq!(parsed.transfer, "smooth", "older manifests without the field keep the smooth fit");
+}

@@ -6,7 +6,7 @@ title: "A guide to the laboratory"
 
 The laboratory shares the book's numerical core. Controls are encoded in the URL; “Copy link” preserves the realization, epoch, order, estimator resolution, and selected panel. Calculations run in a background worker so rotating or exporting a plot does not interrupt the page. When a new physical state is requested, obsolete work is cancelled. The lab does not substitute a JavaScript approximation when Wasm fails.
 
-The live model supports flat $\Lambda$CDM or EdS expansion, deterministic wave benchmarks or physical smooth-spectrum Gaussian modes, and either a physical scale factor or a common reference growth fraction. @sec-cosmology states the amplitude normalization, mode generator, initial cutoff and dimensional conventions. Output includes sampled vertex and affine simplex Jacobian minima, a full-drift PM orientation check, and final inverted-element mass fractions. Crossing produces a caution and retains all finite outputs. This makes the model's breakdown inspectable; it does not extend the validated LPT domain.
+The live model supports flat $\Lambda$CDM or EdS expansion, deterministic wave benchmarks or physical Gaussian modes drawn from the smooth or the BAO Eisenstein–Hu spectrum, and either a physical scale factor or a common reference growth fraction. @sec-cosmology states the amplitude normalization, mode generator, initial cutoff and dimensional conventions. Output includes sampled vertex and affine simplex Jacobian minima, a full-drift PM orientation check, and final inverted-element mass fractions. Crossing produces a caution and retains all finite outputs. This makes the model's breakdown inspectable; it does not extend the validated LPT domain.
 
 Spatial density axes have equal scales, and the 3D sheet uses an orthographic projection. Rendering may decimate a dense wireframe; that changes the display only. Every simplex still contributes to the numerical deposit and continuous Fourier estimator. The physical box, central slice and display decimation are labeled. Velocity in the 1D phase-space panel is $d(x/L)/da$; it has a separate scale from position.
 
@@ -21,7 +21,8 @@ For Gaussian 4LPT, $N_q>8m_{\rm cut}$ resolves the conservative input bandwidth.
 | 1D phase-space curve | Time fraction | Exact plane-symmetric compression and the approach to $J=0$ |
 | 2D triangles, 3D tetrahedra | Dimension and viewing angle | Sheet connectivity and its position projection |
 | Orders 1–4 | LPT order at fixed epoch | Contributions of nonlinear dynamics |
-| Exact deposit vs CIC | Eulerian mesh at fixed Lagrangian grid | Assignment and cell averaging |
+| Exact deposit vs CIC/TSC | Eulerian mesh at fixed Lagrangian grid | Assignment, discreteness and cell averaging |
+| Smooth vs BAO transfer | Transfer fit at fixed seed | Whether the nonlinear sheet preserves the acoustic modulation of the input |
 | LPT vs PM | Steps and mesh separately | Approximation error versus numerical-reference error |
 | Volume vs mass PDF | Observation filter and measure | Different sampling questions on the same density |
 | Amplitude tangent | Order and epoch | A fixed-time derivative of continuous Fourier power |
@@ -69,11 +70,12 @@ The runner accepts a plain request, a complete numerical response, or a browser 
   "ns": 0.965, "sigma8": 0.811, "boxSize": 300,
   "initialSmoothing": 14, "smoothing": 0.03,
   "epoch": "scaleFactor", "scaleFactor": 0.5,
-  "fraction": 0.5, "order": 4, "steps": 128
+  "fraction": 0.5, "order": 4, "steps": 128,
+  "transfer": "smooth"
 }
 ```
 
-Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
+Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The transfer field selects the smooth or the BAO fit; manifests written before it existed are read as smooth. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
 
 The [browser self-check](../app/selftest.html) verifies worker execution and the generated binary. The native suite checks the physical clocks, equation residuals, Hermitian mode pairing, refinement stability, conservation, and independent finite differences. Record the repository revision with a convergence table; the same seed or a successful self-check alone does not establish scientific convergence.
 

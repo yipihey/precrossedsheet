@@ -92,16 +92,19 @@ Two analytic checks follow immediately. At $\mathbf k=0$, $I(0)=\sum_Tm_T=\bar\r
 
 ## What happened to shot noise?
 
-For independently sampled equal-mass points, the familiar white Poisson contribution is $P_{\rm shot}=L^d/N_p$. A connected sheet represents continuous mass, so this independent-point term is absent from its density estimator [@abel2012]. Cosmological N-body particles started on a lattice or glass are correlated; subtracting $L^d/N_p$ is not automatically justified for them. In the lab, CIC illustrates assignment and discreteness effects; we do not blindly subtract a Poisson floor.
+For independently sampled equal-mass points, the familiar white Poisson contribution is $P_{\rm shot}=L^d/N_p$. A connected sheet represents continuous mass, so this independent-point term is absent from its density estimator [@abel2012]. Cosmological N-body particles started on a lattice or glass are correlated; subtracting $L^d/N_p$ is not automatically justified for them. In the lab, cloud-in-cell{{< src sheet::cic_density >}} and triangular-shaped-cloud{{< src sheet::tsc_density >}} deposits of the **same vertices treated as points** illustrate assignment and discreteness effects; both conserve mass exactly and reproduce a uniform lattice only on a matching mesh {{< test particle_deposits_conserve_mass_and_leave_a_uniform_lattice_uniform "particle deposits" >}}. We do not blindly subtract a Poisson floor.
+
+The contrast is sharpest when the observation mesh is finer than the vertex spacing. A point deposit then leaves cells between particles empty and places a white floor near $L^d/N_p$ under the spectrum, whereas the sheet fills every cell with the mass of the elements that overlap it. The introduction's one-dimensional widget (@sec-introduction) makes this quantitative with an exactly solvable map, and the density view of the laboratory shows the CIC and TSC maps beside the exact sheet maps for the same run, with the count of empty cells.
 
 Exact deposition removes density **integration** noise. Finite-element error, FFT windows, aliasing, force resolution, and time integration remain measurable error sources. Convergence is demonstrated by varying these separately, not by calling every residual “shot noise.”
 
 The spectral tail of a finite piecewise-linear map also contains geometric information about the element facets; changing the observation mesh cannot remove this finite-element feature. Its amplitude depends on the map, tessellation, and observable, so no universal tail slope or cosmological error follows from the existence of facets. For a realistic cosmological claim, report the initial transfer function and filter, cosmology, box and phases, perturbative growth prescription, output epoch, estimator, and resolution study together. Here the published comparison supplies that context only for its specified filtered setup. It should not be generalized to unfiltered or smaller-scale power.
 
 ::: {.callout-tip title="Try it: same dynamics, different measurement"}
-Compare the exact cell-average sheet spectrum and the CIC spectrum of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step.
+Compare the exact cell-average sheet spectrum with the CIC and TSC spectra of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step. The second link deposits a $64^2$ Gaussian sheet on a $256^2$ mesh and shows the four density maps side by side.
 
 {{< lab "v=2&view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
+{{< lab "v=3&view=density&dim=2&n=64&force=64&mesh=256&ic=gaussian&cutoff=7&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64" "Sheet, CIC and TSC maps of one run" >}}
 :::
 
 ## Analysis exercises

@@ -288,3 +288,37 @@ The new chapter follows the one-point PDF chapter. It defines the equal-time den
 For a nondegenerate pre-crossing P0 tessellation, periodic overlap volumes give exact joint volume weights and density products give mass-pair weights. Independent points in elements have normalized separation kernels given by overlap divided by both volumes. Centroid differences locate these distributions, but finite extent and shape are necessary for exact correlations. In 2D/3D, centroid and volume do not uniquely determine shape; the vertices or form factors retain that information. Same-element terms are retained as continuous density autocorrelation, without a Poisson subtraction. Euclidean centroid averages use consistent unwrapped lifts, whereas the pair kernel and radial bins use periodic displacement geometry.
 
 The inline demonstration is a unit-circle P0 interval fixture, with four fixed equal masses and interpolated positive widths. Two arrangements preserve both one-point PDFs and alter the two-point correlation. Its separate query-string state avoids changing the cosmological laboratory's hash schema, and CSV export records inputs and weights. Independent Rust spatial quadrature and Fourier integrals check exact overlaps. This is geometric documentation and a reproducible analytic widget, not new small-scale validation or a general cosmological two-point panel. After crossing, the total projected density still has an element-pair correlation expansion, but individual stream-density marks do not give its Eulerian density PDF.
+
+## 2026-10-13 — pedagogical introduction, BAO transfer and particle deposits (engine 0.7.0)
+
+The user asked for an introduction that is interactive, rigorous and easy to
+follow, centered on two points: how the AHK tessellation improves measurement
+over CIC/TSC particle deposits, and that the pre-crossing map is one-to-one with
+nLPT adequate for it, checkable in the lab including models with BAO wiggles.
+
+Core: `cosmological::transfer_bao` implements the full Eisenstein & Hu (1998)
+fit (eqs. 2–24, BAO and Silk damping); the request field `transfer` selects
+`smooth` (default, unchanged) or `bao`. Manifests without the field are read as
+smooth, so earlier links and manifests reproduce unchanged. `LinearSpectrum`
+reports the filtered, growth-scaled input spectrum (`spectra.linear`,
+`spectra.directLinear`) inside the radial cutoff only, evaluated at the bin
+wavenumber. `sheet::tsc_density` deposits the LPT vertices as TSC points on the
+same cell-centered lattice as CIC; both fields (`cicRho`, `tscRho`, smoothed
+like the sheet maps), their spectra and their mass means are returned. No
+shot-noise subtraction is applied anywhere; discreteness is displayed, not
+corrected.
+
+Lab: a transfer-function control, presets for 2D/3D BAO runs and for the
+sheet-vs-CIC/TSC comparison, CIC/TSC maps with an empty-cell table in the
+density view, and the linear input overlay in the power view. Schema stays at
+version 3 because the new key has a default and is absent from old links.
+
+Book: `index.qmd` is rewritten as a pedagogical introduction with an inline,
+pure-JavaScript, exactly solvable 1D widget (`app/js/intro-sheet.js`, tested by
+`scripts/test_intro_sheet.mjs`): a three-mode Zel'dovich map deposited as the
+connected sheet, CIC and TSC on a finer mesh, with errors against the converged
+map and the Poisson level. The 1D box, N, M and growth fraction live in the
+page hash (`sheet=f_N_M`). Quantities quoted in the introduction come from the
+native runner (requests in `scripts/render_intro_figures.py`), the archived
+DiscoDJ.jl sheet study (its README at the cited commit), and the widget test.
+Numbers were recomputed in this container; browser timings are not quoted.

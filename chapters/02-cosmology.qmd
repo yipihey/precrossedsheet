@@ -32,7 +32,27 @@ The laboratory offers a physical scale factor $a$ or a reference growth fraction
 
 ## Initial spectrum and its normalization {#sec-initial-spectrum}
 
-The Gaussian option uses a smooth CDM+baryon transfer approximation from Eisenstein & Hu [@eisenstein1998], including their scale-dependent effective shape parameter. It retains the turnover and broad baryon suppression, while omitting acoustic oscillations. The implementation {{< src cosmological::transfer >}} fixes $T_{\rm CMB}=2.7255\,\mathrm K$ and evaluates their equations 26 and 28–31 in the stated $h/\mathrm{Mpc}$ convention. A Boltzmann transfer table is the appropriate replacement when precision baryonic features, neutrinos or radiation-dependent growth are required.
+The Gaussian option uses one of two CDM+baryon transfer fits from Eisenstein & Hu [@eisenstein1998]. The default **smooth** fit {{< src cosmological::transfer >}} evaluates their equations 26 and 28–31 with the scale-dependent effective shape parameter: it retains the turnover and the broad baryon suppression while omitting acoustic oscillations. The **BAO** fit {{< src cosmological::transfer_bao >}} evaluates their equations 2–24, the full form with the acoustic oscillations of the baryon component and Silk damping. Both fix $T_{\rm CMB}=2.7255\,\mathrm K$ and take $k$ in $h\,\mathrm{Mpc}^{-1}$. A Boltzmann transfer table is the appropriate replacement when precision baryonic features, neutrinos or radiation-dependent growth are required.
+
+### The acoustic oscillations as a test of nonlinear dynamics {#sec-bao-transfer}
+
+For the fiducial parameters the ratio of the two fits oscillates about unity between $k\simeq0.04$ and $0.3\,h\,\mathrm{Mpc}^{-1}$ with an amplitude of about $3\%$ in $T$, hence about $6\%$ in $P$; the first trough lies near $k\simeq0.05$ and the first crest near $0.08\,h\,\mathrm{Mpc}^{-1}$, and the two fits agree to better than $5\%$ everywhere else {{< test bao_transfer_oscillates_about_the_smooth_fit_and_shares_its_limits "BAO fit" >}}. Because the oscillations average out, the $\sigma_8$ normalization of the two fits differs by less than $1\%$. The wiggles are a demanding test of a forward model: the sheet must transport a few-percent modulation in the input power through the nonlinear map, the tessellation and the estimator without smearing it into a smooth curve or adding a discreteness floor on top of it. @sec-introduction uses this test as the central check that nLPT is adequate for a one-to-one map, and the laboratory overlays the filtered linear input on every Gaussian spectrum so the comparison is immediate.
+
+Explicitly, with the growth normalization above, the laboratory reports the input it actually realized,
+
+$$
+P_{{\rm lin},d}(k;a)=\left[\frac{D(a)}{D(1)}\right]^2
+\frac{P_{3,0}(k)\,e^{-k^2R_f^2}}{L^{3-d}},\qquad k\le\frac{2\pi m_{\rm cut}}{L},
+$$ {#eq-filtered-linear-input}
+
+and zero above the radial cutoff {{< src cosmological::LinearSpectrum >}} {{< test filtered_linear_spectrum_follows_the_stated_formula_and_vanishes_above_the_cutoff "filtered input" >}}. This is the ensemble mean, evaluated at each bin's wavenumber rather than averaged over the bin. A finite box realizes it with Rayleigh scatter, so the laboratory also reports the **realized** linear power $D(a)^2|\delta_{0,\mathbf k}|^2$ of the actual random modes, averaged over exactly the modes of each bin that lies inside the cutoff, and the exact value for each first-axis mode. In the linear regime the measured sheet power equals the realized curve mode by mode, up to the finite-element and cell-window errors {{< test gaussian_runs_report_particle_deposits_and_the_filtered_linear_input "realized input" >}}; at late times any departure from it is nonlinear evolution or estimator error, never sample variance. Any power measured above the cutoff is generated entirely by nonlinear mode coupling.
+
+::: {.callout-tip title="Try it: wiggles through the sheet"}
+Switch the transfer function between the smooth and the BAO fit at fixed seed and compare the exact sheet, the PM reference and the linear input in the power view. A $1000\,h^{-1}\mathrm{Mpc}$ two-dimensional box with the maximal $256^2$ lattice resolves the input to $k\simeq0.19\,h\,\mathrm{Mpc}^{-1}$, covering the first four oscillations; the $600\,h^{-1}\mathrm{Mpc}$ three-dimensional box reaches the first trough and crest.
+
+{{< lab "v=3&dim=2&n=256&force=256&mesh=256&ic=gaussian&transfer=bao&cutoff=31&L=1000&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 2D BAO experiment" >}}
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&transfer=bao&cutoff=7&L=600&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 3D BAO experiment" >}}
+:::
 
 Write the **unfiltered**, $z=0$, three-dimensional linear spectrum as
 

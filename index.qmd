@@ -4,19 +4,94 @@ title: "A continuous description of cold matter"
 
 # A continuous description of cold matter {#sec-introduction}
 
-Cold dark matter starts as a smooth distribution of positions and velocities. We often represent it with particles, but those particles can also be understood as **vertices of a continuous phase-space sheet**. Before shell crossing, the sheet maps each initial position to exactly one current position. Its deformation gives both the density and the velocity field.
+Cold dark matter has, to an excellent approximation, one velocity at every initial position. Its distribution in six-dimensional phase space is therefore not a cloud of points but a **three-dimensional sheet**: a surface, one velocity above each position, that gravity stretches and folds without tearing [@abel2012]. The particles of a simulation are not random samples of this sheet. They are its **vertices**: regularly spaced labels $\mathbf q$ whose current positions $\mathbf x(\mathbf q,a)$ record how the sheet has deformed.
 
-This report develops the continuous-sheet description for readers familiar with background expansion, linear growth and cosmological density fields. It derives the map, connect it to Lagrangian perturbation theory through fourth order (4LPT), turn its geometry into conservative density fields and power spectra, and distinguish volume-weighted from mass-weighted density distributions. The Rust/WebAssembly laboratory provides controlled experiments with explicit cosmology, resolution, physical epoch and estimator conventions. Complete inputs, results and build provenance can be exported for reproduction.
+This introduction makes two points and lets you check both.
 
-::: {.callout-important title="Scope: before shell crossing"}
-The scientific conclusions concern established, filtered pre-crossing results. The laboratory continues to display computed fields and statistics after detected crossing, with a caution: a crossed LPT map is a formal extrapolation beyond the validated single-stream regime. A positive Jacobian on finitely many vertices is a numerical check, not a proof of global smoothness; affine element orientations and the discrete PM trajectory are also monitored. Smaller-scale extensions remain future work.
+1. **The tessellation measures what particle deposits cannot.** Connecting neighboring vertices into mass-carrying elements turns $N$ particles into a continuous density field with no shot noise and no empty cells, where cloud-in-cell (CIC) or triangular-shaped-cloud (TSC) deposits of the same $N$ points fail.
+2. **Before shell crossing the map is one-to-one, and Lagrangian perturbation theory describes it well enough.** Density is then pure geometry, $1+\delta=1/J$, and fourth-order LPT reproduces an N-body reference at the percent level for filtered fields, including the baryon acoustic oscillations in the input spectrum.
 
-The statement “4LPT is accurate to better than 1%” needs an observable, filter, epoch, and converged reference. It is supported for selected smoothed statistics in the existing studies, not for every PDF bin or rare tail. @sec-validation spells out that distinction.
+The rest of the report derives these statements carefully; this chapter shows them. Every experiment below runs in your browser from the same tested Rust core, and every number quoted links to the test or run that produced it.
+
+## Density is geometry {#sec-intro-geometry}
+
+Write the current position of the label $\mathbf q$ as $\mathbf x=\mathbf q+\boldsymbol\Psi(\mathbf q,a)$. Mass conservation for a one-to-one map is the change of variables $\bar\rho\,d^3q=\rho\,d^3x$, so
+
+$$
+1+\delta(\mathbf x)=\frac{1}{J(\mathbf q)},\qquad J=\det\left(\delta_{ij}+\frac{\partial\Psi_i}{\partial q_j}\right).
+$$ {#eq-intro-jacobian}
+
+A patch of the sheet that has shrunk is dense; one that has stretched is a void. Nothing has to be counted. The determinant is evaluated from the displacement field, and @sec-jacobian derives it from the phase-space distribution. The **first shell crossing** is the first moment that $J$ reaches zero somewhere: two labels then arrive at one position, the map folds, and @eq-intro-jacobian is replaced by a sum over streams (@eq-multistream-density). This report is about the time before that happens.
+
+![The same two-dimensional Lagrangian triangulation before and after deformation. Colors preserve the initial labels; each triangle keeps its mass while its area changes. This is the position-space projection of a sheet living in four-dimensional phase space.](chapters/figures/sheet-2d.svg){#fig-intro-sheet2}
+
+## Measuring the sheet: tessellation versus particle deposits {#sec-intro-estimators}
+
+Suppose a simulation has given us the positions of $N$ vertices and we want the density on a mesh of $M$ cells. The conventional answer treats each vertex as a point of mass $1/N$ and spreads it over its nearest cells with a kernel: two cells per axis for CIC, three for TSC. The answer of the tessellation [@abel2012; @hahn2013] is different. Neighboring labels are connected exactly as they were on the initial lattice, into intervals in one dimension, triangles in two and tetrahedra in three. Each element keeps the mass it started with, so its density is its mass over its current volume, and the mass in a cell is the integral of the elements that overlap it. @sec-meshing derives this deposit and shows that the overlap integrals can be done exactly.
+
+The difference is not cosmetic. A point deposit has no information between particles: wherever the mesh is finer than the particle spacing, cells stay empty, the density is a lattice of spikes, and the power spectrum acquires a white floor near the Poisson level $L^d/N$. A connected element knows that the mass between two vertices is still there. The widget below runs this comparison on an exactly solvable one-dimensional map. Three sinusoidal modes define the initial overdensity, the Zel'dovich map $x=q+D\,\Psi(q)$ is exact before crossing in plane symmetry (@sec-plane-wave), and the "converged map" curve is the same deposit with sixteen thousand vertices, which the test checks against the exact cell masses obtained by inverting the map {{< test particle_deposits_conserve_mass_and_leave_a_uniform_lattice_uniform "same deposits in the core" >}}.
+
+```{=html}
+<div class="qd-widget" data-widget="intro-sheet"></div>
+<script type="module" src="app/js/widgets.js"></script>
+```
+
+Three things to try:
+
+- **Make the mesh finer than the particles.** With $N=32$ vertices on $M=128$ cells at seventy percent of the crossing time, the connected sheet reproduces the converged cell averages with an RMS error of $0.039$ in units of the mean density, while CIC and TSC have RMS errors of $1.1$ and $1.0$ and leave $66$ and $40$ of the $128$ cells empty. The sheet leaves none. These numbers are pinned by the widget's test suite (`scripts/test_intro_sheet.mjs`), which also checks that every estimator conserves mass to machine precision.
+- **Look at the power spectrum.** The point deposits flatten onto the dashed Poisson line $L/N$ at high $k$; the sheet follows the converged map far below it. The floor is a property of the estimator, not of the dynamics, which is why @sec-meshing refuses to "subtract shot noise" from a sheet measurement.
+- **Push past the crossing time.** The curve folds, the sheet deposit keeps conserving mass by adding the streams, and the density develops the integrable caustic spikes of @eq-plane-wave-density. This is the regime the rest of the report deliberately stays out of.
+
+The same comparison in two and three dimensions runs in the laboratory, where the density view shows the exact sheet maps next to CIC and TSC maps of the same vertices and counts the empty cells, and the power view overlays all three spectra.
+
+::: {.callout-tip title="Try it: the same vertices, four density maps"}
+Deposit a $64^2$ Gaussian $\Lambda$CDM sheet on a $256^2$ mesh, four times finer than the vertex spacing. The sheet maps are smooth and mass-conserving; the particle maps show the lattice.
+
+{{< lab "v=3&view=density&dim=2&n=64&force=64&mesh=256&ic=gaussian&cutoff=7&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64" "Open the estimator comparison" >}}
 :::
 
-## Structure of the report
+For cosmological volumes the archived DiscoDJ.jl study [@discodjstudy2026] quantifies the same effect on unsmoothed $1.17\,h^{-1}\mathrm{Mpc}$ cells of a $300\,h^{-1}\mathrm{Mpc}$ box: with one particle per cell, CIC's emptiest cells reach $1+\delta=0.02$–$0.09$ against $0.18$–$0.28$ for the exact sheet, the $0.1\%$ volume quantile is $58$–$109\%$ higher with the sheet, and when the particle count is lowered to $64^3$ the largest shift of the $1$–$99\%$ density quantiles relative to the $256^3$ reference is $546\%$ (volume) and $1489\%$ (mass) for CIC against $1.9\%$ and $35\%$ for the sheet. Smoothing narrows the gap but does not close it: at $R_s=7\,h^{-1}\mathrm{Mpc}$ and $64^3$ particles the largest $1$–$99\%$ quantile shift is $2.2\%$ for the sheet against $10.6\%$ for CIC. The sheet converges first in voids and at small smoothing scales.
 
-Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate. @sec-cosmology defines the background, physical initial modes and normalization. @sec-validation separates evidence from approximation; @sec-pdfs works through the probability measures; @sec-two-point connects those PDFs to spatial correlations and element-pair geometry; @sec-inference connects the forward model to derivatives and inference. @sec-lab provides experiments and exercises. The appendices collect conventions, implementation details, and the status of each claim.
+This is why the tessellation is the natural density operator of a **forward model**. A field-level inference needs a density that is smooth in the initial conditions, has no sampling noise to be marginalized, and resolves voids with as few elements as possible. The author's constrained-realization work with the Quaia quasar catalog, [QuaiaICs](https://github.com/yipihey/QuaiaICs), takes exactly this route: white noise, nLPT displacements, a past light cone, and the density read off the tetrahedral sheet as $\rho\propto1/|\det\partial\mathbf x/\partial\mathbf q|$, with no CIC deposit and no Eulerian density grid at any stage. The survey-completion ensembles of [ECHOES](https://github.com/yipihey/ECHOES) supply the kind of equal-weight catalogs such a model is compared with. Both rely on the map being one-to-one on the scales they inform, which brings us to the second point.
+
+## Before crossing the map is one-to-one, and nLPT is good enough {#sec-intro-one-to-one}
+
+How much of the matter in a realistic $\Lambda$CDM box has crossed by today? For a field filtered on $R_f=14\,h^{-1}\mathrm{Mpc}$, the archived study finds that only $0.38\%$ of the mass has ever been in an inverted tetrahedron at $z=0$ in 4LPT, and $0.52\%$ in the N-body run [@discodjstudy2026]. The remaining $99.5\%$ is described by @eq-intro-jacobian. On those scales the problem is not multi-stream dynamics; it is whether a finite-order expansion of $\boldsymbol\Psi$ is accurate.
+
+Lagrangian perturbation theory expands the displacement in powers of the initial field, $\boldsymbol\Psi=\sum_n\boldsymbol\Psi^{(n)}$, and @sec-lpt derives all orders from one recurrence. For a growing-mode field the series converges up to the first crossing [@rampf2021], so the question is quantitative: at which order, for which observable, is the residual small enough? The laboratory answers it directly by evolving the same vertices with a particle-mesh (PM) solver from the same initial modes and depositing both sheets with the same exact estimator (@sec-pm). The following native runs use the maximal browser lattice, $64^3$ vertices in a $300\,h^{-1}\mathrm{Mpc}$ box with the Planck-like fiducial cosmology, modes up to the seventh radial harmonic ($k\le0.15\,h\,\mathrm{Mpc}^{-1}$), the $14\,h^{-1}\mathrm{Mpc}$ initial filter, matched $64^3$ force and observation grids, $128$ PM steps and output at $a=1$.
+
+{{< include chapters/_intro-order-table.qmd >}}
+
+Two features deserve attention. The minimum Jacobian stays positive and no element is inverted at any order: the one-to-one assumption holds across the whole box at $z=0$ for this filtered field, in LPT and in the N-body reference alike. And the residual between LPT and PM falls monotonically with order, until at fourth order the displacement error is a few percent of the displacement itself and the low-$k$ power agrees at the percent level. What remains at that point is dominated by the finite PM resolution rather than by the expansion; @sec-validation shows how to tell the two apart and why the archived $256^3$ comparison, not this browser run, supports the sub-percent statements for smoothed statistics.
+
+::: {.callout-tip title="Try it: orders one to four against the same N-body run"}
+Open the fiducial run and switch the perturbative order. The epoch is a physical scale factor, so changing the order does not move the output time. Inspect the minimum Jacobians, the inverted-mass fractions and the position residual in the diagnostics strip.
+
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&cutoff=7&L=300&Rini=14&smoothing=0.03&epoch=scaleFactor&a=1&order=4&steps=128&view=density" "Open the 64³ ΛCDM comparison" >}}
+:::
+
+### The acoustic oscillations survive the nonlinear map {#sec-intro-bao}
+
+A smooth power spectrum hides a subtle failure: a model can get the broad shape of $P(k)$ right while smearing the features in it. The baryon acoustic oscillations are the canonical feature. The laboratory therefore offers the full Eisenstein–Hu transfer function with its acoustic oscillations beside the smooth fit (@sec-bao-transfer), draws the same random phases for both, and overlays the filtered linear input on every measured spectrum. @fig-intro-bao shows the result for a two-dimensional $1000\,h^{-1}\mathrm{Mpc}$ box with $256^2$ vertices, which resolves the input to $k\simeq0.19\,h\,\mathrm{Mpc}^{-1}$ and so covers the first four oscillations.
+
+![Baryon acoustic oscillations through the sheet. Left: the exact-sheet power spectrum of the 4LPT and PM maps at $z=0$ with the acoustic-oscillation transfer, the same realization with the smooth transfer, and the two filtered linear inputs. Right: each measured spectrum divided by its own linear input. The modulation of the input is carried through the nonlinear map, the tessellation and the estimator; it is not smoothed out or buried under a discreteness floor. Produced by `scripts/render_intro_figures.py` from native runs whose requests are stored with the figure.](chapters/figures/intro-bao.svg){#fig-intro-bao}
+
+{{< include chapters/_intro-bao-table.qmd >}}
+
+::: {.callout-tip title="Try it: wiggles in and wiggles out"}
+Run the two-dimensional box with the BAO transfer, then switch to the smooth fit at the same seed. The ratio of sheet power to linear input is nearly the same curve in both cases; the wiggles come and go with the input, as they should. The three-dimensional $600\,h^{-1}\mathrm{Mpc}$ box reaches the first trough and crest.
+
+{{< lab "v=3&dim=2&n=256&force=256&mesh=256&ic=gaussian&transfer=bao&cutoff=31&L=1000&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 2D BAO experiment" >}}
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&transfer=bao&cutoff=7&L=600&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 3D BAO experiment" >}}
+:::
+
+::: {.callout-important title="Scope: before shell crossing, with stated observables"}
+The scientific conclusions concern filtered pre-crossing fields. The laboratory keeps computing after a detected crossing, with a caution: a crossed LPT map is a formal extrapolation beyond the validated single-stream regime. A positive Jacobian on finitely many vertices and elements is a numerical check, not a proof of global smoothness. "4LPT is accurate to better than 1%" is true for selected smoothed statistics of the archived comparison and false for rare dense tails at small smoothing; @sec-validation keeps the two apart.
+:::
+
+## How to read this report
+
+@sec-sheet and @sec-lpt give the physical picture: the sheet, its Jacobian and the nLPT recurrence. @sec-cosmology defines the background, the physical initial modes with either transfer fit, and the normalization. @sec-meshing explains why exact geometry matters even when the dynamics are already accurate, and what happened to shot noise. @sec-validation separates evidence from approximation; @sec-pdfs and @sec-two-point work through the probability measures and the pair statistics of the tessellation; @sec-inference connects the forward model to derivatives and inference. @sec-lab lists the experiments, their resource limits and how to reproduce a run natively. The appendices collect conventions, implementation details and the status of each claim.
 
 ```{=html}
 <div class="qd-cta">
@@ -26,8 +101,4 @@ Read @sec-sheet and @sec-lpt first for the physical picture. @sec-meshing explai
 </div>
 ```
 
-The starting points are the author's [Hopf–Cole cosmology study](https://yipihey.github.io/hopf-cole-cosmology/index.html) and [DiscoDJ LPT/PDF study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html). We reuse the former's tested Rust nLPT and geometric integration core under its MIT license. This report follows the [quadrant format](https://github.com/yipihey/quadrant): equations link to numerical functions, local claims link to tests, and experiments link to exact laboratory states.
-
-## Questions addressed
-
-The central questions are how a cold six-dimensional distribution reduces to a three-dimensional sheet, how nLPT evolves its geometry, which errors remain after exact conservative measurement, and how convergence against N-body should be quantified. The report also establishes the derivatives of the implemented computational map, distinguishes density probability measures, and specifies reproducible numerical experiments. Mathematical definitions, source links and tests accompany each implementation claim.
+The starting points are the author's [Hopf–Cole cosmology study](https://yipihey.github.io/hopf-cole-cosmology/index.html) and the [DiscoDJ.jl LPT/PDF study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html); the tested Rust nLPT and geometric integration core of the former is reused under its MIT license. The report follows the [quadrant format](https://github.com/yipihey/quadrant): equations link to the numerical functions that evaluate them, quantitative claims link to tests, and experiments link to exact laboratory states.
