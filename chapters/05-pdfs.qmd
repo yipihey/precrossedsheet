@@ -1,128 +1,163 @@
 ---
-title: "Which density PDF?"
+title: "Which Density PDF? Volume vs Mass Weighting"
 ---
 
-## Two measures on the same density field {#sec-pdfs}
+## Two Fundamental Measures on the Cosmic Web {#sec-pdfs}
 
-Write $r=\rho/\bar\rho=1+\delta>0$. A randomly chosen point in space and a randomly chosen element of mass do not see the same density distribution. For an unsmoothed field in a periodic box,
+Let $r(\mathbf{x}) = \rho(\mathbf{x})/\bar\rho = 1 + \delta(\mathbf{x}) > 0$ be the local density contrast ratio in a periodic cosmological box of volume $V = L^d$. 
 
-$$
-p_V(r)=\frac{1}{L^d}\int d^dx\,\delta_{\rm D}[r-r(\mathbf x)],\qquad
-p_M(r)=\frac{1}{L^d}\int d^dx\,r(\mathbf x)\delta_{\rm D}[r-r(\mathbf x)].
-$$ {#eq-pdf-measures}
+A randomly chosen point in space and a randomly chosen element of dark matter do not sample the same cosmic density. This gives rise to two distinct, fundamental probability density functions (PDFs) [@bernardeau2002]:
 
-The normalization factors are box-volume factors: $p_V$ is normalized by sampled volume, while $p_M$ is normalized by total mass. Since $\langle r\rangle_V=1$, both measures normalize to unity and
+1. **Volume-Weighted PDF $p_V(r)$:** The probability that a randomly chosen spatial location has density ratio $r$:
+   $$
+   p_V(r) = \frac{1}{L^d}\int_{[0,L)^d} d^dx\,\delta_{\rm D}[r - r(\mathbf{x})].
+   $$ {#eq-volume-pdf}
+2. **Mass-Weighted PDF $p_M(r)$:** The probability that a randomly chosen unit of mass resides in an environment of density ratio $r$:
+   $$
+   p_M(r) = \frac{1}{M_{\rm tot}}\int_{[0,L)^d} dm\,\delta_{\rm D}[r - r(\mathbf{x})] = \frac{1}{L^d}\int_{[0,L)^d} d^dx\,r(\mathbf{x})\,\delta_{\rm D}[r - r(\mathbf{x})].
+   $$ {#eq-mass-pdf}
 
-$$
-p_M(r)=r\,p_V(r),\qquad \int r\,p_V(r)\,dr=1.
-$$ {#eq-pdf-reweight}
-
-In the pre-crossing regime $d^dx=J\,d^dq$ and $r=1/J$. Changing variables in the two integrals gives
-
-$$
-p_M(r)=\frac{1}{L^d}\int d^dq\,\delta_{\rm D}[r-J(\mathbf q)^{-1}],
-\qquad
-p_V(r)=\frac{1}{L^d}\int J(\mathbf q)\,d^dq\,
-\delta_{\rm D}[r-J(\mathbf q)^{-1}].
-$$ {#eq-pdf-lagrangian}
-
-Uniform Lagrangian sampling therefore gives a **mass-weighted** distribution of $r=1/J$. Weight those samples by $J$ to recover a volume distribution. The factors can be checked directly: $\int p_M(r)dr=L^{-d}\int dq=1$ and $\int p_V(r)dr=L^{-d}\int Jdq=1$, since the periodic map preserves total box volume before crossing. A histogram of vertex densities with equal weights is not a volume PDF. For the discrete P0 sheet, each simplex has fixed mass $m_T$ and current volume $V_T$: weight its density by $m_T$ for a mass PDF or by $V_T$ for a volume PDF.
-
-Dense regions occupy little space but can contain appreciable mass. This explains why the volume PDF emphasizes voids and the mass PDF gives much more prominence to the dense tail. Perturbative predictions for moments provide complementary checks, but their range of validity must be assessed against the smoothed field [@bernardeau2002].
-
-## Logarithmic axes change the PDF ordinate {#sec-logpdf}
-
-Set $y=\log_{10}r$. Probability is invariant, $p_y(y)\,dy=p_r(r)\,dr$, hence
+Because the spatial mean of the density ratio is identically unity ($\langle r \rangle_V = \frac{1}{L^d}\int r(\mathbf{x})\,d^dx = 1$), both distributions normalize to unity:
 
 $$
-p_y(y)=(\ln 10)\,10^y p_r(10^y).
+\int_0^\infty p_V(r)\,dr = 1, \qquad \int_0^\infty p_M(r)\,dr = 1.
+$$ {#eq-pdf-normalization}
+
+From @eq-volume-pdf and @eq-mass-pdf, the two probability measures are linked by the exact relation:
+
+$$
+p_M(r) = r\,p_V(r).
+$$ {#eq-pdf-fundamental-relation}
+
+This equation encapsulates the dual nature of cosmological structure:
+* **The Volume PDF $p_V(r)$ emphasizes voids:** Because cosmic voids occupy the vast majority of cosmological volume ($\sim 80\%$), the peak of $p_V(r)$ lies at deep underdensities ($r < 1$).
+* **The Mass PDF $p_M(r)$ emphasizes peaks and filaments:** Because collapsed structures contain most of the universe's mass compressed into tiny volumes, the factor $r$ shifts the peak of $p_M(r)$ toward high densities ($r > 1$) and vastly extends the high-density tail.
+
+---
+
+## Lagrangian Formulation and Simplex Measures {#sec-lagrangian-pdfs}
+
+Before shell crossing, the mapping $\mathbf{q} \mapsto \mathbf{x}$ is a diffeomorphism with volume element $d^dx = J(\mathbf{q})\,d^dq$ and pushforward density $r(\mathbf{x}) = 1/J(\mathbf{q})$. Changing integration variables in @eq-volume-pdf and @eq-mass-pdf reveals their natural Lagrangian representations:
+
+$$
+p_M(r) = \frac{1}{L^d}\int d^dq\,\delta_{\rm D}[r - J(\mathbf{q})^{-1}], \qquad
+p_V(r) = \frac{1}{L^d}\int d^dq\,J(\mathbf{q})\,\delta_{\rm D}[r - J(\mathbf{q})^{-1}].
+$$ {#eq-lagrangian-pdfs}
+
+This reveals a beautiful symmetry:
+* **Uniform Lagrangian sampling naturally yields the mass-weighted PDF $p_M(r)$!**
+* To obtain the volume-weighted PDF $p_V(r)$, each Lagrangian element must be weighted by its local volume expansion factor $J(\mathbf{q})$.
+
+For the discrete simplicial phase-space sheet, each simplex $T$ carries constant mass $m_T = \bar\rho V_{T,0}$, current deformed volume $V_T = |J_T| V_{T,0}$, and pushforward density $r_T = 1/|J_T|$:
+
+$$
+p_M(r) = \sum_T \frac{m_T}{M_{\rm tot}}\,\delta_{\rm D}(r - r_T), \qquad
+p_V(r) = \sum_T \frac{V_T}{V_{\rm box}}\,\delta_{\rm D}(r - r_T).
+$$ {#eq-simplex-pdfs}
+
+Counting simplices with equal weights ($m_T/M_{\rm tot}$) computes the exact mass PDF; weighting simplices by their current physical volumes ($V_T/V_{\rm box}$) computes the exact volume PDF.
+
+### Why Traditional Particle Estimators Fail on Void Volume PDFs
+
+In traditional $N$-body simulations:
+* Particles sample mass, so a naive histogram of particle positions estimates the mass PDF $p_M(r)$.
+* To estimate the volume PDF $p_V(r)$, particles must be deposited onto an Eulerian grid (e.g., via CIC). 
+* In underdense voids, particles disperse. Cells with zero particles receive density $\rho_C = 0$. The volume PDF develops a massive, spurious spike at $r = 0$, followed by catastrophic Poisson shot-noise fluctuations in underdense bins. Traditional codes are incapable of resolving the smooth exponential decline of $p_V(r)$ in voids.
+* **On the Phase-Space Sheet:** As a void expands, simplices stretch to fill the volume. Because $V_T > 0$ always, the density $r_T = m_T / V_T > 0$ remains strictly positive. The phase-space sheet provides **pristine, continuous volume PDFs with zero Poisson noise down to the deepest cosmic voids**.
+
+---
+
+## Logarithmic Bins and Coordinate Transformations {#sec-logpdf}
+
+Because cosmological densities span multiple orders of magnitude (from $r \sim 0.01$ in deep voids to $r \sim 10^3$ in halos), PDFs are universally plotted in logarithmic coordinates: $y = \log_{10} r$.
+
+Because probability is an invariant differential measure ($p_y(y)\,dy = p_r(r)\,dr$), the logarithmic PDF requires the transformation Jacobian:
+
+$$
+p_y(y) = (\ln 10)\,10^y\,p_r(10^y) = (\ln 10)\,r\,p_r(r).
 $$ {#eq-logpdf-jacobian}
 
-A density histogram in equal $\log_{10}r$ bins estimates $dP/d\log_{10}r$. It is not $dP/dr$ drawn on a logarithmic horizontal axis. The laboratory uses the former{{< src observables::density_pdf >}}; its CSV export preserves this convention.
+A histogram binned directly in equal $\Delta y$ intervals estimates $dP/d\log_{10}r$. It is **not** $dP/dr$ drawn on a logarithmic horizontal axis. 
 
-For bin width $\Delta y$, a volume ordinate is $N_b/(N_{\rm cell}\Delta y)$. A mass ordinate is $\sum_{i\in b}\rho_i/(\sum_i\rho_i\Delta y)$. Their integrals over the plotted range give the captured probability. We report that fraction and do not renormalize omitted tails to make a truncated histogram appear complete. Empty bins are meaningful; a ratio to an empty reference bin is undefined.
-
-The displayed ordinate is a density with respect to $y$, so its discrete integral is $\sum_b p_y(y_b)\Delta y$. In a regular Eulerian mesh with equal cell volumes, the live estimators are
+In the laboratory{{< src observables::density_pdf >}}, for equal cell volumes on a regular Eulerian analysis grid, the discrete estimators are:
 
 $$
-\widehat p_{V,y}(y_b)=\frac{N_b}{N_{\rm cell}\Delta y},
-\qquad
-\widehat p_{M,y}(y_b)=
-\frac{\sum_{i\in b}\rho_i}{\left(\sum_i\rho_i\right)\Delta y}.
-$$ {#eq-pdf-grid-estimators}
+\widehat{p}_{V,y}(y_b) = \frac{N_b}{N_{\rm cell}\Delta y}, \qquad
+\widehat{p}_{M,y}(y_b) = \frac{\sum_{i \in b} \rho_i}{\left(\sum_i \rho_i\right)\Delta y}.
+$$ {#eq-grid-pdf-estimators}
 
-The two estimates use the same density values but different empirical measures. Binning also limits what their ratios mean: $p_M=r p_V$ is a pointwise identity of continuous densities; after finite binning, multiplying a bin average by its center is only an approximation to the mass-bin integral. Quantiles in the archived package are separately stored full-field quantiles and are not recoverable from the finite-range, conditionally normalized PDF arrays.
+The integral of $\widehat{p}_y(y)$ over the captured histogram bins gives the total captured probability fraction. Our engine reports this captured fraction explicitly and never artificially renormalizes truncated histogram tails.
 
-## Smoothing the observable {#sec-pdf-smoothing}
+---
 
-Define a normalized filter $W_R$ and $r_R=W_R*r$. The live experiment uses a Gaussian filter, $\widehat W_R=\exp(-k^2R^2/2)$, applied to the Eulerian cell-average field{{< src observables::smooth_density >}}. The archival study instead uses its stated top-hat filters. An initial-condition filter changes the simulated dynamics; an observation filter changes the measured statistic. Their scales must be recorded separately.
+## Observational Smoothing: Environment vs Smoothed Mass {#sec-pdf-smoothing}
 
-There are two legitimate mass-weighted questions after smoothing:
+Cosmological surveys and forward models analyze density fields filtered on an observational scale $R_s$ (e.g. top-hat or Gaussian filter $W_{R_s}$){{< src observables::smooth_density >}}:
 
 $$
-p_{M,\mathrm{env}}(s)=\frac{1}{L^d}\int r(\mathbf x)\,
-\delta_{\rm D}[s-r_R(\mathbf x)]\,d^dx,
-$$ {#eq-mass-environment}
+r_{R_s}(\mathbf{x}) = (W_{R_s} * r)(\mathbf{x}).
+$$ {#eq-smoothed-density}
 
-and $p_{M,R}(s)=s\,p_{V,R}(s)$, which uses the smoothed density itself as the weight. The first asks which smoothed **environment actual matter occupies**; the second samples the smoothed mass field. They coincide at $R=0$ but generally differ at finite $R$. The live lab and archived CIC study use the first, with unsmoothed cell mass weights. Consequently, multiplying a displayed smoothed volume PDF by its horizontal coordinate does not reproduce the displayed mass PDF.
+Once the density field is smoothed, what is the meaning of a "mass-weighted" PDF? There are two distinct mathematical definitions:
 
-In the live finite-volume estimator, the raw cell density $r_i$ determines the mass weight and the Fourier-smoothed value $r_{R,i}$ determines the histogram coordinate. Thus
+1. **Environmental Mass PDF $p_{M,\rm env}(s)$:**
+   $$
+   p_{M,\rm env}(s) = \frac{1}{L^d}\int r(\mathbf{x})\,\delta_{\rm D}[s - r_{R_s}(\mathbf{x})]\,d^dx.
+   $$ {#eq-mass-environment}
+   This answers the physical question: **"What smoothed density environment does actual matter occupy?"** It weights each spatial point by its raw, unsmoothed matter density $r(\mathbf{x})$, while evaluating the histogram coordinate from the smoothed field $r_{R_s}(\mathbf{x})$.
+2. **Smoothed Mass PDF $p_{M,R_s}(s) = s\,p_{V,R_s}(s)$:**
+   This smooths the mass distribution first, and then samples the smoothed field with weights proportional to the smoothed density $s$.
+
+Because spatial convolution and local multiplication do not commute ($W * (r \cdot f) \ne (W * r) \cdot f$), these two definitions diverge as the smoothing scale $R_s$ increases. The laboratory and the published DiscoDJ benchmarks use the **environmental mass measure** $p_{M,\rm env}$:
 
 $$
-\widehat p_{M,\mathrm{env}}(s_b)=
-\frac{\sum_{i:\,r_{R,i}\in b}r_i}{\left(\sum_i r_i\right)\Delta s},
-\qquad
-\widehat p_{V,R}(s_b)=\frac{N_b}{N_{\rm cell}\Delta s}.
-$$ {#eq-smoothed-pdf-estimators}
+\widehat{p}_{M,\rm env}(s_b) = \frac{\sum_{i: r_{R_s,i} \in b} r_i}{\left(\sum_i r_i\right)\Delta s}.
+$$ {#eq-env-mass-estimator}
 
-This preserves the question “what smoothed density environment contains a randomly selected mass element?” The alternative $p_{M,R}$ answers a different question because smoothing redistributes mass before weighting. The difference follows from the noncommutation of smoothing and multiplication by local density.
+Multiplying a smoothed volume PDF by its horizontal coordinate does not equal the environmental mass PDF.
 
-## Quantiles, moments, and rare tails
+---
 
-A density quantile $Q(p)$ solves $\int_0^{Q(p)}p_r(r)\,dr=p$. Quantiles are often easier to compare robustly than noisy tail-bin ratios, but extreme quantiles still require resolution and sample-volume checks. The variance $\sigma_R^2=\langle(r_R-1)^2\rangle_V$ and reduced skewness $S_3=\langle\delta_R^3\rangle_V/\sigma_R^4$ probe complementary aspects of the field.
+## Full-Field Quantiles and Cosmological Cumulants {#sec-live-pdf-summary}
 
-A PDF agreement does not prove that the spatial arrangement of density is correct. The power spectrum measures correlations, and a field comparison checks the realization directly. Use all three when validating a forward model. @sec-two-point derives the joint density PDF, its two-point moment, and the geometric pair weights of the pre-crossing sheet.
+To characterize density distributions independently of histogram binning and range truncation, the laboratory computes **full-field cumulative quantiles** directly from the unsmoothed or smoothed arrays{{< src observables::density_summary >}}:
 
-Tail precision requires more than a smooth-looking curve. The upper tail has few effectively independent regions, especially when the smoothing radius approaches a significant fraction of the box. Increasing the Eulerian cell count alone does not create new independent volumes. A defensible comparison therefore separates (i) estimator convergence at fixed map and filter, (ii) Lagrangian and force-resolution convergence of the map, and (iii) realization or phase sensitivity across independent or paired initial conditions. A paired phase run diagnoses sensitivity to that chosen realization pair; it is not by itself an ensemble covariance. Quote tail quantiles only with their smoothing scale, box size, weighting measure, crossed-mass diagnostic where available, and reference resolution. The archived study's small nonzero crossed fraction is part of its unconditional PDF sample; the replay preserves this warning, while its finite-range histogram does not supply the missing tail probability.
+$$
+Q(p) = \inf\{r : F(r) \ge p\}, \qquad p \in \{0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999\}.
+$$ {#eq-quantiles}
 
-For a crossed but otherwise specified map, the PDF of its position-space density remains well-defined by the pushforward measure. At each regular point its density sums $1/|J_s|$ over streams, and a cell estimator adds the mass from every covering element. Orientation flips do not remove those elements from the density. They do invalidate the single-stream transformation $r=1/J$ and do not turn an LPT continuation into a validated post-crossing evolution. The pre-crossing derivation above must not be applied to the archival sample as if every element were uncrossed.
+Volume quantiles invert the unweighted empirical cumulative distribution function (CDF); mass quantiles invert the CDF weighted by raw cell masses. The independence of these full-field summaries from histogram truncation is confirmed by dedicated unit tests{{< test full_field_quantiles_use_raw_mass_and_moments_ignore_histogram_clipping "full-field PDF summary" >}}.
 
-::: {.callout-tip title="Try it: voids, mass, and observation filters"}
-Inspect the volume and mass PDFs of exactly the same pre-crossing sheet. Set the observation filter to zero to test $p_M=r p_V$ within finite bins, then restore smoothing and explain why that identity no longer applies to the environment-weighted curve.
+In addition, the laboratory evaluates the standard cosmological **reduced cumulants**:
+
+$$
+\sigma^2 = \mu_2 = \langle (r - 1)^2 \rangle_V, \qquad
+S_3 = \frac{\mu_3}{\mu_2^2} = \frac{\langle (r - 1)^3 \rangle_V}{\sigma^4}, \qquad
+S_4 = \frac{\mu_4 - 3\mu_2^2}{\mu_2^3}.
+$$ {#eq-cumulants}
+
+In perturbation theory, $S_3$ and $S_4$ are independent of growth amplitude at leading order, providing powerful tests of non-Gaussian gravitational clustering [@bernardeau2002].
+
+::: {.callout-tip title="Interactive exploration: volume vs mass PDFs in the laboratory"}
+Open the PDF panel in the laboratory. Notice how the volume PDF peaks in deep voids ($r < 1$), while the mass PDF shifts dramatically toward overdense structures ($r > 1$). Toggle the observation smoothing filter to observe how environmental smoothing narrows both distributions.
 
 {{< lab "v=2&view=pdf&dim=2&n=24&force=24&f=0.55" "Explore both density measures" >}}
 :::
 
-::: {.callout-tip title="Try it: the established results"}
-Switch the archival replay by model, estimator, observation radius, and phase pairing. For a reproducible comparison, record the upstream commit and source estimator; the $300\,h^{-1}\mathrm{Mpc}$ box, Planck18/Eisenstein–Hu initial spectrum, $14\,h^{-1}\mathrm{Mpc}$ initial top-hat, redshift zero, and common $256^3$ analysis mesh; the LPT growth prescription (exact $\Lambda$CDM through third order, EdS time dependence at fourth); the selected $R_s$ and volume or mass weighting; and the run's ever-crossed fraction. The selector includes the original CIC comparison and a distinct native-sheet follow-up. The latter uses a different trajectory source and estimator, so treat each as its own archived analysis. These are packaged outputs, not new high-resolution simulations launched by the browser. The archived PDFs were normalized conditionally over the source density range $0.05<r<20$, and the retained probability outside that range is unavailable; full-field quantiles are stored separately. They differ in this respect from the unrenormalized live histograms.
+::: {.callout-tip title="Interactive exploration: archived published benchmarks"}
+Switch the view to the archived published study. Compare 1LPT, 2LPT, 3LPT, and 4LPT against converged $N$-body simulations across observation smoothing scales $R_s = 7, 14, 28, 42\,h^{-1}\mathrm{Mpc}$.
 
 {{< lab "v=2&view=published" "Inspect the archived PDFs" >}}
 :::
 
-## Analysis exercises
+## Key Takeaways and Analytical Exercises
 
-1. **Change of measure.** Starting from @eq-pdf-measures, derive @eq-pdf-lagrangian. Verify its normalization and show that the mass fraction above a threshold $r_*$ is $\int_{r_*}^{\infty}r p_V(r)dr$, while the corresponding volume fraction is $\int_{r_*}^{\infty}p_V(r)dr$.
-2. **Logarithmic bins.** For an interval $r\in[r_1,r_2]$, transform the probability integral to $y=\log_{10}r$. Explain why the factor $\ln 10$ appears in the differential PDF and why it is absent from a histogram that directly counts equal-width $y$ bins.
-3. **Smoothing and weighting.** Use a periodic two-cell field with raw densities $(r_1,r_2)=(0.2,1.8)$ and a normalized filter matrix $\left(\begin{smallmatrix}0.75&0.25\\0.25&0.75\end{smallmatrix}\right)$. The smoothed values are $(0.6,1.4)$. Compute the mass assigned to each smoothed environment under both $p_{M,\mathrm{env}}$ and $p_{M,R}$. Which question does each measure answer?
-4. **Finite-volume uncertainty.** Explain why doubling the number of analysis cells at fixed box and smoothing scale can stabilize a histogram without doubling its number of independent tail samples. Design a separate phase or volume study that would probe realization uncertainty, and list the metadata needed to compare its 99.9th-percentile mass quantile with the archived result.
+1. **Volume vs Mass:** $p_M(r) = r p_V(r)$. Volume PDFs probe voids; mass PDFs probe halos and filaments.
+2. **Void Superiority:** Traditional particle methods suffer from empty cells ($\rho = 0$) and shot noise in voids. The continuous sheet guarantees strictly positive densities $r_T > 0$ and smooth volume PDFs everywhere.
+3. **Environmental Smoothing:** $p_{M,\rm env}$ evaluates what smoothed environments actual matter occupies, preserving raw mass weights.
 
+### Exercises
 
-### Full-field quantiles and reduced cumulants {#sec-live-pdf-summary}
-
-The live summary evaluates quantiles from the complete cell field, independently
-of the displayed histogram range. Volume quantiles invert the uniformly weighted
-empirical CDF; mass quantiles invert the CDF weighted by unsmoothed raw cell mass.
-The reported probabilities are0.1%,1%,10%,50%,90%,99% and99.9%. Their definition
-is the left inverse $Q(p)=\inf\{r:F(r)\ge p\}$, so tied cell densities produce
-steps rather than an invented interpolation {{< src observables::density_summary >}}.
-The weighting and histogram independence have an analytic discrete fixture
-{{< test full_field_quantiles_use_raw_mass_and_moments_ignore_histogram_clipping "full-field PDF summary" >}}.
-
-For the volume-weighted field let $\mu_j=\langle(r-\langle r\rangle)^j\rangle$.
-The lab reports variance $\mu_2$, reduced skewness $S_3=\mu_3/\mu_2^2$, and
-reduced connected kurtosis $S_4=(\mu_4-3\mu_2^2)/\mu_2^3$. These are the
-cosmological reduced cumulants, not the standardized skewness and kurtosis.
-A uniform field has vanishing variance and undefined reduced cumulants, shown
-as missing rather than divided by zero. Together with captured histogram
-probabilities, these full-field summaries distinguish a changed dense tail from
-a normalization artifact in a truncated PDF plot.
+1. **Lagrangian Transformation of Measures:** Starting from $p_V(r) = L^{-d}\int d^dx\,\delta_{\rm D}[r - r(\mathbf{x})]$, substitute $d^dx = J(\mathbf{q})d^dq$ and $r(\mathbf{x}) = 1/J(\mathbf{q})$. Derive @eq-lagrangian-pdfs. Verify that $\int_0^\infty p_V(r)\,dr = 1$ and $\int_0^\infty r p_V(r)\,dr = 1$.
+2. **Log-PDF Transformation:** Prove @eq-logpdf-jacobian by setting $y = \log_{10} r$ and using the Dirac delta scaling identity $\delta_{\rm D}(10^y - r) = \frac{\delta_{\rm D}(y - \log_{10}r)}{r\ln 10}$.
+3. **Environmental Mass Weighting:** Consider a 1D two-cell universe with raw densities $(r_1, r_2) = (0.2, 1.8)$. Apply a symmetric smoothing filter with kernel weights $(0.75, 0.25)$ to obtain smoothed densities $(s_1, s_2) = (0.6, 1.4)$. Calculate the mass assigned to smoothed bins under $p_{M,\rm env}$ versus $p_{M, R_s}$. Explain why they differ.

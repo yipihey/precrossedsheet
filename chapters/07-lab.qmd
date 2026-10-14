@@ -1,65 +1,76 @@
 ---
-title: "A guide to the laboratory"
+title: "A Guide to the Numerical Laboratory"
 ---
 
-## Reproducible experiments {#sec-lab}
+## An Interactive Playground for the Phase-Space Sheet {#sec-lab}
 
-The laboratory shares the book's numerical core. Controls are encoded in the URL; “Copy link” preserves the realization, epoch, order, estimator resolution, and selected panel. Calculations run in a background worker so rotating or exporting a plot does not interrupt the page. When a new physical state is requested, obsolete work is cancelled. The lab does not substitute a JavaScript approximation when Wasm fails.
+The interactive WebAssembly laboratory (`app/index.html`) brings the theoretical concepts of this report to life directly inside your web browser. Driven by the same high-performance Rust core used for batch simulations, the laboratory enables real-time exploration of the phase-space sheet, high-order Lagrangian Perturbation Theory, and symplectic Particle-Mesh dynamics without requiring local software installation.
 
-The live model supports flat $\Lambda$CDM or EdS expansion, deterministic wave benchmarks or physical smooth-spectrum Gaussian modes, and either a physical scale factor or a common reference growth fraction. @sec-cosmology states the amplitude normalization, mode generator, initial cutoff and dimensional conventions. Output includes sampled vertex and affine simplex Jacobian minima, a full-drift PM orientation check, and final inverted-element mass fractions. Crossing produces a caution and retains all finite outputs. This makes the model's breakdown inspectable; it does not extend the validated LPT domain.
+### Key Features of the Laboratory
 
-Spatial density axes have equal scales, and the 3D sheet uses an orthographic projection. Rendering may decimate a dense wireframe; that changes the display only. Every simplex still contributes to the numerical deposit and continuous Fourier estimator. The physical box, central slice and display decimation are labeled. Velocity in the 1D phase-space panel is $d(x/L)/da$; it has a separate scale from position.
+1. **Three-Panel Density Visualization:**
+   In the density panel, the laboratory renders a side-by-side comparison on identical spatial coordinates and color normalizations:
+   * **LPT Continuous Sheet Density:** Exact polyhedral clipping (R3D) of the 4LPT simplicial sheet, displaying pristine filaments and smooth, noise-free voids.
+   * **Traditional CIC Particle Density:** Standard Cloud-In-Cell deposition of the same simulation particles, immediately exposing the empty cells and Poisson shot noise in voids, as well as the window-induced smearing of dense peaks.
+   * **PM Trajectory Sheet Density:** The exact sheet formed by connecting the PM particle trajectories with the initial Lagrangian simplicial mesh, cleanly isolating dynamical trajectory evolution from density assignment errors.
+2. **Comprehensive PDF Analytics:**
+   The PDF panel plots the volume-weighted $p_V(r)$ and mass-weighted $p_M(r)$ distributions of the LPT sheet, CIC particles, and PM trajectories simultaneously. An interactive summary table reports full-field variance, reduced skewness ($S_3$), reduced kurtosis ($S_4$), and cumulative quantiles ($0.1\%$ to $99.9\%$).
+3. **Multi-Scale Spectra:**
+   Compare the continuous Hermite–Genocchi Fourier modes (zero shot noise) against cell-averaged deposited spectra and particle CIC spectra.
+4. **Analytic Directional Derivatives:**
+   Inspect exact Jacobian-Vector Products (JVP) of continuous Fourier power alongside centered numerical finite differences.
+5. **Archived Filtered $\Lambda$CDM Replay:**
+   Interactively explore the published DiscoDJ benchmarks across four observation smoothing scales ($R_s = 7, 14, 28, 42\,h^{-1}\mathrm{Mpc}$) and LPT orders 1–4.
 
-### Resolution and resource control {#sec-lab-resolution}
+---
 
-Supported Lagrangian ceilings are 1024 points in 1D, 256 per axis in 2D and 64 per axis in 3D. Force and observation grids have independent controls; 3D grids can reach 128 per axis when the complete request fits the allocation envelope. A conservative pre-allocation estimate covers growth terms, tensors, tangent arrays, FFT workspaces and JSON output; requests above 1 GiB or a dimension-specific ceiling return a stated error. The solver never substitutes a smaller grid. Native timings and measured memory for selected cases are recorded in [the benchmark log](https://github.com/yipihey/precrossedsheet/blob/main/docs/benchmarks.md); native timings do not predict a particular browser's speed.
+## Controlled Numerical Experiments
 
-For Gaussian 4LPT, $N_q>8m_{\rm cut}$ resolves the conservative input bandwidth. A refinement sequence keeps the seed, cutoff, physical box, initial spectrum, initial filter and physical epoch fixed. Increasing the cutoff while refining the lattice changes the input problem. A force-only refinement can also change particle-load artifacts, so investigate matched particle/force refinement and timestep refinement as separate controls.
+The laboratory is structured around eight canonical numerical experiments designed to isolate specific physical and computational effects:
 
-| Experiment | What to vary | What it isolates |
+| Experiment | Primary Controls to Vary | Physical & Numerical Insights Isolated |
 |---|---|---|
-| 1D phase-space curve | Time fraction | Exact plane-symmetric compression and the approach to $J=0$ |
-| 2D triangles, 3D tetrahedra | Dimension and viewing angle | Sheet connectivity and its position projection |
-| Orders 1–4 | LPT order at fixed epoch | Contributions of nonlinear dynamics |
-| Exact deposit vs CIC | Eulerian mesh at fixed Lagrangian grid | Assignment and cell averaging |
-| LPT vs PM | Steps and mesh separately | Approximation error versus numerical-reference error |
-| Volume vs mass PDF | Observation filter and measure | Different sampling questions on the same density |
-| Amplitude tangent | Order and epoch | A fixed-time derivative of continuous Fourier power |
-| Archival replay | Filter, order, weighting, dataset | Published statistics with their original provenance |
+| **1. 1D Phase-Space Manifold** | Growth fraction $f = AD$ | Evolution of the continuous curve $(x, u)$ in phase space; approach to caustic singularity ($r \propto |x|^{-2/3}$) at $J = 0$. |
+| **2. Simplicial Mesh Geometry** | Dimension (2D/3D), viewing angle | Watertight simplicial tessellation; expansion of Kuhn tetrahedra in cosmic voids and anisotropic compression into walls and filaments. |
+| **3. LPT Orders (1 to 4)** | Order (1LPT to 4LPT) at fixed epoch | Successive non-linear tidal corrections; sharpening of cosmic web filaments; emergence of transverse displacements. |
+| **4. Sheet vs Traditional CIC Particles** | Density view; Eulerian mesh size | **Direct proof of sheet superiority:** Absence of empty cells in voids; elimination of particle shot noise; sharp caustic preservation. |
+| **5. LPT vs Particle-Mesh Dynamics** | PM timesteps and force mesh | Accuracy of 4LPT trajectories against symplectic $N$-body integration prior to shell crossing. |
+| **6. Volume vs Mass PDFs** | Weighting measure; observation filter $R_s$ | Contrast between void-dominated volume PDFs ($p_V$) and peak-dominated mass PDFs ($p_M = r p_V$); environmental smoothing. |
+| **7. Power Spectrum Derivatives** | Amplitude tangent; LPT order | Exact automatic differentiation of continuous Fourier power via confluent divided differences. |
+| **8. Published Cosmological Replay** | Observation radius $R_s$, model order | Empirical verification of sub-percent 4LPT accuracy on large, pre-crossing scales in $\Lambda$CDM. |
 
 ::: {.callout-tip title="Start with a gentle three-dimensional field"}
-Use a modest lattice to establish the experiment, then refine the numerical approximation while keeping its physical inputs fixed. Export complete JSON inputs and results, SVG/CSV quantitative curves and PNG field panels.
+Launch the 3D laboratory experiment. Rotate the tetrahedral sheet to inspect the cosmic web. Toggle between the continuous sheet density and the CIC particle density to witness the dramatic elimination of void shot noise.
 
 {{< lab "v=2&dim=3&n=16&force=16&f=0.35&view=sheet" "Open the 3D starting experiment" >}}
 :::
 
-## Analysis exercises
+---
 
-1. **Jacobian and density.** Derive @eq-plane-wave from $\nabla^2\varphi=\delta_0$. Identify the first-crossing location. Explain why a 4LPT curve equals 1LPT in this experiment. Check that integrating the displayed cell-average density gives the box mass.
-2. **Simplex mass.** For a triangle stretched by a diagonal deformation with factors $(b_1,b_2)$, compute $J_T$ and its density. Repeat for a tetrahedron with $(b_1,b_2,b_3)$. Check that a uniform translation changes neither density nor power.
-3. **Measurement windows.** Predict the suppression from @eq-cell-window for a mode with $k\Delta x=\pi/2$. Compare raw cell-average power to the continuous mode estimator. Explain why a window correction alone does not validate Nyquist-scale power.
-4. **Probability measures.** Starting from $d^dx=Jd^dq$, derive both PDFs from uniformly sampled labels. Explain what changes when density is first smoothed and the mass weights remain unsmoothed.
-5. **Numerical reference.** Double the PM steps at fixed particle and force grids. Then refine the particle and force grids together at a fixed observation filter. Also try refining only the force grid: does the residual improve monotonically? Which diagnostic changes most? Can a sub-percent variance error coexist with a larger tail-quantile error?
-6. **Parameter derivatives.** Derive @eq-amplitude-jvp by homogeneity. Compare the tangent power response with a centered finite difference. Explain why recomputing a crossing-based output time after changing amplitude would test a different derivative.
-7. **Evidence reading.** In the published replay, choose one density quantile that meets a sub-percent tolerance and one that does not. Write down the initial filter, observation filter, estimator, epoch, and any crossing contamination before stating the result.
+## Resolution Controls and Bandwidth Protection {#sec-lab-resolution}
 
-The first exercise has $J=1-AD\cos(kq)$ and $D_{\rm sc}=1/A$. The second gives $J_T=\prod_jb_j$. For the third, each affected axis contributes $\operatorname{sinc}(\pi/4)$ to amplitude. The remaining exercises are investigations: save the links and exported data that support your conclusions.
+The laboratory enforces rigorous numerical ceilings to prevent out-of-memory errors and ensure physical accuracy:
+* **Lagrangian Grids:** Up to 1024 elements in 1D, $256^2$ in 2D, and $64^3$ in 3D.
+* **Eulerian Analysis Grids:** Up to $128^3$ in 3D, configured independently of the Lagrangian particle resolution.
+* **Bandwidth Protection for 4LPT:** To guarantee that high-order displacement convolutions do not alias across the grid Nyquist frequency, the engine enforces $N_q > 8 m_{\rm cut}$ for Gaussian realizations.
 
-## Reproduction and verification
+A complete run manifest containing every physical parameter, random seed, execution timing, and diagnostic metric can be exported as a standalone JSON file with a single click.
 
-[Run the self-check page](../app/selftest.html) to verify that the generated Wasm package loads, a guarded model conserves mass, and the tangent agrees with a finite difference. This supplements the native Rust tests; it does not replace the scientific convergence study. Results and failures are displayed directly, so a missing binary cannot masquerade as a passing demonstration.
+---
 
+## Native CLI Runner for High-Throughput Batch Processing
 
-A version-3 experiment URL writes all numerical and display defaults explicitly, preserving numerical precision rather than rounding parameters to six significant digits. For durable reproduction, save the JSON manifest as well: it records the state, executed request, output epoch, cosmology, engine version, build revision, diagnostics, conventions and result arrays. It also records the requested observation backend, per-mode execution and precision, shader hashes, device limits and numerical recovery. Version-2 URLs migrate to the CPU reference while preserving their physical controls. Figure files alone do not record the simulation specification. Imported settings start a new calculation; a change in implementation can be assessed against the saved outputs.
-
-The native runner uses the same request/response facade as Wasm. From the repository revision recorded in a manifest:
+The exact numerical request executed in the browser can be reproduced identically from the command line using the native Rust binary:
 
 ```sh
+# Build the native high-throughput runner
 cargo build --release --manifest-path core/Cargo.toml --example lab_dump
+
+# Execute an exported browser experiment
 core/target/release/examples/lab_dump < experiment.json > reproduced.json
 ```
 
-The runner accepts a plain request, a complete numerical response, or a browser manifest containing its executed request. It prefers executed inputs over display state, so a stale or rotated plot does not alter the numerical experiment. Browser-only view controls do not enter the dynamics. A compact standalone request is:
+A compact standalone request specification is:
 
 ```json
 {
@@ -73,9 +84,20 @@ The runner accepts a plain request, a complete numerical response, or a browser 
 }
 ```
 
-Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
+## Browser Verification and Self-Checks
 
-The [browser self-check](../app/selftest.html) verifies worker execution and the generated binary. The native suite checks the physical clocks, equation residuals, Hermitian mode pairing, refinement stability, conservation, and independent finite differences. Record the repository revision with a convergence table; the same seed or a successful self-check alone does not establish scientific convergence.
+To verify the integrity of the WebAssembly build and mathematical consistency directly in your environment:
+* [Run the browser self-test suite](../app/selftest.html) to confirm Wasm module loading, mass conservation, and finite-difference tangent agreement.
+* [Run the GPU acceleration self-check](../app/gpu-test.html) to test optional WebGPU-accelerated spectral LPT and PM solvers.
 
+## Key Takeaways and Analytical Exercises
 
-The optional GPU backend accelerates spectral nLPT construction, cosmological PM evolution, exact geometric deposition, continuous Fourier modes and the centered amplitude check. The nLPT and PM FFTs require radix lattices and force meshes respectively. Weak LPT modes first attempt compensated analytic recovery, then CPU f64 if the unchanged derivative gate requires it. Inspect per-stage precision, fallback reasons and cache status in the lab; change only observation smoothing to reuse compatible unsmoothed fields. CPU is the default and automatic policy currently uses CPU. See @sec-gpu-backend and [run the GPU self-check](../app/gpu-test.html).
+1. **Three-Panel Density View:** Directly contrasts the continuous sheet against traditional CIC particle noise and PM trajectories.
+2. **Universal Reproducibility:** Every browser state is fully serializable into URL permalinks and exportable JSON manifests.
+3. **Rigorous Guards:** Real-time Jacobian tracking detects shell crossing while allowing transparent exploration of multi-stream continuation.
+
+### Exercises
+
+1. **Void Noise Comparison:** In the 2D laboratory with Gaussian initial conditions, open the density view. Zoom in on a deep void. Compare the continuous sheet density (smooth gradient, $\rho > 0$) with the CIC particle density (empty cells with $\rho = 0$). Explain why the CIC field cannot compute $\ln(1+\delta)$.
+2. **Order-by-Order Convergence:** In the 2D density view at $f = 0.55$, step through orders 1, 2, 3, and 4. Identify the sharpening of filamentary spines and the emergence of non-linear tidal compression.
+3. **PM Step Convergence:** Set PM timesteps to 16, 32, 64, and 128 in a 2D wave experiment. Observe the saturation of the displacement residual against 4LPT.

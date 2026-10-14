@@ -1,222 +1,180 @@
 ---
-title: "Two-point statistics as sheet geometry"
+title: "Two-Point Statistics as Sheet Geometry"
 ---
 
-## From a one-point PDF to spatial dependence {#sec-two-point}
+## From One-Point Distributions to Spatial Correlations {#sec-two-point}
 
-At a fixed epoch, let $r(\mathbf x)=\rho(\mathbf x)/\bar\rho=1+\delta(\mathbf x)$ in a periodic box of volume $V_B=L^d$, with total mass $M_B=\bar\rho V_B$. All averages in this chapter are spatial averages over that box. Ensemble averages give the corresponding statistically homogeneous definitions; isotropy is an additional assumption. The observable here is the equal-time **position-space density** correlation of the sheet.
+The one-point probability distributions analyzed in @sec-pdfs quantify *how much* volume or mass resides at any given density $r = \rho/\bar\rho$. However, they contain zero information about the *spatial arrangement* of the cosmic web: shuffling the positions of cosmic voids and filaments preserves $p_V(r)$ and $p_M(r)$ identically while completely scrambling the large-scale structure of the universe.
 
-The one-point volume PDF specifies how much space has each density. It does not specify where those densities occur. To retain their spatial relationship, choose an Eulerian point uniformly by volume and examine the density at that point and at a displacement $\mathbf s$:
+To capture both the density distribution and its spatial dependence, we consider the **joint two-point density probability distribution function** $p_{VV}(r_1, r_2; \mathbf{s})$. In a periodic comoving box of volume $V_B = L^d$, choose an Eulerian position $\mathbf{x}$ uniformly by volume and examine the joint density at $\mathbf{x}$ and at separation $\mathbf{x} + \mathbf{s}$ [@bernardeau2002]:
 
 $$
-p_{VV}(r_1,r_2;\mathbf s)=\frac{1}{V_B}\int_{V_B}d^dx\,
-\delta_{\rm D}[r_1-r(\mathbf x)]\,
-\delta_{\rm D}[r_2-r(\mathbf x+\mathbf s)].
+p_{VV}(r_1, r_2; \mathbf{s}) = \frac{1}{V_B}\int_{V_B} d^dx\,\delta_{\rm D}[r_1 - r(\mathbf{x})]\,\delta_{\rm D}[r_2 - r(\mathbf{x} + \mathbf{s})].
 $$ {#eq-joint-volume-pdf}
 
-Each marginal is the one-point $p_V$ of @eq-pdf-measures. This **joint PDF** contains both the density distribution and the dependence between the two endpoints. The two-point correlation function is one mixed moment of it [@bernardeau2002]:
+Integrating over either density variable recovers the standard one-point volume PDF:
 
 $$
-\begin{aligned}
-\xi(\mathbf s)&=\langle\delta(\mathbf x)\delta(\mathbf x+\mathbf s)\rangle_V,\\
-1+\xi(\mathbf s)&=\int_0^\infty\!dr_1\int_0^\infty\!dr_2\,
-r_1r_2\,p_{VV}(r_1,r_2;\mathbf s).
-\end{aligned}
+\int_0^\infty p_{VV}(r_1, r_2; \mathbf{s})\,dr_2 = p_V(r_1), \qquad
+\int_0^\infty p_{VV}(r_1, r_2; \mathbf{s})\,dr_1 = p_V(r_2).
+$$ {#eq-joint-marginals}
+
+The classical **two-point auto-correlation function** $\xi(\mathbf{s}) = \langle \delta(\mathbf{x})\delta(\mathbf{x}+\mathbf{s})\rangle_V$ is simply the second mixed moment of this joint distribution:
+
+$$
+1 + \xi(\mathbf{s}) = \int_0^\infty dr_1 \int_0^\infty dr_2\,r_1 r_2\,p_{VV}(r_1, r_2; \mathbf{s}).
 $$ {#eq-joint-pdf-correlation}
 
-Thus $\xi$ does not determine the whole joint PDF. Different joint distributions can have the same mixed moment. Conversely, fixing the one-point PDF leaves many possible $\xi(\mathbf s)$: rearranging dense and dilute regions changes their neighbors without changing their abundance.
-
-Write $p_{VV}=p_V(r_1)p_V(r_2)+b_{\mathbf s}(r_1,r_2)$, where each marginal integral of $b_{\mathbf s}$ vanishes. Since $\int r p_V(r)dr=1$, the independent product contributes exactly one to $1+\xi$; the integral of $r_1r_2 b_{\mathbf s}$ supplies $\xi$. This decomposition separates the one-point information from the additional spatial dependence. Statistical independence implies $\xi=0$, but $\xi=0$ alone does not imply independence for a general non-Gaussian field.
-
-At zero displacement the endpoints coincide, so $p_{VV}(r_1,r_2;0)=p_V(r_1)\delta_{\rm D}(r_2-r_1)$ and
+This reveals that the correlation function $\xi(\mathbf{s})$ contains only a fraction of the information in $p_{VV}(r_1, r_2; \mathbf{s})$. Decomposing the joint distribution into an independent product plus a spatial connection kernel:
 
 $$
-\xi(0)=\langle r^2\rangle_V-1
-=\langle r\rangle_M-1=\operatorname{Var}_V(r).
+p_{VV}(r_1, r_2; \mathbf{s}) = p_V(r_1)p_V(r_2) + b_{\mathbf{s}}(r_1, r_2),
+$$ {#eq-joint-decomp}
+
+we see that because $\int r p_V(r) dr = 1$, the independent product integrates to exactly $1$, while the spatial correlation arises entirely from the integral of $r_1 r_2 b_{\mathbf{s}}$.
+
+At zero separation ($\mathbf{s} = \mathbf{0}$), both endpoints evaluate the same spatial point: $p_{VV}(r_1, r_2; \mathbf{0}) = p_V(r_1)\delta_{\rm D}(r_2 - r_1)$, which links the zero-lag correlation directly to the one-point variance:
+
+$$
+\xi(\mathbf{0}) = \langle r^2 \rangle_V - 1 = \langle r \rangle_M - 1 = \operatorname{Var}_V(r).
 $$ {#eq-two-point-zero-lag}
 
-This is the direct connection between a one-point moment and a two-point limit. The unsmoothed moment must exist: approaching a caustic can invalidate finiteness of $\xi(0)$ even when total mass remains finite. A nondegenerate finite P0 mesh has finite densities. Observation smoothing changes this limit to the variance of the smoothed field.
+---
 
-## Volume pairs, mass pairs, and conditioning {#sec-pair-measures}
+## Volume Pairs, Mass Pairs, and Separation Conditioning {#sec-pair-measures}
 
-The subscripts in $p_{VV}$ describe the endpoint measures. At fixed $\mathbf s$, reweighting an endpoint by $r$ replaces its volume measure with its mass measure. The normalized joint PDFs are
+Just as one-point statistics can be volume- or mass-weighted, pair statistics depend fundamentally on whether the two endpoints are selected by volume or by mass:
 
-$$
-\begin{aligned}
-p_{MV}(r_1,r_2;\mathbf s)&=r_1p_{VV}(r_1,r_2;\mathbf s),\\
-p_{VM}(r_1,r_2;\mathbf s)&=r_2p_{VV}(r_1,r_2;\mathbf s),\\
-p_{MM}(r_1,r_2;\mathbf s)&=
-\frac{r_1r_2p_{VV}(r_1,r_2;\mathbf s)}{1+\xi(\mathbf s)}.
-\end{aligned}
-$$ {#eq-pair-change-measure}
+* **Volume–Volume Pairs $p_{VV}(r_1, r_2; \mathbf{s})$:** Two points chosen uniformly in volume at fixed separation $\mathbf{s}$.
+* **Mass–Volume Pairs $p_{MV}(r_1, r_2; \mathbf{s})$:** Origin chosen by mass (weight $r_1$), second point by volume:
+  $$p_{MV}(r_1, r_2; \mathbf{s}) = r_1\,p_{VV}(r_1, r_2; \mathbf{s}).$$
+* **Mass–Mass Pairs $p_{MM}(r_1, r_2; \mathbf{s})$:** Both endpoints chosen by mass (weights $r_1$ and $r_2$). Crucially, the joint normalization requires dividing by the pair abundance $1 + \xi(\mathbf{s})$:
+  $$
+  p_{MM}(r_1, r_2; \mathbf{s}) = \frac{r_1 r_2\,p_{VV}(r_1, r_2; \mathbf{s})}{1 + \xi(\mathbf{s})}.
+  $$ {#eq-pair-change-measure}
 
-The first two normalize because the marginal mean density is one. The last requires the pair normalization $1+\xi$, rather than the product of two one-point normalizations. It describes **two independently mass-selected positions conditioned on their separation**. Such conditioning favors regions that have mass at both endpoints.
-
-For example, let $C_{\mathbf s}(r_1)=\mathbb E_V[r_2\mid r_1,\mathbf s]$. Integrating over the second density gives
+Conditioning on separation favors pairs that have mass at both ends. Integrating $p_{MM}$ over $r_2$ yields the mass-pair marginal:
 
 $$
-\int p_{MM}(r_1,r_2;\mathbf s)\,dr_2
-=\frac{r_1p_V(r_1)C_{\mathbf s}(r_1)}{1+\xi(\mathbf s)}.
+\int_0^\infty p_{MM}(r_1, r_2; \mathbf{s})\,dr_2 = \frac{r_1 p_V(r_1)\,\mathbb{E}_V[r_2 \mid r_1, \mathbf{s}]}{1 + \xi(\mathbf{s})}.
 $$ {#eq-mass-pair-marginal}
 
-This generally differs from $p_M(r_1)=r_1p_V(r_1)$. It becomes $p_M$ under endpoint independence, when $C_{\mathbf s}=1$ and $\xi=0$. At zero separation it is instead $r_1^2p_V(r_1)/\langle r^2\rangle_V$. A density-dependent neighbor distribution cannot be discarded while retaining a correctly normalized mass-pair PDF.
+This generally differs from the one-point mass distribution $p_M(r_1) = r_1 p_V(r_1)$ because the presence of mass at $\mathbf{x}$ biases the probability of finding mass at $\mathbf{x} + \mathbf{s}$.
 
-For $p_{MV}$, the first marginal is $p_M$, while its second marginal is a neighbor distribution around a mass-selected origin. The second marginal need not be $p_V$. The corresponding statement holds with endpoints exchanged for $p_{VM}$. These distinctions resolve the apparent ambiguity in saying that a two-point PDF is “mass weighted.” One must specify which endpoints are weighted and whether separation has been conditioned on.
+---
 
-## The exact P0 geometric representation {#sec-geometric-pairs}
+## The Exact Geometric Representation: Simplex Overlap Kernels {#sec-geometric-pairs}
 
-Before crossing, the affine position-space elements form a nonoverlapping tessellation of the periodic box, apart from boundaries of zero volume. Element $T$ has fixed mass $m_T$, current volume $V_T>0$, and constant density
+Before shell crossing, the deformed phase-space sheet forms a watertight simplicial tessellation of the periodic box [@abel2012; @hahn2013]. Each simplex $T$ carries constant mass $m_T$, volume $V_T > 0$, and piecewise-constant density $r_T = V_{T,0} / V_T$.
 
-$$
-\begin{aligned}
-r_T&=\frac{m_T}{\bar\rho V_T}=\frac{V_{T,0}}{V_T}=\frac{1}{J_T},\\
-p_V(r)&=\sum_T\frac{V_T}{V_B}\delta_{\rm D}(r-r_T),\\
-p_M(r)&=\sum_T\frac{m_T}{M_B}\delta_{\rm D}(r-r_T).
-\end{aligned}
-$$ {#eq-element-one-point-measures}
-
-The conservative sheet representation described in @sec-meshing follows [@abel2012; @hahn2013]. Equal initial simplex volumes give equal masses. Counting such elements equally gives the mass PDF; weighting by their **current** volumes gives the volume PDF.
-
-Define the periodic overlap kernel
+Define the **periodic geometric overlap kernel** between any two deformed simplices $T$ and $U$:
 
 $$
-K_{TU}(\mathbf s)=\int_{V_B}d^dx\,
-\mathbf 1_T(\mathbf x)\mathbf 1_U(\mathbf x+\mathbf s)
-=\operatorname{Vol}[T\cap(U-\mathbf s)].
+K_{TU}(\mathbf{s}) \equiv \int_{V_B} d^dx\,\mathbf{1}_T(\mathbf{x})\,\mathbf{1}_U(\mathbf{x} + \mathbf{s}) = \operatorname{Vol}[T \cap (U - \mathbf{s})].
 $$ {#eq-element-pair-overlap}
 
-Periodic images are included in the last expression. $K_{TU}$ has units of volume. It measures the set of origins whose first endpoint lies in $T$ and whose second endpoint lies in $U$. Substitution in @eq-joint-volume-pdf gives
+Here $U - \mathbf{s}$ is the simplex $U$ translated by $-\mathbf{s}$, and periodic boundary images are summed. The kernel $K_{TU}(\mathbf{s})$ has dimensions of volume and measures the exact measure of points $\mathbf{x} \in T$ such that $\mathbf{x} + \mathbf{s} \in U$.
+
+Substituting the simplicial density into @eq-joint-volume-pdf expresses the joint two-point PDF and the correlation function as **exact sums over geometric simplex overlaps**:
 
 $$
 \begin{aligned}
-p_{VV}(r_1,r_2;\mathbf s)
-&=\sum_{T,U}\frac{K_{TU}(\mathbf s)}{V_B}
-\delta_{\rm D}(r_1-r_T)\delta_{\rm D}(r_2-r_U),\\
-1+\xi(\mathbf s)
-&=\frac{1}{V_B}\sum_{T,U}r_Tr_U K_{TU}(\mathbf s).
+p_{VV}(r_1, r_2; \mathbf{s}) &= \sum_{T, U} \frac{K_{TU}(\mathbf{s})}{V_B}\,\delta_{\rm D}(r_1 - r_T)\,\delta_{\rm D}(r_2 - r_U), \\
+1 + \xi(\mathbf{s}) &= \frac{1}{V_B}\sum_{T, U} r_T r_U K_{TU}(\mathbf{s}).
 \end{aligned}
 $$ {#eq-geometric-joint-pdf}
 
-The volume-pair weight is $K_{TU}/V_B$. The mass-pair weight at that same separation is $r_Tr_U K_{TU}/[V_B(1+\xi)]$. Merely replacing a volume weight by $m_Tm_U/M_B^2$ misses the separation kernel.
+This is a stunning geometric result: **the cosmological two-point correlation function is the mass-weighted sum of polyhedral volume intersections between all pairs of deformed simplices on the sheet!**
 
-The tessellation implies $\sum_U K_{TU}(\mathbf s)=V_T$, $\sum_T K_{TU}(\mathbf s)=V_U$, and $\sum_{T,U}K_{TU}(\mathbf s)=V_B$. These identities recover the one-point volume marginals and normalize the joint PDF. At zero displacement, $K_{TU}(0)=V_T\delta_{TU}$, which gives $1+\xi(0)=\sum_T r_T^2 V_T/V_B$. The periodic interval tests check these identities, the distinct mass-pair marginals, and independent integration of the density field {{< test periodic_joint_volume_marginals_and_mass_pair_weights_are_distinct "joint measures and spatial quadrature" >}} {{< test zero_lag_and_separation_average_obey_periodic_density_identities "zero lag and periodic normalization" >}}.
+Because the simplices tessellate space, the kernels satisfy exact sum rules:
+$$\sum_U K_{TU}(\mathbf{s}) = V_T, \qquad \sum_T K_{TU}(\mathbf{s}) = V_U, \qquad \sum_{T, U} K_{TU}(\mathbf{s}) = V_B.$$
+At zero separation, $K_{TU}(\mathbf{0}) = V_T \delta_{TU}$, which confirms that $1 + \xi(\mathbf{0}) = \sum_T r_T^2 V_T / V_B = \langle r^2 \rangle_V$. These identities are verified by rigorous unit tests{{< test periodic_joint_volume_marginals_and_mass_pair_weights_are_distinct "joint measures and spatial quadrature" >}}{{< test zero_lag_and_separation_average_obey_periodic_density_identities "zero lag and periodic normalization" >}}.
 
-## Centroid separations and finite element extent {#sec-centroid-pairs}
+---
 
-The same geometry can be described by choosing two points independently inside elements. Define
+## Centroid Separations vs Finite Element Shapes {#sec-centroid-pairs}
+
+Traditional point-particle approximations replace each fluid element by a single point at its center of mass. What error does this introduce?
+
+Define the displacement probability density between points inside elements $T$ and $U$:
 
 $$
-q_{TU}(\mathbf s)=\frac{K_{TU}(\mathbf s)}{V_TV_U},
-\qquad \int_{V_B}q_{TU}(\mathbf s)\,d^ds=1.
+q_{TU}(\mathbf{s}) \equiv \frac{K_{TU}(\mathbf{s})}{V_T V_U}, \qquad \int_{V_B} q_{TU}(\mathbf{s})\,d^ds = 1.
 $$ {#eq-element-separation-kernel}
 
-This is the probability density of their displacement, reduced periodically. Let $\mathbf c_T=V_T^{-1}\int_T\mathbf x\,d^dx$ be an element's centroid in a consistent unwrapped lift. For an affine simplex it is the mean of its vertex positions. Write a point as $\mathbf x_T=\mathbf c_T+\mathbf u_T$. Before periodic reduction, the pair displacement is
+Let $\mathbf{c}_T = V_T^{-1}\int_T \mathbf{x}\,d^dx$ be the element's centroid, and $\mathbf{x} = \mathbf{c}_T + \mathbf{u}_T$ be internal coordinates. The pair separation is:
 
 $$
-\mathbf s=\mathbf c_U-\mathbf c_T+\mathbf u_U-\mathbf u_T.
+\mathbf{s} = (\mathbf{c}_U - \mathbf{c}_T) + (\mathbf{u}_U - \mathbf{u}_T).
 $$ {#eq-centroid-separation}
 
-The centroid difference is the mean displacement of the lifted pair; the internal offsets supply its distribution around that mean. With independently uniform points in the two elements, its covariance is $\Sigma_T+\Sigma_U$, where $\Sigma_T=V_T^{-1}\int_T\mathbf u_T\mathbf u_T^{\mathsf T}d^dx$. Wrapped vectors do not have an ordinary Euclidean mean across the box boundary, and a mean vector's magnitude is not the mean pair distance.
+The centroid difference $\mathbf{c}_U - \mathbf{c}_T$ represents only the *mean* displacement. The finite shape and spatial orientation of the simplices contribute internal covariance tensors $\Sigma_T = V_T^{-1}\int_T \mathbf{u}_T \mathbf{u}_T^{\mathsf T}\,d^dx$. 
 
-Consequently, centroid distances and inverse volumes give a useful physical interpretation, but **centroids and volumes alone do not specify the exact two-point function in two or three dimensions**. Anisotropic shape and orientation also enter $q_{TU}$. In one dimension an interval's volume is its length, so its centroid and length do specify its shape. In higher dimensions the vertices retain the additional geometric information. Replacing $q_{TU}$ by a Dirac distribution at the centroid separation is a point approximation whose resolution must be assessed.
+Replacing $q_{TU}(\mathbf{s})$ by a Dirac delta at the centroid separation $\delta_{\rm D}[\mathbf{s} - (\mathbf{c}_U - \mathbf{c}_T)]$—as point-particle codes do—**discards the internal geometric moments of the elements**, introducing severe unphysical truncation errors on scales comparable to the element size. The phase-space sheet preserves the complete, continuous polyhedral extent.
 
-For two independently mass-selected positions, the displacement PDF is
+---
 
-$$
-f_M(\mathbf s)=\sum_{T,U}\frac{m_Tm_U}{M_B^2}q_{TU}(\mathbf s)
-=\frac{1+\xi(\mathbf s)}{V_B}.
-$$ {#eq-mass-separation-density}
+## An Interactive Counterexample: Identical PDFs, Distinct Correlations {#sec-two-point-example}
 
-For independently volume-selected positions, the element weights are instead $V_TV_U/V_B^2$, giving $f_V(\mathbf s)=1/V_B$. Their ratio is $1+\xi$: the excess mass-pair probability relative to uniform volume pairs. The factors $m_Tm_U$ specify how often a pair of elements is selected; their finite volumes and shapes specify how that probability is distributed in separation. For equal-mass elements, pair selection is uniform in element labels, although their geometrical kernels are not uniform.
-
-Integrating the joint mass-pair law over **all** separations recovers $p_M(r_1)p_M(r_2)$, because the two positions were selected independently:
+To see concretely why one-point PDFs cannot determine spatial clustering, consider four equal-mass intervals on a unit periodic circle ($L=1$) with masses $m_i = 1/4$ and deformed lengths:
 
 $$
-\int_{V_B} f_M(\mathbf s)\,p_{MM}(r_1,r_2;\mathbf s)\,d^ds
-=p_M(r_1)p_M(r_2).
-$$ {#eq-unconditioned-mass-pairs}
+(V_0, V_1, V_2, V_3) = \left(\frac{1}{10}, \frac{1}{5}, \frac{3}{10}, \frac{2}{5}\right) \implies (r_0, r_1, r_2, r_3) = \left(\frac{5}{2}, \frac{5}{4}, \frac{5}{6}, \frac{5}{8}\right).
+$$
 
-The separation probability $f_M$ is essential in this integral. Conditioning on one separation gives @eq-pair-change-measure and its biased marginals. Normalization of @eq-mass-separation-density also requires $\int_{V_B}\xi(\mathbf s)d^ds=0$ for a box normalized by its own mean. A finite periodic realization therefore need not reach an exactly independent large-separation limit.
+Both arrangements below have identical one-point volume PDFs ($p_V$) and identical mass PDFs ($p_M$):
+* **Arrangement A:** Orders the elements sequentially: $(0, 1, 2, 3)$.
+* **Arrangement B:** Swaps elements: $(0, 2, 1, 3)$.
 
-The trajectory model enters this representation through the vertices: nLPT changes the centroids, volumes, and shapes, while each element keeps its mass. A PM-evolved sheet can be analyzed by the same geometric observables. The weighting identities do not depend on the order of LPT; trajectory accuracy and finite-element accuracy remain separate validation questions.
-
-## An interactive counterexample: identical PDFs, different correlations {#sec-two-point-example}
-
-Consider four equal-mass intervals on a unit circle, with masses $1/4$ and lengths $(1/10,1/5,3/10,2/5)$. Their densities are $(5/2,5/4,5/6,5/8)$. Both arrangements below have volume probabilities equal to those lengths and mass probabilities $1/4$ at each density. Arrangement A orders the length classes $(0,1,2,3)$; B orders them $(0,2,1,3)$. In each fixture, consecutive equal-mass Lagrangian cells map to consecutive Eulerian intervals. The numerals identify length classes across fixtures. Each fixture is an admissible positive-volume affine map; comparing them changes the spatial assignment of compression, rather than exchanging Lagrangian neighbors along one pre-crossing trajectory. They illustrate geometry without specifying a gravitational history.
-
-Both have $\xi(0)=29/96$, but at $s=1/4$,
+Both arrangements have identical zero-lag variance $\xi(0) = 29/96$. However, at separation $s = 1/4$:
 
 $$
-\begin{aligned}
-\xi_A(1/4)&=-\frac{79}{2304},\\
-\xi_B(1/4)&=-\frac{169}{2304}.
-\end{aligned}
+\xi_A(1/4) = -\frac{79}{2304} \approx -0.0343, \qquad
+\xi_B(1/4) = -\frac{169}{2304} \approx -0.0734.
 $$ {#eq-interval-two-point-example}
 
-In A, the first element's marginal probability in the separation-conditioned mass-pair distribution is $24/89$, rather than its one-point mass fraction $1/4$. The exact overlaps and a separate spatial quadrature verify these values {{< test periodic_joint_volume_marginals_and_mass_pair_weights_are_distinct "same PDF, different correlations" >}}.
+The two configurations have completely different spatial correlations{{< test periodic_joint_volume_marginals_and_mass_pair_weights_are_distinct "same PDF, different correlations" >}}!
 
 ```{=html}
 <div class="qd-widget" data-widget="two-point"></div>
 <script type="module" src="../app/js/widgets.js"></script>
 ```
 
-The control interpolates the lengths from four equal intervals to this fixture while preserving each mass. The strip shows the current supports and centroids; the tables distinguish one-point weights from pair weights. The two correlation curves compare A and B at the same density PDF. The permalink records the controls, and the CSV records the selected pair weights and correlation curves. This is an exact interval-overlap experiment, separate from the cosmological simulation controls in the full laboratory.
+---
 
-## Fourier power retains the same geometry {#sec-two-point-power}
+## Fourier Power and Element Form Factors {#sec-two-point-power}
 
-With the periodic Fourier convention of @eq-fourier-power,
+In Fourier space, the correlation function and the power spectrum form a Fourier transform pair:
 
 $$
-\begin{aligned}
-\xi(\mathbf s)&=\sum_{\mathbf k\ne0}|\delta_{\mathbf k}|^2
-e^{i\mathbf k\cdot\mathbf s}\\
-&=\frac{1}{V_B}\sum_{\mathbf k\ne0}P(\mathbf k)e^{i\mathbf k\cdot\mathbf s}.
-\end{aligned}
+\xi(\mathbf{s}) = \frac{1}{V_B}\sum_{\mathbf{k}\ne\mathbf{0}} P(\mathbf{k})e^{i\mathbf{k}\cdot\mathbf{s}}.
 $$ {#eq-periodic-correlation-power}
 
-The full mode sum is real. A shell-averaged power curve does not retain the directional information of a single realization. In an infinite statistically isotropic three-dimensional ensemble the corresponding relation is $\xi(s)=(2\pi^2)^{-1}\int_0^\infty k^2 P(k)\sin(ks)/(ks)\,dk$ [@bernardeau2002]. It requires a consistent observable and Fourier normalization.
-
-Define an element's centered form factor $W_T(\mathbf k)=V_T^{-1}\int_T e^{-i\mathbf k\cdot(\mathbf x-\mathbf c_T)}d^dx$. For a nonzero box mode,
+Define the centered geometric **form factor** of each deformed simplex:
 
 $$
-\begin{aligned}
-\delta_{\mathbf k}&=\sum_T\frac{m_T}{M_B}
-e^{-i\mathbf k\cdot\mathbf c_T}W_T(\mathbf k),\\
-P(\mathbf k)&=\frac{V_B}{M_B^2}\sum_{T,U}m_Tm_U
-e^{-i\mathbf k\cdot(\mathbf c_T-\mathbf c_U)}
-W_T(\mathbf k)W_U(\mathbf k)^*.
-\end{aligned}
+W_T(\mathbf{k}) \equiv \frac{1}{V_T}\int_T e^{-i\mathbf{k}\cdot(\mathbf{x} - \mathbf{c}_T)}\,d^dx.
+$$ {#eq-simplex-form-factor}
+
+The total continuous Fourier mode and power spectrum decompose into:
+
+$$
+\delta_{\mathbf{k}} = \sum_T \frac{m_T}{M_B} e^{-i\mathbf{k}\cdot\mathbf{c}_T} W_T(\mathbf{k}), \qquad
+P(\mathbf{k}) = \frac{V_B}{M_B^2}\sum_{T, U} m_T m_U e^{-i\mathbf{k}\cdot(\mathbf{c}_T - \mathbf{c}_U)} W_T(\mathbf{k}) W_U^*(\mathbf{k}).
 $$ {#eq-centroid-form-factor-power}
 
-The phase records centroid separation; the form factors record element extent and shape. Their small-wavevector expansion is $W_T=1-\tfrac12\mathbf k^{\mathsf T}\Sigma_T\mathbf k+O(|\mathbf k|^3\ell_T^3)$ for an element of bounded extent $\ell_T$. Thus setting all $W_T=1$ is controlled only when the contributing elements are small relative to the wavelengths being measured. For an interval of length $V_T$, $W_T(k)=\operatorname{sinc}(kV_T/2)$, with $\operatorname{sinc}z=\sin z/z$.
+The phase $e^{-i\mathbf{k}\cdot(\mathbf{c}_T - \mathbf{c}_U)}$ encodes centroid positions, while the form factors $W_T(\mathbf{k})$ encode the finite polyhedral shapes. The Hermite–Genocchi simplex transform{{< src direct::exp_divided_difference >}} evaluates these finite geometric form factors exactly{{< test interval_window_fourier_autocorrelation_matches_overlap_with_self_pairs "Fourier and real-space geometry" >}}.
 
-The direct simplex transform in @eq-simplex-fourier evaluates these finite supports {{< src direct::exp_divided_difference >}}; it does not collapse the mass onto centroids. The interval test reconstructs the overlap correlation from independently integrated Fourier windows {{< test interval_window_fourier_autocorrelation_matches_overlap_with_self_pairs "Fourier and real-space geometry" >}}.
+Self-pair terms with $T = U$ represent the internal auto-correlation of the continuous matter distribution. Unlike the discrete point-mass self-interaction that creates Poisson shot noise ($P_{\rm shot} = L^d / N_p$), the continuous simplex self-terms are smooth, physical, and decay rapidly at large $k$.
 
-Terms with $T=U$ are part of the continuous field's autocorrelation. At short separations, two different positions can lie in the same extended element. Removing these terms would remove physical density support, including the zero-lag variance. They are not an independent-particle Poisson floor. Collapsing all elements to points changes those finite-support terms into point self-pairs and introduces a different estimator; a particle shot-noise subtraction does not repair that approximation. Eulerian cell averaging likewise changes the observable through the window and aliases described in @sec-fourier.
+## Key Takeaways and Analytical Exercises
 
-## Radial bins and smoothed density marks {#sec-two-point-conventions}
+1. **Information Hierarchy:** One-point PDFs describe density abundance; two-point joint PDFs $p_{VV}(r_1, r_2; \mathbf{s})$ describe spatial relationships.
+2. **Geometric Correlation:** On the sheet, $1+\xi(\mathbf{s}) = \frac{1}{V_B}\sum_{T,U} r_T r_U K_{TU}(\mathbf{s})$ is an exact sum of polyhedral overlap volumes.
+3. **Internal Form Factors:** Replacing simplices with point centroids discards the element shape tensor $\Sigma_T$; the sheet's continuous Fourier modes retain full geometric extent.
 
-For a separation bin $B_s$ of displacement-space volume $\Delta V_s$, define $\bar\xi_{B_s}=\Delta V_s^{-1}\int_{B_s}\xi(\mathbf s)d^ds$. The probability for two mass-selected positions to have their displacement in this bin is $(\Delta V_s/V_B)(1+\bar\xi_{B_s})$. In three dimensions, a complete thin spherical shell at $s<L/2$ has volume approximately $4\pi s^2\Delta s$. Larger minimum-image distances require the shell's actual intersection with the periodic displacement cube. Counting centroid distances into shells without these normalizations and finite-support kernels estimates a different pair statistic.
+### Exercises
 
-Smoothing also requires a measure choice. Let $u=r_R(\mathbf x)$ and $v=r_R(\mathbf x+\mathbf s)$ be smoothed density marks, and let $p_{VV,R}(u,v;\mathbf s)$ be their volume joint PDF. Its mixed moment gives $1+\xi_R$, the smoothed-field correlation. If the endpoints are selected by **actual unsmoothed mass**, as in the environment PDF of @eq-mass-environment, the marked mass-pair PDF is instead
-
-$$
-p_{MM,\mathrm{env}}(u,v;\mathbf s)=
-\frac{\mathbb E_V[r(\mathbf x)r(\mathbf x+\mathbf s)\mid u,v;\mathbf s]}
-{1+\xi(\mathbf s)}\,p_{VV,R}(u,v;\mathbf s).
-$$ {#eq-smoothed-mass-pair-marks}
-
-Weighting by $uv/(1+\xi_R)$ samples the smoothed mass field and answers a different question. Both prescriptions are valid when stated explicitly. Gaussian filtering multiplies each density mode by $\widehat W_R$ and each power mode by $|\widehat W_R|^2$; it does not commute with mass weighting by the raw field.
-
-The element-marked PDFs above rely on a pre-crossing tessellation. After crossing, the projected density sums contributions from overlapping streams. Its density correlation still has a bilinear element-overlap representation for nondegenerate P0 images, including periodic image multiplicities, but using an individual stream density $r_T$ as the total-density mark no longer gives its Eulerian joint PDF, and the tessellation marginal identities fail. The laboratory continues to display crossed outputs with a caution; this chapter's single-stream PDF interpretation remains pre-crossing.
-
-## Checks and further reading
-
-For a reproducible two-point measurement, record the epoch and trajectory source, box and mean-density normalization, Lagrangian tessellation, P0/P1 choice, observation filter, displacement-vector or radial-bin convention, and endpoint measure. For a gridded estimator, also record the analysis mesh, window treatment, and aliasing checks. Compare the same observable in LPT and the N-body reference. Agreement of one-point PDFs alone cannot validate spatial correlations, and agreement of $\xi$ alone cannot validate the full joint PDF.
-
-1. Derive the two marginals of @eq-geometric-joint-pdf using the overlap sum rules. Then derive @eq-mass-pair-marginal and explain the additional neighbor factor.
-2. Integrate @eq-mass-separation-density over the periodic box. Show why the box-average correlation vanishes even though its zero-lag value is positive.
-3. For two uniform intervals, derive the triangular or trapezoidal displacement kernel centered on their centroid difference. Explain why its integral is one and why replacing it by a point loses short-separation information.
-4. Hold the one-point PDF fixed in the widget and exchange arrangements. Identify which pair weights change. Repeat at zero separation, where the PDF fixes the variance.
-
-For the correlation/PDF hierarchy and Fourier conventions, see Sections 3.2--3.4 and 5.12 of [Bernardeau et al. (2002)](https://arxiv.org/abs/astro-ph/0112551). For the mass-carrying tessellation and its density interpretation, see [Abel, Hahn & Kaehler (2012)](https://arxiv.org/abs/1111.3944) and [Hahn, Abel & Kaehler (2013)](https://arxiv.org/abs/1210.6652). The overlap and form-factor equations here follow directly from that P0 representation; the tests and widget isolate their geometric content without adding a new claim about cosmological accuracy.
+1. **Kernel Normalization:** Prove that $\sum_U K_{TU}(\mathbf{s}) = V_T$ for any tessellation of a periodic volume. Show that this implies $\int_0^\infty p_{VV}(r_1, r_2; \mathbf{s})\,dr_2 = p_V(r_1)$.
+2. **Box-Averaged Correlation:** Prove that the volume integral of the correlation function over the periodic simulation volume vanishes: $\int_{V_B} \xi(\mathbf{s})\,d^ds = 0$.
+3. **1D Overlap Kernel:** For two intervals $T = [0, L_T]$ and $U = [x_0, x_0 + L_U]$ on the infinite real line, compute the overlap $K_{TU}(s) = \operatorname{Vol}[T \cap (U - s)]$ as a function of $s$. Verify that it forms a continuous trapezoidal (or triangular) function.

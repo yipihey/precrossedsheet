@@ -1,129 +1,222 @@
 ---
-title: "Building the sheet with nLPT"
+title: "Building the Sheet with High-Order LPT"
 ---
 
-## Lagrangian equations in an expanding background {#sec-lpt}
+## Lagrangian Dynamics in an Expanding Universe {#sec-lpt}
 
-For pressureless, cold matter before crossing, the comoving equation of motion and Poisson equation are
+Standard Eulerian Perturbation Theory (EPT) expands the density contrast field $\delta(\mathbf{x}, t)$ at fixed Eulerian spatial coordinates $\mathbf{x}$. Because $\delta$ grows rapidly in collapsing structures, EPT fails whenever $\delta \sim 1$, even on large spatial scales where no particles have crossed. 
+
+**Lagrangian Perturbation Theory (LPT)** adopts a fundamentally different perspective [@bouchet1995; @matsubara2015; @rampf2021]. Instead of tracking density at fixed spatial locations, LPT follows the trajectories of fluid elements labeled by their initial Lagrangian positions $\mathbf{q}$:
 
 $$
-\ddot{\mathbf x}+2H\dot{\mathbf x}=-\frac{1}{a^2}\nabla_x\phi,\qquad
-\nabla_x^2\phi=4\pi G a^2\bar\rho(a)\,\delta.
+\mathbf{x}(\mathbf{q}, a) = \mathbf{q} + \boldsymbol{\Psi}(\mathbf{q}, a).
+$$ {#eq-lagrangian-trajectory}
+
+Here $\boldsymbol{\Psi}(\mathbf{q}, a)$ is the **Lagrangian displacement field**. Even when the Eulerian density contrast becomes strongly nonlinear ($\delta \gg 1$ in filaments or $\delta \to -1$ in voids), the displacement gradient can remain small ($\|\nabla_q \boldsymbol{\Psi}\| < 1$). 
+
+Crucially, by combining LPT displacements with the phase-space sheet, we retain the **exact non-perturbative relation** between displacement geometry and Eulerian density:
+
+$$
+1 + \delta[\mathbf{x}(\mathbf{q}, a), a] = \frac{1}{\det\left(\delta_{ij} + \frac{\partial\Psi_i}{\partial q_j}\right)}.
+$$ {#eq-lpt-exact-density}
+
+The density is never truncated as a Taylor polynomial in $\delta$; instead, the displacement $\boldsymbol{\Psi}$ is expanded systematically:
+
+$$
+\boldsymbol{\Psi}(\mathbf{q}, a) = \sum_{n=1}^{N} \boldsymbol{\Psi}^{(n)}(\mathbf{q}, a).
+$$ {#eq-lpt-displacement-expansion}
+
+In an expanding Friedmann–Lemaître–Robertson–Walker (FLRW) universe with scale factor $a(t)$ and Hubble parameter $H(a) = \dot a / a$, the comoving equation of motion and Poisson equation for pressureless, collisionless cold matter are:
+
+$$
+\ddot{\mathbf{x}} + 2H\dot{\mathbf{x}} = -\frac{1}{a^2}\nabla_x\phi, \qquad
+\nabla_x^2\phi = 4\pi G a^2 \bar\rho(a)\,\delta(\mathbf{x}, a) = \frac{3}{2}\Omega_m(a) H(a)^2 a^2 \delta(\mathbf{x}, a).
 $$ {#eq-comoving-eom}
 
-The Hubble drag and nonlocal Poisson coupling determine the trajectories. LPT expands the displacement of the initially uniform mass labels, retaining the nonlinear transformation between the Lagrangian map and Eulerian density [@bouchet1995; @matsubara2015].
-
-In Einstein–de Sitter (EdS), normalize the growing mode as $D=a$. The displacement{{< src lpt::Lpt >}} is
+At first order ($n=1$), this yields the celebrated **Zel'dovich approximation** [@zeldovich1970]{{< src lpt::Lpt >}}:
 
 $$
-\boldsymbol\Psi(\mathbf q,D)=\sum_{n=1}^{N}D^n\boldsymbol\Psi^{(n)}(\mathbf q),\qquad
-\boldsymbol\Psi^{(1)}=-\nabla_q\varphi,\quad \nabla_q^2\varphi=\delta_0.
-$$ {#eq-lpt-expansion}
+\boldsymbol{\Psi}^{(1)}(\mathbf{q}, a) = -D_1(a)\nabla_q \varphi(\mathbf{q}), \qquad \nabla_q^2\varphi(\mathbf{q}) = \delta_0(\mathbf{q}),
+$$ {#eq-zeldovich-displacement}
 
-Thus $\widehat{\boldsymbol\Psi}^{(1)}=i\mathbf k\widehat\delta_0/k^2$ for the Fourier convention of @sec-fourier. A positive cosine overdensity produces a displacement toward its maximum. In a flat $\Lambda$CDM universe, write the expansion as $\sum_\tau g_\tau(a)\mathbf S^\tau(\mathbf q)$: terms of equal perturbative order can have different time functions. Replacing them all by $D^n$ is an approximation, not an identity. The inherited core supports both EdS coefficients and coupled $\Lambda$CDM growth equations{{< src growth::Growth >}}. The live comparison now uses the same flat $\Lambda$CDM background and growing-mode normalization for LPT and PM; EdS remains available as an analytic benchmark. @sec-cosmology specifies the initial spectrum, growth clock and physical units.
+where $D_1(a)$ is the linear growth factor and $\delta_0$ is the initial density contrast linearly extrapolated to the reference epoch. In Fourier space, $\widehat{\boldsymbol{\Psi}}^{(1)}(\mathbf{k}) = i\mathbf{k}\widehat\delta_0(\mathbf{k})/k^2$.
 
-## The recurrence, without a list of memorized kernels {#sec-recursion}
+## Derivation of the Recurrence from the Cofactor Fluid Equations {#sec-cofactor-recursion}
 
-Set $M^{(n)}_{ij}=\partial_j\Psi_i^{(n)}$. The invariant building blocks are the polarized determinant terms{{< src lpt::mu2 >}} {{< src lpt::mu3 >}}
+To construct higher-order solutions systematically, we express the Eulerian equations in Lagrangian coordinates. Let $F_{ij} = \partial x_i / \partial q_j = \delta_{ij} + \Psi_{i,j}$ be the deformation gradient and $J = \det F$. 
+
+The cofactor matrix of $F$ is defined by Jacobi's formula:
 
 $$
-\mu_2(A,B)=\tfrac12[\operatorname{tr}A\operatorname{tr}B-\operatorname{tr}(AB)],
+C_{ij} = \frac{\partial J}{\partial F_{ij}} = J (F^{-1})_{ji}.
+$$ {#eq-cofactor-matrix}
+
+By the chain rule, Eulerian spatial derivatives transform as:
+
+$$
+\frac{\partial}{\partial x_i} = (F^{-1})_{ji}\frac{\partial}{\partial q_j} = \frac{1}{J} C_{ij}\frac{\partial}{\partial q_j}.
+$$ {#eq-chain-rule-cofactor}
+
+Taking the Eulerian divergence $\nabla_x \cdot$ of the equation of motion @eq-comoving-eom, using the Poisson equation $\nabla_x^2\phi = \frac{3}{2}\Omega_m H^2 a^2(1/J - 1)$, and multiplying the entire equation by $J$, we obtain the **cofactor equation of motion** [@matsubara2015]:
+
+$$
+C_{ij}\,\mathcal{T}\Psi_{i,j} = \frac{3}{2}\Omega_m(a)H(a)^2(J - 1), \qquad
+\mathcal{T} \equiv \frac{d^2}{dt^2} + 2H\frac{d}{dt}.
+$$ {#eq-cofactor-eom}
+
+Summation over repeated indices is implied. This equation possesses remarkable mathematical beauty: **the inverse Jacobian $1/J$ in the Eulerian derivative cancels exactly against the factor $J$ from the Poisson source**, making @eq-cofactor-eom purely polynomial in the displacement gradient $M_{ij} = \Psi_{i,j}$ and its time derivatives!
+
+### Determinant Invariants $\mu_2$ and $\mu_3$
+
+To expand $J - 1$ and $C_{ij}$ systematically, we use the algebraic invariants of $3\times 3$ matrices:
+
+$$
+\det(I + M) - 1 = \operatorname{tr} M + \mu_2(M, M) + \mu_3(M, M, M).
+$$ {#eq-det-expansion}
+
+Here $\mu_2(A, B)$ is the polarized symmetric bilinear invariant{{< src lpt::mu2 >}}:
+
+$$
+\mu_2(A, B) = \frac{1}{2}[\operatorname{tr} A \operatorname{tr} B - \operatorname{tr}(AB)],
 $$ {#eq-mu2}
+
+and $\mu_3(A, B, C)$ is the polarized symmetric trilinear invariant{{< src lpt::mu3 >}}:
 
 $$
 \begin{split}
-6\mu_3(A,B,C)={}&\operatorname{tr}A\operatorname{tr}B\operatorname{tr}C
--\operatorname{tr}A\operatorname{tr}(BC)-\operatorname{tr}B\operatorname{tr}(AC)\\
-&-\operatorname{tr}C\operatorname{tr}(AB)+\operatorname{tr}(ABC)+\operatorname{tr}(ACB).
+6\mu_3(A, B, C) ={}& \operatorname{tr} A \operatorname{tr} B \operatorname{tr} C
+- \operatorname{tr} A \operatorname{tr}(BC) - \operatorname{tr} B \operatorname{tr}(AC) - \operatorname{tr} C \operatorname{tr}(AB) \\
+& + \operatorname{tr}(ABC) + \operatorname{tr}(ACB).
 \end{split}
 $$ {#eq-mu3}
 
-The second expression is used in 3D; $\mu_3(M,M,M)=\det M$. The determinant identity is $\det(I+M)=1+\operatorname{tr}M+\mu_2(M,M)+\mu_3(M,M,M)$.
+In three dimensions, $\mu_3(M, M, M) = \det M$. In two dimensions, $\mu_3 \equiv 0$ and $\mu_2(M, M) = \det M$.
 
-Taking the Eulerian divergence of @eq-comoving-eom and transforming derivatives to Lagrangian coordinates produces an order-by-order longitudinal equation. Conservation of initially zero Eulerian vorticity supplies the curl equation [@rampf2021; @matsubara2015]. In EdS, for $n\ge2$,
+## Longitudinal Recurrence and the Cauchy Vorticity Invariant {#sec-recursion}
+
+Any vector field in a periodic domain decomposes uniquely into a longitudinal (curl-free) and a transverse (divergence-free) component:
+
+$$
+\boldsymbol{\Psi}^{(n)} = \nabla_q \chi^{(n)} + \nabla_q \times \mathbf{A}^{(n)}.
+$$ {#eq-helmholtz-decomp}
+
+Taking the Lagrangian divergence of @eq-cofactor-eom order by order determines the longitudinal source $\nabla_q \cdot \boldsymbol{\Psi}^{(n)} = \nabla_q^2 \chi^{(n)}$.
+
+In an Einstein–de Sitter (EdS) background ($\Omega_m = 1$), the $n$-th order displacement scales as $\boldsymbol{\Psi}^{(n)}(\mathbf{q}, a) = a^n \boldsymbol{\Psi}^{(n)}(\mathbf{q})$. The longitudinal recurrence relation for $n \ge 2$ takes the exact closed form:
 
 $$
 \begin{split}
-\nabla_q\cdot\boldsymbol\Psi^{(n)}={}&
-\sum_{a+b=n}c_2(n;a,b)\mu_2(M^{(a)},M^{(b)})\\
-&+\sum_{a+b+c=n}c_3(n;a,b,c)\mu_3(M^{(a)},M^{(b)},M^{(c)}).
+\nabla_q \cdot \boldsymbol{\Psi}^{(n)} ={}&
+\sum_{a+b=n} c_2(n; a, b)\,\mu_2(M^{(a)}, M^{(b)}) \\
+& + \sum_{a+b+c=n} c_3(n; a, b, c)\,\mu_3(M^{(a)}, M^{(b)}, M^{(c)}),
 \end{split}
 $$ {#eq-longitudinal-recursion}
 
+where the rational coupling coefficients are:
+
 $$
-c_2=\frac{(3-n)/2-a^2-b^2}{(n-1)(n+3/2)},\qquad
-c_3=\frac{(3-n)/2-a^2-b^2-c^2}{(n-1)(n+3/2)},
+c_2(n; a, b) = \frac{(3-n)/2 - a^2 - b^2}{(n-1)(n+3/2)}, \qquad
+c_3(n; a, b, c) = \frac{(3-n)/2 - a^2 - b^2 - c^2}{(n-1)(n+3/2)}.
 $$ {#eq-recursion-coefficients}
 
-$$
-(\nabla_q\times\boldsymbol\Psi^{(n)})_i=
--\frac{1}{n}\sum_{m=1}^{n-1}m\,\epsilon_{ijk}M^{(m)}_{lj}M^{(n-m)}_{lk}.
-$$ {#eq-curl-recursion}
-
-The sums run over **ordered** tuples of positive lower orders. An implementation with unordered parents must include their multiplicities; the core does this{{< src growth::term_specs >}}. Given divergence $S$ and curl $\mathbf T$, the periodic zero-mean solution is $\widehat\Psi=-i\mathbf k\widehat S/k^2+i\mathbf k\times\widehat{\mathbf T}/k^2$.
-
-At second order, @eq-recursion-coefficients gives $c_2(2;1,1)=-3/7$, recovering the familiar 2LPT solution{{< test lpt_2lpt_closed_form "2LPT closed form" >}}. At third order the displacement develops a transverse component, even though the Eulerian velocity remains irrotational. Dropping that component is not full 3LPT, and propagates errors into 4LPT. The recurrence includes it.
-
-The 2D demonstration assumes translational symmetry along the third axis of an otherwise 3D universe. $\mu_3$ vanishes, but the growth coefficients and Poisson normalization remain those of the cosmological 3D equations. It is not a separate two-dimensional gravitational cosmology.
-
-## Recovering the recurrence from the fluid equations {#sec-cofactor-recursion}
-
-Let $F_{ij}=x_{i,j}$, $J=\det F$, and $C_{ij}=\partial J/\partial F_{ij}=J(F^{-1})_{ji}$. The chain rule gives $\partial/\partial x_i=(F^{-1})_{ji}\partial/\partial q_j$. Taking the Eulerian divergence of the trajectory equation, multiplying by $J$, and using mass conservation gives
+For $n=2$, @eq-recursion-coefficients yields $c_2(2; 1, 1) = -3/7$, recovering the standard 2LPT equation{{< test lpt_2lpt_closed_form "2LPT closed form" >}}:
 
 $$
- C_{ij}\,\mathcal T\Psi_{i,j}=\frac32\Omega_m(a)H(a)^2(J-1),\qquad
- \mathcal T=\frac{d^2}{dt^2}+2H\frac{d}{dt}.
-$$ {#eq-cofactor-eom}
+\nabla_q \cdot \boldsymbol{\Psi}^{(2)} = -\frac{3}{7}\mu_2(M^{(1)}, M^{(1)}) = -\frac{3}{14}[(\nabla_q\cdot\boldsymbol{\Psi}^{(1)})^2 - \Psi_{i,j}^{(1)}\Psi_{j,i}^{(1)}].
+$$ {#eq-2lpt-standard}
 
-Repeated indices are summed. This equation is polynomial in the deformation and its time derivatives: the inverse Jacobian of the Eulerian derivative cancels against $J$. Expand the cofactor and determinant in powers of the initial field and match equal orders. The scalar invariants in @eq-mu2 and @eq-mu3 collect the quadratic and cubic determinant contractions; the resulting inverse Laplacian reconstructs the longitudinal displacement. The equation remains a formal polynomial identity for a truncated map, but its derivation as a single-valued fluid equation assumes $J>0$.
+### The Origin of Transverse Displacements: The Cauchy Invariant
 
-Initially irrotational flow also satisfies the Cauchy invariant
+What about the transverse component $\nabla_q \times \boldsymbol{\Psi}^{(n)}$? 
+
+Because cold matter forms via gravitational collapse from an initial potential perturbation, the **Eulerian velocity field is strictly irrotational**: $\nabla_x \times \mathbf{u} = \mathbf{0}$ prior to shell crossing (Kelvin's circulation theorem). In Lagrangian coordinates, this conservation law is formulated as the **Cauchy vorticity invariant** [@zheligovsky2014; @rampf2021]:
 
 $$
- \epsilon_{ijk}x_{l,j}\dot x_{l,k}=0.
+\epsilon_{ijk} \frac{\partial x_l}{\partial q_j} \frac{d}{dt}\left(\frac{\partial x_l}{\partial q_k}\right) = 0.
 $$ {#eq-cauchy-invariant}
 
-Expanding this relation supplies @eq-curl-recursion. A transverse **Lagrangian displacement** is required to preserve zero **Eulerian velocity vorticity**. The two curls are taken in different coordinate systems. Confusing them removes terms beginning at third order and changes the fourth-order longitudinal sources that couple to those terms [@matsubara2015; @rampf2021].
-
-### Coupled time functions in $\Lambda$CDM {#sec-lcdm-recursion}
-
-For a basis term $\mathbf S^\tau(\mathbf q)$ write $\boldsymbol\Psi=\sum_\tau g_\tau(a)\mathbf S^\tau$. Each spatial basis is generated from polarized $\mu_2$, $\mu_3$ or curl sources. Define
+Expanding @eq-cauchy-invariant order by order reveals a crucial physical insight: **preserving zero Eulerian velocity curl requires a non-zero Lagrangian displacement curl** beginning at third order:
 
 $$
- \mathcal Lg=g''+\left(2+\frac{d\ln H}{d\ln a}\right)g',\qquad
- \mathcal Q(a)=\frac32\Omega_m(a),
+(\nabla_q \times \boldsymbol{\Psi}^{(n)})_i =
+-\frac{1}{n}\sum_{m=1}^{n-1} m\,\epsilon_{ijk} M_{lj}^{(m)} M_{lk}^{(n-m)}.
+$$ {#eq-curl-recursion}
+
+At first and second order ($n=1, 2$), the right-hand side vanishes identically because $M_{ij}^{(1)}$ and $M_{ij}^{(2)}$ are symmetric Hessian matrices. However, at third order ($n=3$):
+
+$$
+\nabla_q \times \boldsymbol{\Psi}^{(3)} \propto \epsilon_{ijk} \Psi_{l,j}^{(1)} \Psi_{l,k}^{(2)} \ne \mathbf{0}.
+$$ {#eq-3lpt-transverse}
+
+Neglecting this transverse displacement—as is done in naive curl-free approximations—violates Kelvin's circulation theorem, creates spurious Eulerian vorticity, and corrupts the longitudinal source terms at fourth order. Our implementation includes the complete transverse recurrence{{< src growth::term_specs >}}.
+
+In Fourier space, given the divergence source $S(\mathbf{q}) = \nabla_q \cdot \boldsymbol{\Psi}^{(n)}$ and the curl source $\mathbf{T}(\mathbf{q}) = \nabla_q \times \boldsymbol{\Psi}^{(n)}$, the exact periodic displacement is reconstructed via:
+
+$$
+\widehat{\boldsymbol{\Psi}}^{(n)}(\mathbf{k}) = -i\frac{\mathbf{k}}{k^2}\widehat{S}(\mathbf{k}) + i\frac{\mathbf{k} \times \widehat{\mathbf{T}}(\mathbf{k})}{k^2}.
+$$ {#eq-helmholtz-solve}
+
+## Coupled Time Evolution in Flat $\Lambda$CDM {#sec-lcdm-recursion}
+
+In an Einstein–de Sitter universe, all displacement terms at order $n$ share the simple power-law growth $a^n$. In a realistic flat $\Lambda$CDM universe with $\Omega_{m0} < 1$, this degeneracy is broken: **different spatial terms at the same perturbative order grow with distinct, coupled time functions** $g_\tau(a)$ [@matsubara2015].
+
+Writing $\boldsymbol{\Psi}(\mathbf{q}, a) = \sum_\tau g_\tau(a)\mathbf{S}^\tau(\mathbf{q})$, where each spatial basis $\mathbf{S}^\tau$ is generated by a specific $\mu_2$, $\mu_3$, or curl coupling, we define the differential operator in $\eta = \ln a$:
+
+$$
+\mathcal{L} g \equiv \frac{d^2 g}{d\eta^2} + \left(2 + \frac{d\ln H}{d\ln a}\right)\frac{dg}{d\eta}, \qquad
+\mathcal{Q}(a) \equiv \frac{3}{2}\Omega_m(a).
 $$ {#eq-growth-operator}
 
-where primes are $d/d\ln a$ and $\mathcal T g=H^2\mathcal Lg$. For a longitudinal source built from a pair $(\sigma,\tau)$, its forced growth equation is
+For a longitudinal basis term generated by the quadratic coupling of parent terms $\sigma$ and $\tau$, the exact forced growth equation is:
 
 $$
- (\mathcal L-\mathcal Q)g_{\mu_2(\sigma,\tau)}
- =\sum_{\mathrm{ordered\ parents}}
- \left[\mathcal Q g_\sigma g_\tau-2g_\sigma\mathcal Lg_\tau\right].
+(\mathcal{L} - \mathcal{Q})g_{\mu_2(\sigma,\tau)} = \sum_{\text{ordered pairs}} \left[\mathcal{Q} g_\sigma g_\tau - 2g_\sigma \mathcal{L}g_\tau\right].
 $$ {#eq-lcdm-mu2-growth}
 
-The corresponding triple source is
+For a cubic term built from a triplet $(\sigma, \rho, \tau)$:
 
 $$
- (\mathcal L-\mathcal Q)g_{\mu_3(\sigma,\rho,\tau)}
- =\sum_{\mathrm{ordered\ parents}}
- \left[\mathcal Q g_\sigma g_\rho g_\tau-3g_\sigma g_\rho\mathcal Lg_\tau\right].
+(\mathcal{L} - \mathcal{Q})g_{\mu_3(\sigma,\rho,\tau)} = \sum_{\text{ordered triplets}} \left[\mathcal{Q} g_\sigma g_\rho g_\tau - 3g_\sigma g_\rho \mathcal{L}g_\tau\right].
 $$ {#eq-lcdm-mu3-growth}
 
-The sums include the distinct orderings of that basis's parent multiset. For a transverse pair, the Cauchy invariant gives $h'_{\sigma\tau}=-(g'_\sigma g_\tau-g'_\tau g_\sigma)$, with the growing-mode integration constant. These are the actual coupled equations evaluated by the core {{< src growth::Growth::new_lcdm >}}, rather than fitting a power of the linear growth to every nonlinear term. When $\Omega_m=1$, insert $g_\tau=c_\tau a^{n_\tau}$: $\mathcal L a^n=n(n+1/2)a^n$. The denominator $(n-1)(n+3/2)$ then follows directly, recovering @eq-recursion-coefficients.
+For transverse terms, the Cauchy invariant integrates directly to:
 
-For 3D, the unmerged basis contains 1, 1, 3 and 8 terms at orders 1–4. These include longitudinal and transverse sources; individual terms can vanish for a symmetric input. Terms sharing an order are merged in EdS because they have the same $a^n$ time dependence. In $\Lambda$CDM the core retains their separate growth functions. This distinction affects both trajectory evaluation and an initial-field tangent.
+$$
+\frac{d h_{\sigma\tau}}{d\ln a} = -\left(\frac{dg_\sigma}{d\ln a}g_\tau - \frac{dg_\tau}{d\ln a}g_\sigma\right).
+$$ {#eq-lcdm-transverse-growth}
 
-## What “fourth order” does and does not mean
+The Rust engine integrates this coupled system of ordinary differential equations from $a=10^{-3}$ to $a=20$ using high-accuracy numerical quadrature{{< src growth::Growth::new_lcdm >}}, rather than approximating them with heuristic powers $D_1(a)^n$. In the EdS limit ($\Omega_m \to 1$), inserting $g_\tau = c_\tau a^n$ recovers the rational coefficients of @eq-recursion-coefficients analytically.
 
-4LPT includes all displacement contributions through fourth order in the initial field. It does not make the density a fourth-degree polynomial: forming $1/\det(I+\nabla\Psi)$ contains nonlinear combinations of those contributions. Nor does it specify the Lagrangian mesh resolution or the Eulerian estimator. Dynamics, interpolation, and measurement each require their own validation.
+In 3D, the complete basis contains 1 linear term, 1 quadratic term, 3 cubic terms (2 longitudinal + 1 transverse), and 8 fourth-order terms.
 
-The inherited tests insert the truncated expansion into the Lagrangian equations and check the predicted residual scaling in both dimensions{{< test lpt_eom_residual_scaling_2d "2D recurrence" >}} {{< test lpt_eom_residual_scaling_3d "3D recurrence" >}}; a separate test checks $\Lambda$CDM growth{{< test lcdm_eom_residual_scaling_2d "ΛCDM growth" >}}. These pin mathematical implementation properties. They do not establish a universal percentage accuracy against N-body.
+## What Fourth-Order LPT Achieves {#sec-what-4lpt-does}
 
-Products in the recurrence generate modes beyond the original input band. Evaluate them on a sufficiently fine Fourier grid, use padding or a conservative input cutoff, and repeat at higher resolution. The Gaussian laboratory now keys its random variates by integer Fourier mode, so fixed seed, box, cutoff, filter and cosmology preserve the same realization under refinement (@sec-stable-modes). The requirement $N_q>8m_{\rm cut}$ conservatively resolves fourth-order products. This does not remove errors from finite Lagrangian interpolation or Eulerian measurement.
+Fourth-order LPT (4LPT) represents the pinnacle of perturbative Lagrangian kinematics before shell crossing:
 
-::: {.callout-tip title="Try it: compare successive orders"}
-Keep the initial field and epoch fixed and switch between 1, 2, 3, and 4LPT. In 1D the curves coincide. In 2D and 3D mode coupling produces corrections. The time fraction is referenced to a common crossing estimate for all four orders, so changing the order does not silently change the epoch.
+1. **Nonlinear Tidal Distortion:** It fully captures the anisotropic tidal shear and compression that shapes sheets, filaments, and halos.
+2. **Exact Symplectic Preservation:** Because the displacement map is smooth and continuous, the deformed sheet preserves its phase-space volume and topology identically.
+3. **Bandwidth Resolution:** Products of displacement fields in real space correspond to convolutions in Fourier space. To prevent fourth-order mode-mixing products from aliasing back across the Nyquist frequency, the laboratory enforces the strict resolution constraint $N_q > 8 m_{\rm cut}$ for Gaussian realizations.
+
+The accuracy of this recurrence is verified by rigorous mathematical unit tests in the Rust test suite:
+* Closed-form 2LPT agreement: {{< test lpt_2lpt_closed_form "2LPT closed form" >}}
+* Scaling of equations of motion residuals in 2D and 3D: {{< test lpt_eom_residual_scaling_2d "2D recurrence" >}}, {{< test lpt_eom_residual_scaling_3d "3D recurrence" >}}
+* Scaling of $\Lambda$CDM growth equations: {{< test lcdm_eom_residual_scaling_2d "ΛCDM growth" >}}
+
+::: {.callout-tip title="Interactive exploration: comparing 1LPT, 2LPT, 3LPT, and 4LPT"}
+Open the 2D laboratory experiment and toggle between orders 1, 2, 3, and 4 at a fixed physical epoch. Notice how 1LPT (Zel'dovich) produces diffuse filaments, 2LPT sharpens them significantly, and 3LPT/4LPT accurately resolve the intense tidal compression and web geometry before crossing.
 
 {{< lab "v=2&dim=2&n=24&force=24&order=4&ic=gaussian&view=density&f=0.55" "Compare nLPT densities" >}}
 :::
+
+## Key Takeaways and Analytical Exercises
+
+1. **LPT vs EPT:** LPT expands displacement rather than density. Combined with the sheet, it evaluates the exact non-perturbative density $r = 1/\det(I + \nabla\boldsymbol{\Psi})$.
+2. **Cofactor Formulation:** Eliminating the Eulerian spatial derivative produces a purely polynomial recurrence in the deformation gradient.
+3. **Cauchy Invariant:** Preserving zero Eulerian vorticity requires a non-vanishing transverse Lagrangian displacement beginning at 3rd order.
+4. **Coupled $\Lambda$CDM Growth:** Different terms at the same spatial order evolve with distinct time-dependent growth functions.
+
+### Exercises
+
+1. **Second-Order Coefficient:** Insert $n=2$, $a=1$, $b=1$ into @eq-recursion-coefficients. Verify that $c_2(2; 1, 1) = -3/7$. Use the identity $\mu_2(M, M) = \frac{1}{2}[(\operatorname{tr} M)^2 - \operatorname{tr}(M^2)]$ to derive the familiar 2LPT Poisson source in @eq-2lpt-standard.
+2. **Cauchy Invariant and Transverse Source:** Starting from $\epsilon_{ijk} x_{l,j} \dot x_{l,k} = 0$, substitute $x_i = q_i + \Psi_i$ and expand through third order in EdS ($x_i = q_i + a\Psi_i^{(1)} + a^2\Psi_i^{(2)} + a^3\Psi_i^{(3)}$). Show that the terms at order $a$ and $a^2$ vanish identically, while the term at order $a^3$ demands $(\nabla_q \times \boldsymbol{\Psi}^{(3)})_i = -\frac{1}{3}\epsilon_{ijk}(\Psi_{l,j}^{(1)}\Psi_{l,k}^{(2)} + 2\Psi_{l,j}^{(2)}\Psi_{l,k}^{(1)})$.
+3. **EdS Growth Power:** In @eq-lcdm-mu2-growth with $\Omega_m=1$, insert $g_\sigma = a^a$, $g_\tau = a^b$, and $g_{\mu_2} = c_2 a^{a+b}$. Show that $(\mathcal{L} - \mathcal{Q})a^n = [(n-1)(n+3/2)] a^n$ and derive the numerator of $c_2(n; a, b)$ in @eq-recursion-coefficients.

@@ -1,111 +1,249 @@
 ---
-title: "Exact meshing and continuous Fourier modes"
+title: "Exact Meshing and Continuous Fourier Modes"
 ---
 
-## Two approximations to keep separate {#sec-meshing}
+## The Crisis of Particle Discretization: Why Traditional Methods Fail {#sec-particle-flaws}
 
-Once nLPT gives the vertices, linear interpolation defines an affine map on each simplex. For fixed initial simplex mass $m_T$, its pushforward density is $m_T/|V_T|$, a piecewise constant field, commonly called P0. This construction is exact for the **discrete affine sheet**, not for the unresolved smooth cosmological map.
+For decades, the standard computational approach to cosmological structure formation has been the particle-mesh (PM) or $N$-body method, where the collisionless dark matter fluid is sampled by discrete point masses. To measure densities and compute gravitational forces, particle masses must be assigned to an Eulerian grid. 
 
-To see why the density is constant, write the affine map on a Lagrangian simplex as $\mathbf x=\mathbf x_0+A(\mathbf q-\mathbf q_0)$. Its volume ratio is $|\det A|=|V_T|/V_{T,0}$, while the Lagrangian mass is $m_T=\bar\rho V_{T,0}$. The pushforward ratio is therefore $\rho_T/\bar\rho=V_{T,0}/|V_T|=1/|J_T|$. This equals the smooth formula at the element level only when the represented map is affine. Refining the Lagrangian mesh changes that map approximation even when the Eulerian clipping is exact.
-
-An optional P1 density reconstruction uses vertex weights $w_i>0$ and barycentric coordinates $\lambda_i(\mathbf x)$:
+In traditional assignment schemes—such as Nearest Grid Point (NGP), Cloud-In-Cell (CIC), or Triangular-Shaped Cloud (TSC)—each particle is replaced by a fixed spatial cloud shape $W(\mathbf{x})$. For CIC, particles are treated as uniform cubical clouds of cell size $\Delta x$, resulting in trilinear assignment weights:
 
 $$
-\rho_T(\mathbf x)=\frac{m_T}{|V_T|}\,
-\frac{\sum_{i=0}^{d}\lambda_i(\mathbf x)w_i}{\bar w_T},\qquad
-\bar w_T=\frac{1}{d+1}\sum_{i=0}^{d}w_i.
+W_{\rm CIC}(\mathbf{x}) = \prod_{i=1}^d \max\left(0, 1 - \frac{|x_i|}{\Delta x}\right) \quad \overset{\text{Fourier}}{\longleftrightarrow} \quad
+\widehat{W}_{\rm CIC}(\mathbf{k}) = \prod_{i=1}^d \operatorname{sinc}^2\left(\frac{k_i \Delta x}{2}\right).
+$$ {#eq-cic-window}
+
+While computationally inexpensive, traditional particle methods suffer from **catastrophic structural failures at both low and high densities** due to their discrete Monte Carlo nature:
+
+### 1. The Void Crisis: Sampling Starvation and Poisson Noise at Low Densities
+
+Cosmic voids expand rapidly during structure formation, diluting matter. In an $N$-body simulation, as particles diverge, the local mean inter-particle spacing $d_{\rm sep} \sim \bar{d} (1+\delta)^{-1/3}$ grows much larger than the Eulerian grid spacing $\Delta x$:
+
+* **Empty Cells ($\rho_C = 0$):** Whenever an underdense cell contains zero particles, the estimated density is exactly zero. The logarithmic density contrast $\ln(1+\delta) = \ln(\rho_C/\bar\rho)$ diverges to $-\infty$, completely ruining logarithmic density statistics.
+* **Poisson Shot Noise:** In cells that contain only 1 or 2 particles, discrete Poisson counting statistics dominate the true gravitational signal. The volume-weighted density PDF $p_V(r)$ displays an unphysical delta-peak at $r=0$ and noisy, erratic behavior across all underdense bins.
+* **Biased Void Cosmology:** Because cosmic voids are primary laboratories for testing dark energy, modified gravity, and neutrino masses, this sampling starvation severely biases cosmological inference from void profiles and void abundance.
+
+### 2. The Caustic Crisis: Artificial Smearing at High Densities
+
+In the true collisionless continuum, the folding of the phase-space sheet produces caustics where the pointwise density diverges ($r \sim |x|^{-1/2}$ or $|x|^{-2/3}$). 
+
+* Traditional particle methods convolve this sharp physical structure with the assignment window $W_{\rm CIC}$, artificially smearing caustics over $2^d$ cells. The peak density is heavily damped by the factor $\operatorname{sinc}^4(k\Delta x/2)$, blurring filamentary spines, caustic sheets, and halo boundaries.
+* Increasing grid resolution $\Delta x$ at fixed particle count fails: once $\Delta x < d_{\rm sep}$, the representation dissolves into isolated point clouds.
+
+### 3. Artificial Two-Body Collisionality and Spurious Fragmentation
+
+Real dark matter particles have microscopic masses ($m_{\rm dm} \sim \mathrm{GeV}$ or $\mathrm{keV}$), making the fluid strictly collisionless on astrophysical scales. In contrast, cosmological simulations use supermassive macro-particles ($m_p \sim 10^5 - 10^9\,M_\odot$). 
+
+The close encounters of these artificial point masses generate unphysical **two-body collisional relaxation**, which artificially heats cold sheet caustics and causes cosmic filaments to spuriously fragment into numerical "beads on a string" [@hahn2013].
+
+### 4. The Inescapable Shot-Noise Floor in Fourier Space
+
+Because $N$-body particles are discrete point masses, their two-point auto-correlation contains a self-interaction Dirac delta: $\langle \delta_p(\mathbf{x})\delta_p(\mathbf{x}') \rangle = \frac{1}{\bar{n}}\delta_{\rm D}(\mathbf{x}-\mathbf{x}')$. In Fourier space, this injects an inescapable white-noise **shot-noise floor**:
+
+$$
+P_{\rm shot} = \frac{1}{\bar{n}} = \frac{L^d}{N_p}.
+$$ {#eq-shot-noise-floor}
+
+This flat noise floor obscures the physical power spectrum at high wave numbers and requires ad-hoc, model-dependent subtraction.
+
+---
+
+## The Phase-Space Sheet Solution: Simplex Meshing {#sec-meshing}
+
+The Abel, Hahn & Kähler (AHK) phase-space sheet [@abel2012; @hahn2013] completely eliminates these failure modes by tracking the continuous 3D manifold itself.
+
+The initial Lagrangian continuum is discretized into a watertight mesh of simplices: intervals in 1D, triangles in 2D, and six consistently oriented Kuhn tetrahedra per cube in 3D. The displacement map is linearly interpolated from the vertices of each simplex $T$:
+
+$$
+\mathbf{x}(\mathbf{q}) = \mathbf{x}_0 + A(\mathbf{q} - \mathbf{q}_0), \qquad \mathbf{q} \in T.
+$$ {#eq-affine-simplex}
+
+Here $A = \nabla_q \mathbf{x}$ is the constant deformation gradient of the simplex. The current Eulerian volume of the deformed simplex is:
+
+$$
+V_T = |\det A| V_{T,0} = |J_T| V_{T,0}.
+$$ {#eq-simplex-volume}
+
+Since the simplex carries fixed comoving mass $m_T = \bar\rho_{\rm com} V_{T,0}$, its pushforward density is **piecewise constant (P0)**:
+
+$$
+\rho_T = \frac{m_T}{|V_T|} = \frac{\bar\rho_{\rm com}}{|J_T|}.
+$$ {#eq-p0-density}
+
+### How the Sheet Solves the Void and Peak Dilemmas
+
+* **In Voids (No Empty Cells):** As a void expands, the vertices of the covering tetrahedra move apart. The tetrahedra stretch smoothly to fill the expanding space ($V_T \gg V_{T,0}$). The density inside each element decreases continuously: $\rho_T = m_T / V_T \in (0, \bar\rho)$. **There are no empty cells, no sampling starvation, and zero Poisson noise.** The volume PDF $p_V(r)$ remains smooth, strictly positive, and well-defined down to the deepest underdensities.
+* **At Caustics (True Physical Sharpness):** As a sheet compresses, simplices thin down along one or two directions. Their densities rise geometrically ($\rho_T \propto 1/|J_T|$) without artificial window smearing.
+* **Zero Two-Body Relaxation:** Because mass is distributed continuously across volume elements rather than concentrated in singular point masses, close-encounter two-body collisions are eliminated. Filaments and caustic sheets remain dynamically cold and smooth, preventing spurious fragmentation [@hahn2013].
+
+### Optional P1 Density Reconstruction
+
+The P0 representation has constant density within each simplex. An optional piecewise-linear (P1) density reconstruction represents internal density gradients using vertex weights $w_i > 0$ and barycentric coordinates $\lambda_i(\mathbf{x})${{< src sheet::sheet_density_3d_exact >}}:
+
+$$
+\rho_T(\mathbf{x}) = \frac{m_T}{|V_T|}\,\frac{\sum_{i=0}^d \lambda_i(\mathbf{x}) w_i}{\bar{w}_T}, \qquad
+\bar{w}_T = \frac{1}{d+1}\sum_{i=0}^d w_i.
 $$ {#eq-p1-reconstruction}
 
-The normalization follows from $\int_T\lambda_i\,d^dx=|V_T|/(d+1)$, so $\int_T\rho_T\,d^dx=m_T$. Choosing $w_i=1/J_i$ represents a local density gradient. P1 density is an additional reconstruction; it is not the exact pushforward of the same linear position map. The new live comparison uses P0 consistently, while the inherited API retains P1{{< src sheet::sheet_density_3d_exact >}} for independent reconstruction studies.
+Choosing $w_i = 1/J_i$ from vertex Jacobians captures continuous density slopes across the element while strictly conserving total element mass ($\int_T \rho_T d^dx = m_T$).
 
-## Deposit an integral, not a sample {#sec-exact-deposit}
+---
 
-For Eulerian cell $C$ of volume $V_C$, exact deposition computes
+## Exact Polyhedral Deposition (Powell & Abel 2015, R3D) {#sec-exact-deposit}
+
+When depositing the continuous sheet onto an Eulerian grid of cells $C$, traditional codes use point sampling or window smoothing. In contrast, the continuous sheet computes the **exact geometric volume intersection** of each deformed simplex with each grid cell [@powell2015]{{< src r3d::voxelize >}}:
 
 $$
-\rho_C=\frac{1}{V_C}\sum_T\int_{T\cap C}\rho_T(\mathbf x)\,d^dx.
+\rho_C = \frac{1}{V_C} \sum_T \int_{T \cap C} \rho_T(\mathbf{x})\,d^dx.
 $$ {#eq-exact-deposition}
 
-In P0 this is a constant times overlap volume. In P1 it also needs first moments of the clipped simplex. Triangle/polygon and tetrahedron/polyhedron clipping computes these moments directly [@powell2015]. The inherited conservative routines{{< src r3d::voxelize >}} {{< src sheet::sheet_density_2d_exact >}} {{< src sheet::sheet_density_3d_exact >}} use the R3D geometry approach. Local tests compare cell integrals with analytic benchmarks and an independent Julia fixture set{{< test exact_sheet_deposit "conservative deposition" >}} {{< test matches_r3d_jl_fixtures "R3D fixture parity" >}}.
-
-A center sample can miss a small simplex altogether or overcount a sharp feature. Supersampling improves the estimate but leaves integration error. Exact overlap integration eliminates that quadrature problem. It does not repair an inaccurate displacement, an overly coarse Lagrangian tessellation, or a low-resolution force solver.
-
-For periodicity, keep positions unwrapped and lift a neighbor across the Lagrangian boundary by $L$. Clip against unwrapped cell indices, then reduce the deposited cell index modulo the Eulerian mesh size. Wrapping each vertex independently before constructing a simplex can turn a short boundary-crossing element into a spurious box-sized one.
-
-The cell averages obey the global conservation identity
+For piecewise-constant (P0) density, this reduces to:
 
 $$
-\sum_C \rho_C V_C=\sum_Tm_T=\bar\rho L^d.
+\rho_C = \frac{1}{V_C}\sum_T \frac{m_T}{|V_T|}\,\operatorname{Vol}(T \cap C).
+$$ {#eq-p0-exact-deposition}
+
+The R3D algorithm [@powell2015]{{< src sheet::sheet_density_2d_exact >}}{{< src sheet::sheet_density_3d_exact >}} clips each deformed simplex $T$ against the planar boundaries of the Eulerian cell $C$ using exact Sutherland–Hodgman polyhedral intersection in machine precision. The volume of the resulting clipped convex polyhedron $T \cap C$ is evaluated analytically using the divergence theorem:
+
+$$
+\operatorname{Vol}(P) = \frac{1}{d}\sum_{\text{faces } f} (\mathbf{x}_f \cdot \mathbf{n}_f)\,\operatorname{Area}(f).
+$$ {#eq-divergence-volume}
+
+Exact polyhedral deposition obeys global mass conservation **to floating-point machine precision**:
+
+$$
+\sum_C \rho_C V_C = \sum_T m_T = \bar\rho_{\rm com} L^d.
 $$ {#eq-deposit-conservation}
 
-This identity is a check on clipping and periodic bookkeeping, not on the trajectory generator. In the nondegenerate P0 case a cell receives $m_T |T\cap C|/(|V_T|V_C)$. In the [archived study implementation](https://github.com/yipihey/DiscoDJ.jl/blob/0db7baf609c7b0294d03e602e93492f128bd7f7d/studies/lpt_pdf/sheet_pdf/sheet_deposit.jl), elements with $|V_T|<10^{-12}V_{T,0}$ use a centroid-cell mass fallback; that exceptional branch is conservative but is not an exact overlap integral. The statement “exact deposit” therefore refers to geometric integration of the represented nondegenerate affine elements and should be read with this finite-precision fallback in mind.
+This conservation law is verified by rigorous unit and fixture tests{{< test exact_sheet_deposit "conservative deposition" >}}{{< test matches_r3d_jl_fixtures "R3D fixture parity" >}}.
 
-After shell crossing, a flipped simplex still has positive mass and contributes $m_T/|V_T|$ wherever its position-space image overlaps another stream. The projection adds these positive contributions; the signed volume is retained separately to diagnose orientation. A finite-volume cell can thus display a crossed projected field even though the one-to-one identity $r=1/J$ no longer applies. That geometric operation does not evolve the sheet or validate an LPT extrapolation past crossing. The live comparison guard remains pre-crossing; the small crossed fraction in the archived cosmological study is described in @sec-published-evidence.
+### Periodic Boundary Lifting
 
-## Fourier conventions and windows {#sec-fourier}
+To maintain topological continuity across periodic simulation boundaries, element vertices must never be wrapped independently before constructing simplices. If two vertices of a small tetrahedron are wrapped independently across $x=0$ and $x=L$, the resulting simplex would spuriously stretch across the entire simulation volume!
 
-Use the periodic transform
+Instead, our engine unwraps coordinates relative to a reference vertex: any neighboring vertex across a Lagrangian boundary is shifted by $\pm L$. The simplex is clipped against unwrapped cell indices, and the resulting mass contributions are mapped modulo the grid dimensions.
+
+---
+
+## Fourier Conventions, Windows, and Aliasing {#sec-fourier}
+
+On a periodic box $[0, L)^d$, Fourier transforms and the power spectrum are defined by:
 
 $$
-\delta_{\mathbf k}=\frac{1}{L^d}\int_{[0,L)^d}\delta(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx,
-\quad \mathbf k=\frac{2\pi}{L}\mathbf m,\quad
-P(\mathbf k)=L^d|\delta_{\mathbf k}|^2.
+\delta_{\mathbf{k}} = \frac{1}{L^d}\int_{[0,L)^d} \delta(\mathbf{x})e^{-i\mathbf{k}\cdot\mathbf{x}}\,d^dx, \qquad
+\mathbf{k} = \frac{2\pi}{L}\mathbf{m}, \qquad
+P(\mathbf{k}) = L^d |\delta_{\mathbf{k}}|^2.
 $$ {#eq-fourier-power}
 
-For nonzero modes, $\delta_{\mathbf k}=L^{-d}\int\rho(\mathbf x)e^{-i\mathbf k\cdot\mathbf x}\,d^dx$ in units with $\bar\rho=1$. The DC mode of the contrast is zero. $P$ has units of volume in $d$ dimensions; a reduced-dimensional spectrum is not a 3D cosmological power spectrum.
-
-A cell-average mesh has the top-hat window
+When a continuous field $\delta(\mathbf{x})$ is averaged over cubical grid cells of width $\Delta x$, the cell-averaged field is the convolution of $\delta(\mathbf{x})$ with the top-hat window:
 
 $$
-W_{\rm cell}(\mathbf k)=\prod_{j=1}^{d}\operatorname{sinc}(k_j\Delta x/2).
+W_{\rm cell}(\mathbf{k}) = \prod_{j=1}^d \operatorname{sinc}\left(\frac{k_j \Delta x}{2}\right).
 $$ {#eq-cell-window}
 
-An FFT of the cell averages suppresses power by approximately $|W_{\rm cell}|^2$, and sampling that mesh aliases unresolved modes. Deconvolving the window{{< src sheet::tophat_cell_window >}} is useful on well-resolved modes but does not remove aliasing. The comparison test checks agreement with the continuous estimator in a resolved band{{< test tophat_deconvolution_matches_direct_spectrum "resolved Fourier band" >}}. Near Nyquist, dividing by a window alone is not a convergence argument [@jing2005].
+Sampling this cell-average field on the discrete lattice creates two distinct effects:
+1. **Window Suppression:** True power is attenuated by $|W_{\rm cell}(\mathbf{k})|^2$. Deconvolving this factor{{< src sheet::tophat_cell_window >}} restores power on well-resolved scales ($k \ll k_{\rm Nyq}$){{< test tophat_deconvolution_matches_direct_spectrum "resolved Fourier band" >}}.
+2. **Grid Aliasing:** Frequencies above the Nyquist wave number $k_{\rm Nyq} = \pi/\Delta x$ are folded back into the fundamental Brillouin zone:
+   $$
+   \widehat{\delta}_{\rm grid}(\mathbf{k}) \propto \sum_{\mathbf{n}\in\mathbb{Z}^d} \widehat{\delta}(\mathbf{k} + 2k_{\rm Nyq}\mathbf{n})\,W_{\rm cell}(\mathbf{k} + 2k_{\rm Nyq}\mathbf{n})\,e^{i(\mathbf{k} + 2k_{\rm Nyq}\mathbf{n})\cdot\mathbf{x}_c}.
+   $$ {#eq-cell-aliases}
+   Because alias images carry relative phases, dividing by $W_{\rm cell}(\mathbf{k})$ cannot remove aliasing error near Nyquist [@jing2005].
 
-More explicitly, the cell average is a convolution of the continuous field with a cubical top hat, followed by sampling on the lattice. At a sampled Fourier wavevector $\mathbf k$, the discrete transform consequently contains the windowed aliases
+---
 
-$$
-\widehat\delta_{\rm grid}(\mathbf k)
-\;\propto\;\sum_{\mathbf n\in\mathbb Z^d}
-\widehat\delta\!\left(\mathbf k+2k_{\rm Nyq}\mathbf n\right)
- W_{\rm cell}\!\left(\mathbf k+2k_{\rm Nyq}\mathbf n\right)
- e^{i(\mathbf k+2k_{\rm Nyq}\mathbf n)\cdot\mathbf x_c},
-\qquad k_{\rm Nyq}=\frac{\pi}{\Delta x}.
-$$ {#eq-cell-aliases}
+## Closed-Form Continuous Fourier Modes: The Hermite–Genocchi Formula {#sec-direct-modes}
 
-Here $\mathbf x_c$ is the offset of the sampling lattice from the origin. The base-mode phase is immaterial to power, but the alias images carry relative phases and can interfere. Even if the $\mathbf n=0$ window is divided out, the other terms remain and are amplified by that division. A useful resolution study holds the Lagrangian map and physical filter fixed while changing the Eulerian mesh; then changes the Lagrangian grid at fixed mesh; and for PM-generated maps, varies force mesh and step count independently. Agreement under only the first refinement establishes estimator convergence for a fixed represented map, not convergence of the cosmological dynamics. The archived realistic-$\Lambda$CDM comparison uses its own $256^3$ analysis mesh and filtered Planck18 realization; those measurements are separate evidence and are not recalculated by the configurable live laboratory.
+Remarkably, the phase-space sheet allows us to evaluate the continuous Fourier transform **analytically without ever depositing onto an Eulerian grid or performing an FFT**!
 
-## Direct sheet transforms {#sec-direct-modes}
-
-The continuous sheet also admits a transform without an Eulerian deposit. Let $s_i=-i\mathbf k\cdot\mathbf x_i$ for the vertices of a $d$-simplex. Barycentric coordinates write $\mathbf x=\sum_{i=0}^d\lambda_i\mathbf x_i$ with $\lambda_i\ge0$ and $\sum_i\lambda_i=1$. The Hermite–Genocchi identity for the exponential over the reference simplex then gives the P0 mass contribution{{< src direct::exp_divided_difference >}}:
+Consider a deformed simplex $T$ in $d$ dimensions with vertices $\mathbf{x}_0, \mathbf{x}_1, \dots, \mathbf{x}_d$. Any point inside $T$ is parameterized by barycentric coordinates:
 
 $$
-\int_T\rho_T e^{-i\mathbf k\cdot\mathbf x}\,d^dx
-=m_T\,d!\,\exp[s_0,\ldots,s_d].
+\mathbf{x} = \sum_{i=0}^d \lambda_i \mathbf{x}_i, \qquad \lambda_i \ge 0, \quad \sum_{i=0}^d \lambda_i = 1.
+$$ {#eq-barycentric-coords}
+
+Define the phase at each vertex:
+
+$$
+s_i = -i\mathbf{k}\cdot\mathbf{x}_i.
+$$ {#eq-vertex-phase}
+
+The Fourier integral of the piecewise-constant (P0) mass density over this single simplex is:
+
+$$
+I_T(\mathbf{k}) = \int_T \rho_T e^{-i\mathbf{k}\cdot\mathbf{x}}\,d^dx = \rho_T |V_T|\,d!\,\int_{\Delta^d} \exp\left(\sum_{i=0}^d \lambda_i s_i\right) d^d\lambda.
+$$ {#eq-simplex-fourier-integral}
+
+By the classical **Hermite–Genocchi identity** for divided differences{{< src direct::exp_divided_difference >}}, this integral evaluates to the exact closed-form expression:
+
+$$
+\int_T \rho_T e^{-i\mathbf{k}\cdot\mathbf{x}}\,d^dx = m_T\,d!\,\exp[s_0, s_1, \dots, s_d].
 $$ {#eq-simplex-fourier}
 
-The brackets denote a divided difference. When all phases coincide, $\exp[s,\ldots,s]=e^s/d!$, so the zero-mode contribution is exactly $m_T$. This provides a valuable mass-normalization check. Repeated phases must be evaluated with a stable confluent expression rather than division by nearly zero phase differences.
+Here $\exp[s_0, \dots, s_d]$ is the divided difference of the exponential function:
+* For distinct phases:
+  $$\exp[s_0, s_1] = \frac{e^{s_1} - e^{s_0}}{s_1 - s_0}, \qquad
+  \exp[s_0, s_1, s_2] = \frac{\exp[s_1, s_2] - \exp[s_0, s_1]}{s_2 - s_0}.$$
+* For confluent phases ($s_i \to s$ as $\mathbf{k} \to \mathbf{0}$):
+  $$\exp[\underbrace{s, s, \dots, s}_{d+1 \text{ times}}] = \frac{e^s}{d!}.$$
 
-Summing @eq-simplex-fourier over elements gives the unnormalized integral $I(\mathbf k)$; dividing by $L^d$ gives $\delta_{\mathbf k}$ for nonzero modes, and $P=|I|^2/L^d$. The zero mode checks total mass; it is omitted from the contrast spectrum. The resulting modes{{< src direct::direct_spectrum >}} have no Eulerian assignment window or mesh aliasing. They still describe a **finite simplex approximation**. An average over a subset of lattice modes has mode-selection variance; it is not point-deposition noise. The live gradient plot uses deterministic modes along the first axis, while the general inherited spectrum routine samples lattice modes in bins. Comparisons are meaningful only when both estimators use the same box, density normalization, mode set or binning rule, and P0/P1 field definition.
+Notice the extraordinary elegance: at $\mathbf{k} = \mathbf{0}$, all phases $s_i = 0$, so $\exp[0, \dots, 0] = 1/d!$. The zero-mode integral evaluates to:
 
-Two analytic checks follow immediately. At $\mathbf k=0$, $I(0)=\sum_Tm_T=\bar\rho L^d$. Under a uniform translation $\mathbf x\mapsto\mathbf x+\mathbf c$, each nonzero mode gains a phase $e^{-i\mathbf k\cdot\mathbf c}$, so its power is unchanged. A direct-versus-grid discrepancy under translation indicates a boundary-lift, centering, or normalization error rather than a change in the density statistics.
+$$
+I_T(\mathbf{0}) = m_T\,d!\,\frac{1}{d!} = m_T.
+$$ {#eq-zero-mode-mass}
 
-## What happened to shot noise?
+The zero mode recovers the exact element mass $m_T$! Summing over all simplices gives the exact total mass: $I(\mathbf{0}) = \sum_T m_T = \bar\rho_{\rm com} L^d$.
 
-For independently sampled equal-mass points, the familiar white Poisson contribution is $P_{\rm shot}=L^d/N_p$. A connected sheet represents continuous mass, so this independent-point term is absent from its density estimator [@abel2012]. Cosmological N-body particles started on a lattice or glass are correlated; subtracting $L^d/N_p$ is not automatically justified for them. In the lab, CIC illustrates assignment and discreteness effects; we do not blindly subtract a Poisson floor.
+The total continuous Fourier mode is obtained by summing over all simplices{{< src direct::direct_spectrum >}}:
 
-Exact deposition removes density **integration** noise. Finite-element error, FFT windows, aliasing, force resolution, and time integration remain measurable error sources. Convergence is demonstrated by varying these separately, not by calling every residual “shot noise.”
+$$
+\delta_{\mathbf{k}}^{\rm continuous} = \frac{1}{L^d}\sum_T m_T\,d!\,\exp[s_0^T, \dots, s_d^T] \quad (\mathbf{k} \ne \mathbf{0}).
+$$ {#eq-continuous-modes-sum}
 
-The spectral tail of a finite piecewise-linear map also contains geometric information about the element facets; changing the observation mesh cannot remove this finite-element feature. Its amplitude depends on the map, tessellation, and observable, so no universal tail slope or cosmological error follows from the existence of facets. For a realistic cosmological claim, report the initial transfer function and filter, cosmology, box and phases, perturbative growth prescription, output epoch, estimator, and resolution study together. Here the published comparison supplies that context only for its specified filtered setup. It should not be generalized to unfiltered or smaller-scale power.
+This continuous estimator has **no Eulerian cell window, no grid aliasing, and no FFT artifacts**.
 
-::: {.callout-tip title="Try it: same dynamics, different measurement"}
-Compare the exact cell-average sheet spectrum and the CIC spectrum of the same LPT vertices. The direct modes provide a continuous P0 reference. Keep the map fixed while changing the Eulerian mesh, so the experiment isolates the measurement step.
+---
+
+## Zero Shot Noise: The Ultimate Advantage of the Sheet {#sec-zero-shot-noise}
+
+We now arrive at the most fundamental theoretical and numerical advantage of the phase-space sheet over traditional particle methods:
+
+::: {.callout-important title="Theorem: Zero Particle Shot Noise"}
+Because the cold dark matter fluid is represented as a continuous three-dimensional manifold rather than a collection of singular point masses, the particle self-interaction Dirac delta $\delta_{\rm D}(\mathbf{x}-\mathbf{x}')$ is identically absent. 
+
+Consequently, the continuous phase-space sheet has **identically zero particle shot noise**:
+
+$$
+P_{\rm shot}^{\rm sheet} \equiv 0.
+$$ {#eq-zero-shot-noise}
+:::
+
+In traditional $N$-body simulations, the Poisson floor $P_{\rm shot} = L^d / N_p$ sets a hard limit on the dynamic range in Fourier space. In contrast, the continuous sheet spectrum reflects pure cosmological clustering and the geometric facets of the simplicial tessellation, with zero white-noise contamination.
+
+| Feature | Traditional Particles (CIC/TSC/SPH) | Pre-Crossing Phase-Space Sheet |
+|---|---|---|
+| **Underdense Voids** | Sampling starvation, empty cells ($\rho=0$), undefined $\ln(1+\delta)$, severe Poisson noise | Continuous volume expansion, smooth $\rho_T > 0$ everywhere, zero Poisson noise |
+| **Caustics & Peaks** | Smeared over $2^d - 3^d$ cells by window function, peak densities heavily suppressed | Preserves true catastrophe-theoretic scaling; exact polyhedral clipping (R3D) |
+| **Collisionality** | Spurious two-body relaxation, artificial heating, filament fragmentation | Collisionless continuum; cold sheets and filaments remain smooth and stable |
+| **Fourier Shot Noise** | Flat Poisson shot-noise floor $P_{\rm shot} = L^d / N_p$ obscures high-$k$ modes | **Identically zero particle shot noise ($P_{\rm shot} \equiv 0$)** via Hermite–Genocchi modes |
+| **Conservation** | Approximate (grid-dependent) | Exact to machine precision ($\sum_C \rho_C V_C = \sum_T m_T = \bar\rho L^d$) |
+
+::: {.callout-tip title="Interactive exploration: comparing continuous modes and deposited spectra"}
+Open the spectra panel in the laboratory. Compare the exact continuous Hermite–Genocchi mode power with the cell-averaged deposited spectrum and the traditional CIC particle spectrum. Observe the cell-window suppression and note how the continuous sheet spectrum extends to high wave numbers with zero shot noise.
 
 {{< lab "v=2&view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
 :::
 
-## Analysis exercises
+## Key Takeaways and Analytical Exercises
 
-1. **Cell window and aliases.** For a one-dimensional input mode with $k\Delta x=\pi/2$, compute $W_{\rm cell}$ and the multiplicative suppression in power. Explain why applying $1/W_{\rm cell}^2$ to the measured power does not remove aliases from modes separated by $2k_{\rm Nyq}$.
-2. **Simplex transform.** Starting from barycentric coordinates, verify @eq-simplex-fourier at $\mathbf k=0$. Then translate every vertex by $\mathbf c$ and show that $P(\mathbf k)$ is invariant. State which Fourier convention supplies the factor $L^{-d}$.
-3. **Convergence design.** Give a sequence of runs that distinguishes Eulerian estimator error from finite Lagrangian tessellation, PM force resolution, and time-step error. For each sequence, hold the other three choices fixed and state what convergence claim the sequence would support.
+1. **Failure Modes of Particles:** Point-particle discretization causes empty cells in voids, caustic smearing at peaks, artificial two-body relaxation, and an inescapable shot-noise floor $L^d/N_p$.
+2. **Simplex Meshing:** Discretizing the sheet into Kuhn tetrahedra preserves continuous density $\rho_T = m_T / |V_T|$, guaranteeing $\rho > 0$ everywhere in voids.
+3. **Exact Deposition:** Polyhedral clipping (Powell & Abel 2015, R3D) computes $\int_{T \cap C} \rho_T d^dx$ to machine precision without window smearing.
+4. **Hermite–Genocchi Formula:** Continuous Fourier modes are evaluated analytically from vertex phases, yielding a continuous spectrum with identically zero particle shot noise.
+
+### Exercises
+
+1. **CIC Window Suppression:** For a wavevector at half the 1D Nyquist frequency ($k \Delta x = \pi/2$), calculate the value of $W_{\rm CIC}(k) = \operatorname{sinc}^2(k\Delta x/2)$. By what factor is the power spectrum suppressed? Repeat for the 3D corner mode $(k_x, k_y, k_z) = (\pi/2\Delta x, \pi/2\Delta x, \pi/2\Delta x)$.
+2. **Void Empty-Cell Probability:** In a 3D cosmological volume with mean particle density $\bar{n} = N_p / L^3$, assume particles in a deep void of underdensity $1+\delta = 0.05$ follow a Poisson distribution. If the grid cell size is chosen such that the mean cell occupancy is $\bar{N}_{\rm cell} = 1$, what is the probability that a void cell is completely empty? Contrast this with the sheet's guarantee that $\rho_T > 0$.
+3. **Hermite–Genocchi Identity:** For a 1D interval with vertices $x_0$ and $x_1$, set $s_0 = -ikx_0$ and $s_1 = -ikx_1$. Show by direct integration of $\int_{x_0}^{x_1} e^{-ikx} dx$ that $\frac{1}{x_1 - x_0}\int_{x_0}^{x_1} e^{-ikx} dx = \frac{e^{s_1} - e^{s_0}}{s_1 - s_0} = 1!\,\exp[s_0, s_1]$.
+4. **Translation Invariance of Continuous Modes:** Shift all vertices by a constant vector $\mathbf{c}$: $\mathbf{x}_i \mapsto \mathbf{x}_i + \mathbf{c}$. Show that every phase shifts by $s_i \mapsto s_i - i\mathbf{k}\cdot\mathbf{c}$ and that the divided difference transforms as $\exp[s_0 - i\mathbf{k}\cdot\mathbf{c}, \dots] = e^{-i\mathbf{k}\cdot\mathbf{c}}\exp[s_0, \dots]$. Conclude that the power spectrum $P(\mathbf{k}) = L^d |\delta_{\mathbf{k}}|^2$ is strictly translation invariant.

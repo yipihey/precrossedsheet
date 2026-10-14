@@ -222,10 +222,11 @@ function renderSheet(d) {
     const controlsBox=$('div','rotation-controls',viewHost);$('span','control-caption',controlsBox,'Rotate 3D projection by dragging the sheet or using the angle controls');const rotationInputs={};for(const [key,label,min,max] of [['rotate','Azimuth',-180,180],['tilt','Elevation',-80,80]]){const l=$('label','rotation-range',controlsBox);$('span','',l,label);const r=$('input','',l);r.type='range';r.min=min;r.max=max;r.value=S[key];r.setAttribute('aria-label',`${label} sheet angle`);r.addEventListener('input',()=>{S[key]=Number(r.value);updateURL();draw();});rotationInputs[key]=r;}function syncRotationControls(){for(const [key,input] of Object.entries(rotationInputs))input.value=S[key];}}
 }
 function renderDensity(d) {
-  const p=panel('Exact P₀-sheet density on LPT and PM trajectories', `Both maps start from exact P₀ cell averages and apply a Gaussian observation filter R/L = ${num(S.smoothing,4)} (${num(S.smoothing*S.boxSize,4)} Mpc/h). They use the same spatial axis scale and common ρ/mean color range. For 3D, the view is the central x₀–x₁ slice at x₂/L≈0.5. Observation grid: ${S.mesh} cells per axis; force grid: ${S.forceMesh} cells per axis.`);
+  const p=panel('Continuous sheet vs traditional particle density', `Comparing exact P₀ continuous sheet deposition against traditional Cloud-in-Cell (CIC) particle assignment on the identical LPT vertices, alongside the PM trajectory sheet. Gaussian observation filter R/L = ${num(S.smoothing,4)} (${num(S.smoothing*S.boxSize,4)} Mpc/h). All panels share the same spatial scale and ρ/mean color normalization. In voids, CIC suffers from severe Poisson shot noise, sampling starvation, and empty cells (ρ=0), whereas the sheet smoothly expands tetrahedra. At caustics, CIC smears sharp structures with its assignment window while the sheet integrates exact geometric overlaps. For 3D, the view is the central x₀–x₁ slice at x₂/L≈0.5. Observation grid: ${S.mesh} cells per axis; force grid: ${S.forceMesh} cells per axis.`);
   const maps=$('div','density-pair',p), dim=Number(d.dim||S.dim), mesh=Number(d.mesh||S.mesh);
-  const exact=arr(d.rho),pm=arr(d.pmRho);let sum=0,count=0,maximum=0;for(const source of [exact,pm])for(let i=0;i<source.length;i++){const value=Number(source[i])||0;sum+=value;count++;maximum=Math.max(maximum,value);}const mean=count?sum/count:1,sharedMax=maximum/(mean||1);
-  drawDensityMap(maps,'LPT sheet density',exact,'Observed density from exact LPT sheet deposition',dim,mesh,'exact-deposit-density',sharedMax,mean);
+  const exact=arr(d.rho), cic=arr(d.cicRho), pm=arr(d.pmRho);let sum=0,count=0,maximum=0;for(const source of [exact,cic,pm])for(let i=0;i<source.length;i++){const value=Number(source[i])||0;sum+=value;count++;maximum=Math.max(maximum,value);}const mean=count?sum/count:1,sharedMax=maximum/(mean||1);
+  drawDensityMap(maps,'LPT continuous sheet density',exact,'Observed density from exact LPT sheet deposition',dim,mesh,'exact-deposit-density',sharedMax,mean);
+  if(cic.length) drawDensityMap(maps,'Traditional CIC particle density',cic,'Observed density from Cloud-in-Cell particle assignment on the same LPT vertices',dim,mesh,'cic-particle-density',sharedMax,mean);
   drawDensityMap(maps,'PM trajectory sheet density',pm,'Observed density from exact sheet deposition along particle-mesh trajectories',dim,mesh,'pm-trajectory-sheet-density',sharedMax,mean);
 }
 function drawDensityMap(parent,title,values,label,dim,mesh,name,scaleMax,mean){
@@ -254,8 +255,45 @@ function addPlot(parent,title,x,seriesDefs,axes,d) {
   plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);plot.draw();
 }
 function renderSpectra(d) {const p=panel('Power spectrum comparison','The first chart compares isotropically binned FFT estimates. The second compares direct first-axis modes on their own deterministic k grid. These are physical spectra: k in h/Mpc and P(k) in (Mpc/h)^d.');addPlot(p,'Isotropic FFT-bin power',d.spectra?.k,[{key:'sheet',label:'Exact sheet'},{key:'cic',label:'CIC particles'},{key:'pm',label:'PM trajectories'}],{xlabel:'k [h/Mpc]',ylabel:`P(k) [(Mpc/h)^${S.dim}]`,xlog:true,ylog:true},d);addPlot(p,'Direct first-axis modes',d.spectra?.directK,[{key:'direct',label:'Direct sheet LPT'},{key:'directPM',label:'Direct PM'}],{xlabel:'k [h/Mpc]',ylabel:`P(k) [(Mpc/h)^${S.dim}]`,xlog:true,ylog:true},d);}
-function renderPdfs(d) {const p=panel('Density probability distributions','The selected weighting is charted first and marked as primary. Volume PDFs use the observed density. Mass PDFs use raw unsmoothed cell mass as weights, including when the density value has been smoothed.');$('p','panel-note',p,`Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. The selected density range may not capture all probability; captured integrals are reported below.`);const volumeDefs=[{key:'volume',label:'LPT sheet'},{key:'pmVolume',label:'PM trajectories'}],massDefs=[{key:'mass',label:'LPT sheet'},{key:'pmMass',label:'PM trajectories'}];if(S.weight==='mass'){addPlot(p,'PRIMARY · mass-weighted PDF',d.pdf?.logrho,massDefs,{xlabel:'log₁₀ ρ',ylabel:'mass-weighted density',ylim:[0,undefined]},d);addPlot(p,'Volume-weighted PDF',d.pdf?.logrho,volumeDefs,{xlabel:'log₁₀ ρ',ylabel:'volume-weighted density',ylim:[0,undefined]},d);}else{addPlot(p,'PRIMARY · volume-weighted PDF',d.pdf?.logrho,volumeDefs,{xlabel:'log₁₀ ρ',ylabel:'volume-weighted density',ylim:[0,undefined]},d);addPlot(p,'Mass-weighted PDF',d.pdf?.logrho,massDefs,{xlabel:'log₁₀ ρ',ylabel:'mass-weighted density',ylim:[0,undefined]},d);}renderPdfSummaries(p,d.pdf||{});}
-function renderPdfSummaries(parent,pdf){const table=$('table','summary-table',parent),caption=$('caption','',table,'Full-field summaries and displayed-bin probability integrals');const head=$('thead','',table),hr=$('tr','',head);for(const label of ['Statistic','LPT sheet','PM trajectories'])$('th','',hr,label);const body=$('tbody','',table),lpt=pdf.summary||{},pm=pdf.pmSummary||{},qps=arr(lpt.probabilities),lq=arr(lpt.volumeQuantiles),lmq=arr(lpt.massQuantiles),pq=arr(pm.volumeQuantiles),pmq=arr(pm.massQuantiles);const rows=[['Mean density',lpt.mean,pm.mean],['Variance',lpt.variance,pm.variance],['Reduced skewness S₃',lpt.S3,pm.S3],['Reduced kurtosis S₄',lpt.S4,pm.S4],['Captured volume-PDF probability',pdf.capturedVolume,pdf.pmCapturedVolume],['Captured mass-PDF probability',pdf.capturedMass,pdf.pmCapturedMass]];for(let i=0;i<qps.length;i++){const suffix=` (${num(Number(qps[i])*100,3)}%)`;rows.push([`Volume-weighted ρ quantile${suffix}`,lq[i],pq[i]],[`Mass-weighted ρ quantile${suffix}`,lmq[i],pmq[i]]);}for(const [label,a,b] of rows){const tr=$('tr','',body);$('th','',tr,label);$('td','',tr,num(a,5));$('td','',tr,num(b,5));}}
+function renderPdfs(d) {
+  const p=panel('Density probability distributions',`Comparing continuous sheet probability distributions with traditional CIC particle assignment. Volume PDFs use observed spatial cell volume; mass PDFs use raw mass weights. In voids (low ρ), traditional CIC particles suffer from Poisson shot noise and zero-particle starvation, truncating the low-density volume tail. The continuous sheet resolves the low-density void PDF smoothly and without noise. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
+  const volumeDefs=[{key:'volume',label:'LPT sheet'},{key:'cicVolume',label:'CIC particles'},{key:'pmVolume',label:'PM trajectories'}],massDefs=[{key:'mass',label:'LPT sheet'},{key:'cicMass',label:'CIC particles'},{key:'pmMass',label:'PM trajectories'}];
+  if(S.weight==='mass'){addPlot(p,'PRIMARY · mass-weighted PDF',d.pdf?.logrho,massDefs,{xlabel:'log₁₀ ρ',ylabel:'mass-weighted density',ylim:[0,undefined]},d);addPlot(p,'Volume-weighted PDF',d.pdf?.logrho,volumeDefs,{xlabel:'log₁₀ ρ',ylabel:'volume-weighted density',ylim:[0,undefined]},d);}
+  else{addPlot(p,'PRIMARY · volume-weighted PDF',d.pdf?.logrho,volumeDefs,{xlabel:'log₁₀ ρ',ylabel:'volume-weighted density',ylim:[0,undefined]},d);addPlot(p,'Mass-weighted PDF',d.pdf?.logrho,massDefs,{xlabel:'log₁₀ ρ',ylabel:'mass-weighted density',ylim:[0,undefined]},d);}
+  renderPdfSummaries(p,d.pdf||{});
+}
+function renderPdfSummaries(parent,pdf){
+  const table=$('table','summary-table',parent),caption=$('caption','',table,'Full-field summaries and displayed-bin probability integrals');
+  const head=$('thead','',table),hr=$('tr','',head);
+  const hasCic=Boolean(pdf.cicSummary);
+  for(const label of (hasCic?['Statistic','LPT sheet','CIC particles','PM trajectories']:['Statistic','LPT sheet','PM trajectories'])) $('th','',hr,label);
+  const body=$('tbody','',table),lpt=pdf.summary||{},cic=pdf.cicSummary||{},pm=pdf.pmSummary||{};
+  const qps=arr(lpt.probabilities),lq=arr(lpt.volumeQuantiles),lmq=arr(lpt.massQuantiles);
+  const cq=arr(cic.volumeQuantiles),cmq=arr(cic.massQuantiles);
+  const pq=arr(pm.volumeQuantiles),pmq=arr(pm.massQuantiles);
+  const rows=[
+    ['Mean density',lpt.mean,cic.mean,pm.mean],
+    ['Variance',lpt.variance,cic.variance,pm.variance],
+    ['Reduced skewness S₃',lpt.S3,cic.S3,pm.S3],
+    ['Reduced kurtosis S₄',lpt.S4,cic.S4,pm.S4],
+    ['Captured volume-PDF probability',pdf.capturedVolume,pdf.cicCapturedVolume,pdf.pmCapturedVolume],
+    ['Captured mass-PDF probability',pdf.capturedMass,pdf.cicCapturedMass,pdf.pmCapturedMass]
+  ];
+  for(let i=0;i<qps.length;i++){
+    const suffix=` (${num(Number(qps[i])*100,3)}%)`;
+    rows.push(
+      [`Volume-weighted ρ quantile${suffix}`,lq[i],cq[i],pq[i]],
+      [`Mass-weighted ρ quantile${suffix}`,lmq[i],cmq[i],pmq[i]]
+    );
+  }
+  for(const r of rows){
+    const tr=$('tr','',body);
+    $('th','',tr,r[0]);
+    $('td','',tr,num(r[1],5));
+    if(hasCic) $('td','',tr,num(r[2],5));
+    $('td','',tr,num(hasCic?r[3]:r[2],5));
+  }
+}
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the sheet-LPT tangent; the PM tangent is shown as its own response.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM tangent'}],{xlabel:'k [h/Mpc]',ylabel:`P₀ and ∂P₀/∂A [(Mpc/h)^${S.dim}]`,xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}
 function showDiagnostics(d) {
   if(!d)return;
@@ -274,6 +312,7 @@ function showDiagnostics(d) {
     ['LPT final inverted mass',percent(g.lptFinalInvertedMass)],
     ['PM final inverted mass',percent(g.pmFinalInvertedMass)],
     ['LPT mass ratio',num(m.mass,8)],
+    ['CIC mass ratio',num(m.cicMass,8)],
     ['PM mass ratio',num(m.pmMass,8)],
     ['Position RMS (box units)',num(m.positionRms,4)],
     ['Relative position RMS',percent(m.positionRelativeRms)],

@@ -1804,14 +1804,18 @@ fn assemble_prepared(
     };
     let rho = &raw.rho;
     let pmrho = &raw.pmrho;
+    let cic = &raw.cic;
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     let rs = observables::smooth_density(&eg, &rho, r.smoothing);
     let pms = observables::smooth_density(&eg, &pmrho, r.smoothing);
+    let cics = observables::smooth_density(&eg, cic, r.smoothing);
     let (logrho, vol, mass, pdfmean, var) = observables::density_pdf(&rs, &rho, 80);
     let (_, pmvol, pmmass, _, pmvar) = observables::density_pdf(&pms, &pmrho, 80);
+    let (_, cicvol, cicmass, _, cicvar) = observables::density_pdf(&cics, cic, 80);
     let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
     let summary = observables::density_summary(&rs, &rho, &probabilities);
     let pm_summary = observables::density_summary(&pms, &pmrho, &probabilities);
+    let cic_summary = observables::density_summary(&cics, cic, &probabilities);
     let ps = &raw.ps;
     let psc = &raw.psc;
     let psp = &raw.psp;
@@ -1904,11 +1908,11 @@ fn assemble_prepared(
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
         "cosmology":{"omegaM":r.omega_m,"omegaB":r.omega_b,"h":r.h,"ns":r.ns,"sigma8":r.sigma8},
         "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
-        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,
+        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,"cicRho":cics,
         "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers)},
-        "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"summary":summary,"pmSummary":pm_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy},
+        "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},
-        "diagnostics":{"mass":mean(&rho),"pmMass":mean(&pmrho),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
+        "diagnostics":{"mass":mean(&rho),"pmMass":mean(&pmrho),"cicMass":mean(cic),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
         "conventions":{"liveCosmology":if c.cosmo.is_eds(){"EdS"}else{"flat LCDM"},"initialBandCutoff":r.initial_cutoff,
         "modelGeometry":if r.dim==3 {"3D periodic matter field"} else {"Translationally invariant subspace of 3D cosmological equations; not a random 3D slice"},
         "initialSpectrum":"EH98 smooth baryon-suppressed transfer; no BAO, radiation in late-time growth, or massive neutrinos",

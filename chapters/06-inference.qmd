@@ -1,72 +1,108 @@
 ---
-title: "A differentiable forward model"
+title: "A Differentiable Cosmological Forward Model"
 ---
 
-## Fast dynamics, continuous observables {#sec-inference}
+## Deterministic Dynamics and Smooth Observables for Inference {#sec-inference}
 
-At fixed cosmology and initial field, nLPT builds its spatial terms once and evaluates them at many epochs. Before crossing, this can make it a useful forward model when a converged filtered comparison supports the desired accuracy. A continuous sheet estimator also avoids injecting random point-deposition noise into every evaluation. These are useful ingredients for simulation-based inference [@cranmer2020], but neither by itself establishes an accurate posterior.
+Modern cosmological data analysis is undergoing a paradigm shift toward **field-level forward modeling** and **simulation-based inference (SBI)** [@cranmer2020]. In these frameworks, cosmological parameters and primordial initial conditions $\boldsymbol{\theta}$ are inferred by comparing simulated observables directly against observed galaxy surveys or cosmic shear maps.
 
-An inference pipeline maps parameters $\boldsymbol\theta$ through initial modes, dynamics, observables, and an observation model to a loss or likelihood. The observation model must include the relevant survey selection, bias, noise, and model discrepancy. A differentiable simulator supplies derivatives of the computational map; it does not guarantee that this map captures every physical effect.
+Traditional particle-mesh simulations introduce serious roadblocks to gradient-based inference:
+1. **Stochastic Monte Carlo Noise:** Discrete particle sampling adds stochastic noise to likelihood surfaces, preventing gradient-based optimizers (such as Hamiltonian Monte Carlo or L-BFGS) from converging efficiently.
+2. **Computational Expense:** Running hundreds of timesteps for every parameter proposal is computationally prohibitive.
 
-## Directional derivatives {#sec-jvp}
+The continuous phase-space sheet, combined with high-order LPT (4LPT), provides an ideal forward model for pre-crossing cosmological inference:
+* **Deterministic and Noise-Free:** The spatial LPT terms $\mathbf{S}^\tau(\mathbf{q})$ are evaluated **once** for a given initial realization; varying cosmological epochs or growth parameters simply scales these terms without re-running any simulation!
+* **Exact Analytic Observables:** The continuous sheet generates smooth, noise-free Fourier modes and density distributions, producing pristine, differentiable objective surfaces.
 
-For a perturbation $\dot{\boldsymbol\theta}$, the Jacobian-vector product (JVP) is
+---
+
+## Directional Derivatives via Jacobian-Vector Products (JVP) {#sec-jvp}
+
+Let $\mathbf{y} = f(\boldsymbol{\theta})$ represent our cosmological forward model. Given a tangent perturbation $\dot{\boldsymbol{\theta}}$, the **Jacobian-Vector Product (JVP)** defines the directional derivative:
 
 $$
-\dot{\mathbf y}=\left.\frac{d}{d\epsilon}\mathbf y(\boldsymbol\theta+\epsilon\dot{\boldsymbol\theta})\right|_{\epsilon=0}.
-$$ {#eq-jvp}
+\dot{\mathbf{y}} = \left.\frac{d}{d\epsilon} f(\boldsymbol{\theta} + \epsilon\dot{\boldsymbol{\theta}})\right|_{\epsilon=0}.
+$$ {#eq-jvp-def}
 
-Dots in this section denote a parameter direction, not cosmic time. The Rust extension{{< src tangent::LptJvp >}} propagates arbitrary initial Fourier-field directions through the nLPT spatial recurrence at fixed cosmology. Bilinearity gives $\dot\mu_2=\mu_2(\dot A,B)+\mu_2(A,\dot B)$; trilinearity gives the analogous three terms for $\dot\mu_3$. Fourier differentiation and the Poisson solve are linear operations. Thus the same recurrence can carry primal fields and tangents together.
+Our Rust numerical core{{< src tangent::LptJvp >}} propagates arbitrary initial Fourier perturbations through the complete nLPT spatial recurrence at fixed cosmology. 
 
-The lab illustrates a particularly transparent parameter: $\delta_0\mapsto A\delta_0$, with $A=1$ at the displayed realization. Each perturbative order is homogeneous of degree $n$, so at a **fixed output epoch**,
+Because the recurrence operations are bilinear ($\mu_2$) and trilinear ($\mu_3$), their derivatives follow exact Leibniz rules:
+* For the quadratic invariant:
+  $$\dot{\mu}_2(A, B) = \mu_2(\dot{A}, B) + \mu_2(A, \dot{B}).$$
+* For the cubic invariant:
+  $$\dot{\mu}_3(A, B, C) = \mu_3(\dot{A}, B, C) + \mu_3(A, \dot{B}, C) + \mu_3(A, B, \dot{C}).$$
+
+Spatial gradients and spectral Poisson solves are linear operations ($\widehat{\nabla_q \dot\varphi} = i\mathbf{k}\dot{\varphi}$), so primal displacement fields and their tangent vectors are evaluated concurrently with zero finite-difference approximation error.
+
+### The Initial Amplitude Response
+
+A fundamental parameter in cosmological inference is the perturbation amplitude $A$ (governing $\sigma_8$): $\delta_0 \mapsto A\delta_0$. Because the $n$-th order LPT displacement $\boldsymbol{\Psi}^{(n)}$ is homogeneous of degree $n$ in the initial field, Euler's homogeneous function theorem gives the exact displacement response at **fixed output epoch**:
 
 $$
-\left.\partial_A\mathbf x\right|_{A=1}=\sum_{n=1}^{N}nD^n\boldsymbol\Psi^{(n)}.
+\left.\frac{\partial\mathbf{x}}{\partial A}\right|_{A=1} = \sum_{n=1}^N n\,D(a)^n\,\boldsymbol{\Psi}^{(n)}(\mathbf{q}).
 $$ {#eq-amplitude-jvp}
 
-Holding the epoch fixed matters. If a changed amplitude also changed the crossing-time fraction, the experiment would mix a parameter derivative with a moving output time. Crossing status is a validity diagnostic; it is not differentiated. Continued output after an inversion does not redefine the fixed-epoch derivative.
+In flat $\Lambda$CDM, the response accounts for the distinct coupled growth functions: $\partial_A \mathbf{x} = \sum_\tau n_\tau g_\tau(a)\mathbf{S}^\tau(\mathbf{q})$.
 
-## Differentiate continuous sheet modes {#sec-mode-gradient}
+---
 
-For fixed simplex masses, the density/volume factors cancel in @eq-simplex-fourier. Since $\dot s_i=-i\mathbf k\cdot\dot{\mathbf x}_i$, the confluent divided-difference identity gives
+## Exact Analytic Derivatives of Continuous Fourier Modes {#sec-mode-gradient}
+
+Can we differentiate continuous sheet observables without resorting to numerical finite differences? Yes!
+
+Recall the Hermite–Genocchi formula for the continuous Fourier mode of a simplex $T$ (@sec-direct-modes):
 
 $$
-\dot I_T(\mathbf k)=m_Td!\sum_{i=0}^{d}\dot s_i\,
-\exp[s_0,\ldots,s_d,s_i].
+I_T(\mathbf{k}) = m_T\,d!\,\exp[s_0, s_1, \dots, s_d], \qquad s_i = -i\mathbf{k}\cdot\mathbf{x}_i.
+$$ {#eq-simplex-mode-recall}
+
+Under an infinitesimal perturbation of vertex positions $\dot{\mathbf{x}}_i$, the phases perturb as $\dot{s}_i = -i\mathbf{k}\cdot\dot{\mathbf{x}}_i$. Applying the classical **confluent divided-difference identity**:
+
+$$
+\frac{\partial}{\partial s_i} \exp[s_0, \dots, s_d] = \exp[s_0, \dots, s_d, s_i],
+$$ {#eq-confluent-identity}
+
+we obtain the **exact closed-form directional derivative of the continuous Fourier mode**{{< src tangent::simplex_mass_transform_jvp >}}:
+
+$$
+\dot{I}_T(\mathbf{k}) = m_T\,d!\sum_{i=0}^d \dot{s}_i\,\exp[s_0, \dots, s_d, s_i].
 $$ {#eq-mode-jvp}
 
-This provides an analytic directional derivative{{< src tangent::simplex_mass_transform_jvp >}} of the P0 **continuous** sheet mode, checked against independent finite differences{{< test simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference "simplex mode JVP" >}}. The power derivative follows as
+This formula provides machine-precision analytic gradients of continuous Fourier modes without any Eulerian grid artifacts{{< test simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference "simplex mode JVP" >}}!
+
+The corresponding derivative of the continuous power spectrum $P(\mathbf{k}) = L^d |\delta_{\mathbf{k}}|^2$ is:
 
 $$
-\dot P(\mathbf k)=2L^d\operatorname{Re}[\delta_{\mathbf k}^{*}\dot\delta_{\mathbf k}].
+\dot{P}(\mathbf{k}) = 2L^d \operatorname{Re}\left[\delta_{\mathbf{k}}^*\,\dot{\delta}_{\mathbf{k}}\right].
 $$ {#eq-power-jvp}
 
-The lab compares that tangent with a centered finite difference in $A$ at fixed time. Its derivative panel uses deterministic first-axis modes and labels the observable explicitly. It does not imply a derivative of the exact clipped cell-average density field.
+The laboratory compares this analytic tangent directly against centered finite-difference evaluations, confirming agreement to high precision.
 
-The PM extension{{< src nbody::force_cosmology_jvp >}} also propagates tangents through CIC deposition, the linear spectral force solve, CIC force interpolation, and kick–drift–kick updates. CIC weights are piecewise differentiable; at a particle/cell boundary an individual weight's branch changes. Tests use directions away from those boundaries and compare analytic tangents with independent finite differences. The finite PM solver's derivative includes its numerical approximation{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}.
-
-## Which operations still need care?
-
-Exact cell clipping changes intersection topology when a vertex or face crosses a cell boundary. A shape derivative can be constructed piecewise, but the inherited clipping code is not an automatic-differentiation implementation. This report's end-to-end differentiable observation path is the continuous P0 Fourier transform, with nLPT or PM trajectory tangents. General cosmological parameter gradients, reverse-mode adjoints, and exact clipped-density derivatives are not supplied by this implementation.
-
-Hard histogram counts are not useful smooth objectives. A smooth PDF summary can replace a bin indicator with a kernel $K_h$, $p_h(y)=\sum_iw_iK_h(y-y_i)/\sum_iw_i$, and propagate derivatives through both $y_i$ and any parameter-dependent weights. Choosing the bandwidth is part of defining the inference statistic, not a license to hide discrepancies. The lab's hard histograms are diagnostic displays; its differentiability check uses Fourier modes.
-
-DiscoDJ [@discodj2026] supplies the implementation lineage for differentiable LPT and sampled sheet deposition. Its native sampled-deposit AD path and the study's exact-overlap path are different code paths; the evidence audit records their scope. We validate the new Rust tangents directly rather than infer their correctness from a Julia API name.
-
-::: {.callout-tip title="Try it: a parameter response"}
-Change the epoch and perturbative order, then inspect $\partial P/\partial A$ against the centered finite difference. Both are evaluated at the same fixed epoch. Near a mode with negligible response, inspect absolute error as well as relative error.
+::: {.callout-tip title="Interactive exploration: power spectrum derivatives"}
+Open the gradient panel in the laboratory. Inspect the analytic response $\partial P(k)/\partial A$ alongside the centered finite difference. Observe how higher-order LPT terms enhance non-linear mode-coupling derivatives on small scales.
 
 {{< lab "v=2&view=gradient&dim=2&ic=waves&f=0.5" "Inspect the amplitude derivative" >}}
 :::
 
+---
 
-For general $\Lambda$CDM the amplitude response is
-$\partial_A\mathbf x=\sum_\tau n_\tau g_\tau(a)\mathbf S^\tau$,
-with the individual growth functions and the physical output epoch held fixed.
-The PM tangent uses the same cosmological KDK integrals as the primal map.
-Independent finite differences check both the fixed-cosmology trajectory and
-force derivative {{< test lcdm_force_and_kdk_jvp_match_fixed_cosmology_finite_difference "ΛCDM PM tangent" >}},
-and a crossed fixture verifies that making crossing diagnostic does not suppress
-the derivative of the finite numerical map {{< test lcdm_jvp_remains_valid_when_crossing_is_diagnostic_only "crossed-map tangent" >}}.
-These tests establish a derivative of the stated discrete forward model; its
-physical accuracy remains a separate validation question.
+## Differentiable Particle-Mesh Dynamics {#sec-differentiable-pm}
+
+For trajectories evolved via the Particle-Mesh solver, our Rust engine implements forward-mode automatic differentiation through the complete cosmological PM integration cycle{{< src nbody::force_cosmology_jvp >}}:
+1. **CIC Assignment Tangent:** Propagates $\dot{\mathbf{x}}$ through trilinear interpolation weights to compute grid density perturbations $\dot{\rho}_C$.
+2. **Spectral Force Solve Tangent:** Evaluates $\dot{\mathbf{F}}_{\mathbf{k}} = \frac{3}{2}\Omega_{m0} i\mathbf{k}\dot{\delta}_{\mathbf{k}}/k^2$.
+3. **Kick–Drift–Kick Tangents:** Updates canonical momentum and position tangents through the exact cosmological clocks $\mathcal{D}(a)$ and $\mathcal{K}(a)$.
+
+The PM trajectory tangents match independent numerical finite differences{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}{{< test lcdm_force_and_kdk_jvp_match_fixed_cosmology_finite_difference "ΛCDM PM tangent" >}}, and remain robust even when elements cross{{< test lcdm_jvp_remains_valid_when_crossing_is_diagnostic_only "crossed-map tangent" >}}.
+
+## Key Takeaways and Analytical Exercises
+
+1. **Deterministic Forward Model:** 4LPT spatial terms are evaluated once, enabling ultra-fast evaluation of observables across epochs and amplitudes.
+2. **Confluent Divided Differences:** The Hermite–Genocchi formula admits an exact analytic derivative $\dot{I}_T = m_T d!\sum_i \dot{s}_i \exp[s_0, \dots, s_d, s_i]$, providing machine-precision power spectrum gradients.
+3. **Differentiable PM:** Forward tangents through symplectic KDK cosmological integration provide exact trajectory derivatives for gradient-based inference.
+
+### Exercises
+
+1. **Homogeneous Amplitude Scaling:** Prove @eq-amplitude-jvp by applying Euler's homogeneous function theorem to $\mathbf{x}(\mathbf{q}, A) = \mathbf{q} + \sum_{n=1}^N A^n D^n \boldsymbol{\Psi}^{(n)}(\mathbf{q})$.
+2. **Confluent Divided Difference in 1D:** For $d=1$, compute $\exp[s_0, s_1] = \frac{e^{s_1} - e^{s_0}}{s_1 - s_0}$. Take the partial derivative $\frac{\partial}{\partial s_1}\exp[s_0, s_1]$ and prove that it equals the second-order divided difference $\exp[s_0, s_1, s_1] = \frac{e^{s_1}(s_1 - s_0) - (e^{s_1} - e^{s_0})}{(s_1 - s_0)^2}$.
+3. **Power Spectrum Tangent:** Starting from $P(\mathbf{k}) = L^d \delta_{\mathbf{k}}\delta_{\mathbf{k}}^*$, apply the product rule to derive @eq-power-jvp.

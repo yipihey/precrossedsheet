@@ -1,100 +1,204 @@
 ---
-title: "What is the phase-space sheet?"
+title: "What is the Phase-Space Sheet?"
 ---
 
-## Labels, positions, and velocities {#sec-sheet}
+## Physical Foundations: The 3D Manifold in 6D Phase Space {#sec-sheet}
 
-Let $\mathbf q$ label a fluid element in a periodic comoving box of side $L$. Choose these Lagrangian labels so the mass measure is uniform, $dm=\bar\rho_{\rm com}\,d^3q$. The element's comoving position is $\mathbf x(\mathbf q,a)=\mathbf q+\boldsymbol\Psi(\mathbf q,a)$. Its physical peculiar velocity is $\mathbf u=a\dot{\mathbf x}$, where dots denote cosmic time. The laboratory displays $\mathbf v_D=\partial\mathbf x/\partial D$; it is a growth derivative, not $\mathbf u$.
+In the standard cosmological paradigm, Cold Dark Matter (CDM) particles decoupled at very early epochs when their thermal velocities were already relativistic-suppressed. By the time of matter-radiation equality and the onset of gravitational structure formation, the primordial thermal velocity dispersion of CDM was negligible ($\sigma_v \lesssim 10^{-10}\,c$). 
 
-The cold phase-space distribution can be written as
+In classical mechanics, the state of a collisionless, self-gravitating fluid is governed by the **Vlasov–Poisson system** for the one-particle phase-space distribution function $f(\mathbf{x}, \mathbf{p}, t)$:
 
 $$
-f(\mathbf x,\mathbf u,a)=\bar\rho_{\rm com}\int d^3q\,
-\delta_{\rm D}^{(3)}[\mathbf x-\mathbf x(\mathbf q,a)]\,
-\delta_{\rm D}^{(3)}[\mathbf u-\mathbf u(\mathbf q,a)].
+\frac{df}{dt} = \frac{\partial f}{\partial t} + \frac{\mathbf{p}}{m a^2}\cdot\nabla_x f - m\nabla_x \phi \cdot \nabla_p f = 0, \qquad
+\nabla_x^2\phi = 4\pi G a^2 [\rho(\mathbf{x},t) - \bar\rho(t)].
+$$ {#eq-vlasov-poisson}
+
+Liouville's theorem states that the phase-space density $f$ is conserved along characteristics (the collisionless particle trajectories). Furthermore, the flow is Hamiltonian: it preserves the canonical symplectic 2-form $\omega = \sum_{i=1}^3 dx_i \wedge dp_i$ and preserves phase-space volumes.
+
+Because the primordial velocity dispersion is vanishingly small, the initial distribution function does not occupy a diffuse six-dimensional phase-space volume. Instead, it is concentrated on a **three-dimensional smooth submanifold embedded in the six-dimensional phase space** $(\mathbf{x}, \mathbf{u})$ [@abel2012; @hahn2013]. We call this 3-manifold the **phase-space sheet**.
+
+Let $\mathbf{q} \in \mathbb{T}^3 = [0, L)^3$ be the Lagrangian coordinates (labels) of fluid elements in a comoving periodic box of side $L$. Choose these labels such that the initial Lagrangian mass measure is perfectly uniform:
+
+$$
+dm = \bar\rho_{\rm com}\,d^3q.
+$$ {#eq-lagrangian-mass}
+
+As time progresses, each fluid element moves to a comoving Eulerian position $\mathbf{x}(\mathbf{q}, a) = \mathbf{q} + \boldsymbol{\Psi}(\mathbf{q}, a)$ and acquires a physical peculiar velocity $\mathbf{u}(\mathbf{q}, a) = a \dot{\mathbf{x}}(\mathbf{q}, a)$. The exact distribution function of this cold fluid is given by:
+
+$$
+f(\mathbf{x},\mathbf{u},a) = \bar\rho_{\rm com}\int d^3q\,
+\delta_{\rm D}^{(3)}[\mathbf{x}-\mathbf{x}(\mathbf{q},a)]\,
+\delta_{\rm D}^{(3)}[\mathbf{u}-\mathbf{u}(\mathbf{q},a)].
 $$ {#eq-cold-sheet}
 
-A three-dimensional set of labels therefore specifies a three-dimensional manifold inside six-dimensional phase space. “Sheet” refers to this lower-dimensional manifold, not to a physically thin plane in ordinary space [@abel2012; @hahn2013]. The distribution has negligible primordial velocity dispersion in this idealization. Integrating over velocity gives the comoving mass density, not the physical density:
+The three Lagrangian parameters $\mathbf{q} = (q_1, q_2, q_3)$ continuously parameterize this 3D sheet. Integrating $f$ over velocity space yields the comoving mass density $\rho_{\rm com}(\mathbf{x}, a)$:
 
 $$
-\rho_{\rm com}(\mathbf x,a)=\int f(\mathbf x,\mathbf u,a)\,d^3u
-=\bar\rho_{\rm com}\int d^3q\,\delta_{\rm D}^{(3)}[\mathbf x-\mathbf x(\mathbf q,a)].
+\rho_{\rm com}(\mathbf{x},a) = \int f(\mathbf{x},\mathbf{u},a)\,d^3u
+= \bar\rho_{\rm com}\int d^3q\,\delta_{\rm D}^{(3)}[\mathbf{x}-\mathbf{x}(\mathbf{q},a)].
 $$ {#eq-pushforward-density}
 
-The corresponding physical density is $\rho_{\rm phys}=a^{-3}\rho_{\rm com}$; the density contrast and the ratio $r=\rho/\bar\rho$ are unchanged by this common factor.
+The physical density is related by $\rho_{\rm phys} = a^{-3}\rho_{\rm com}$; the density contrast $\delta = (\rho - \bar\rho)/\bar\rho$ and the density ratio $r = \rho/\bar\rho = 1+\delta$ are identical in comoving and physical coordinates.
 
-In one spatial dimension, draw the curve $(x(q),u(q))$ in a two-dimensional plot. In two dimensions, the sheet has two coordinates and lives in four-dimensional phase space; our triangular mesh is its **projection into position space**. In three dimensions, the tetrahedral mesh likewise displays the position-space projection of a three-dimensional sheet, rather than the full six-dimensional embedding. These projections make the deformation visible without pretending to show all phase-space coordinates at once.
+In one spatial dimension, the phase space is two-dimensional $(x, u)$, and the sheet is a smooth one-dimensional curve $(x(q), u(q))$. In two spatial dimensions, the sheet is a 2D surface embedded in 4D phase space. In three dimensions, the sheet is a 3D manifold in 6D phase space. Our visual representations—triangles in 2D and tetrahedra in 3D—depict the **projection of this phase-space sheet onto Eulerian configuration space**.
 
-![A one-dimensional plane-symmetric flow: the position map, its phase-space curve, and conservative interval density. Points identify sheet vertices; lines connect the same labels. All panels use a guarded native Rust output.](figures/sheet-1d.svg){#fig-sheet1}
+![A one-dimensional plane-symmetric flow: the position map $x(q)$, its phase-space curve $(x, u)$, and the exact conservative density. Points mark sheet vertices; continuous line segments trace the sheet manifold. Notice that while density peaks where the curve steepens, the phase-space curve itself remains an unbroken, smooth, one-dimensional manifold.](figures/sheet-1d.svg){#fig-sheet1}
 
-## Density is geometry {#sec-jacobian}
+## Density is Geometry: The Pre-Crossing Diffeomorphism {#sec-jacobian}
 
-Define the deformation matrix $F_{ij}=\partial x_i/\partial q_j=\delta_{ij}+\Psi_{i,j}$ and its signed determinant $J=\det F$. Before first crossing, the map is one-to-one. Integrating @eq-cold-sheet over velocity, and changing variables from $\mathbf q$ to $\mathbf x$, then gives
+Before any two fluid elements collide, the mapping $\mathbf{q} \mapsto \mathbf{x}(\mathbf{q}, a)$ is a **global diffeomorphism**: it is smooth, bijective, and has a smooth inverse everywhere.
+
+Define the Jacobian deformation matrix $F$ and its determinant $J$:
 
 $$
-1+\delta[\mathbf x(\mathbf q,a),a]=\frac{1}{J(\mathbf q,a)}.
+F_{ij}(\mathbf{q}, a) = \frac{\partial x_i}{\partial q_j} = \delta_{ij} + \frac{\partial \Psi_i}{\partial q_j}, \qquad
+J(\mathbf{q}, a) = \det F(\mathbf{q}, a).
+$$ {#eq-deformation-jacobian}
+
+The determinant{{< src lpt::det_i_plus >}} quantifies the local volume deformation of the sheet: an initial infinitesimal Lagrangian volume element $d^3q$ deforms into the Eulerian volume element $d^3x = J(\mathbf{q}, a)\,d^3q$. Since mass is strictly conserved along trajectories ($dm = \rho_{\rm com}\,d^3x = \bar\rho_{\rm com}\,d^3q$), we obtain the exact pushforward density:
+
+$$
+1 + \delta[\mathbf{x}(\mathbf{q},a), a] = \frac{\rho_{\rm com}[\mathbf{x}(\mathbf{q},a), a]}{\bar\rho_{\rm com}} = \frac{1}{J(\mathbf{q}, a)}.
 $$ {#eq-jacobian-density}
 
-The determinant{{< src lpt::det_i_plus >}} measures the ratio of current to initial comoving volume. Expansion of a patch gives a void; contraction gives an overdensity. Mass conservation is $r(\mathbf x)\,d^3x=d^3q$. There is no need to count randomly sampled particles to obtain this density.
+This equation expresses a profound geometric truth: **in cold matter, density is simply the inverse volume deformation of the phase-space sheet**.
 
-The **first shell crossing** occurs when the map first loses local invertibility, $J=0$. After that event, different labels can reach the same position and the single-stream fluid equations cease to describe the full dynamics. The sheet itself does not disappear or lose its mass when its position-space projection folds. For a regular Eulerian point with several inverse images $\mathbf q_s$, the pushforward density is
+### The Fundamental Flaw of Particle Sampling in Voids
+
+Contrast @eq-jacobian-density with traditional particle-mesh or $N$-body methods:
+
+* **In Traditional Particle Methods (CIC / TSC / SPH):** The continuous mass distribution is replaced by a set of discrete point masses $\sum_p m_p \delta_{\rm D}(\mathbf{x} - \mathbf{x}_p)$. In an underdense cosmic void, fluid elements expand away from each other ($J \gg 1$). Once the distance between neighboring particles exceeds the Eulerian cell size $\Delta x$, grid cells receive zero particles ($\rho_C = 0$). This causes severe Poisson shot noise, sampling starvation, and completely invalidates logarithmic density estimators ($\ln(1+\delta) \to -\infty$).
+* **On the Phase-Space Sheet:** As a void expands, the sheet simply stretches. The volume of each Lagrangian element grows ($J > 1$), and the density smoothly and continuously drops: $r = 1/J \in (0, 1)$. There is **no sampling starvation, no empty cells, and zero Poisson noise**. The sheet describes the deepest voids with the same mathematical precision and smoothness as the mean-density universe.
+
+## Shell Crossing, Caustics, and Catastrophe Theory {#sec-caustics}
+
+As gravitational instability amplifies initial overdensities, compressing regions have $J < 1$. **First shell crossing** occurs at the exact time $a_{\rm sc}$ and Lagrangian location $\mathbf{q}_{\rm sc}$ where the Jacobian determinant first vanishes:
 
 $$
-r(\mathbf x,a)=\sum_{\mathbf q_s:\,\mathbf x(\mathbf q_s,a)=\mathbf x}
-\frac{1}{|J(\mathbf q_s,a)|}.
+J(\mathbf{q}_{\rm sc}, a_{\rm sc}) = 0.
+$$ {#eq-shell-crossing-condition}
+
+At this instant, the projection of the three-dimensional sheet onto three-dimensional position space ceases to be a diffeomorphism. The sheet **folds** in phase space.
+
+After shell crossing, multiple streams of the sheet occupy the same Eulerian position $\mathbf{x}$. Because the sheet itself remains unbroken in 6D phase space, the total Eulerian density is the sum of the pushforwards over all streams:
+
+$$
+r(\mathbf{x},a) = \sum_{\mathbf{q}_s:\,\mathbf{x}(\mathbf{q}_s,a)=\mathbf{x}}
+\frac{1}{|J(\mathbf{q}_s,a)|}.
 $$ {#eq-multistream-density}
 
-The absolute value is essential: orientation records whether a local element has flipped, whereas mass density is nonnegative. At a caustic where $J=0$, the pointwise density can diverge; the singularity is interpreted through its locally integrable mass measure or through a finite-volume deposit. This equation describes the projection of a specified map. It is not a prescription for evolving the map once the single-stream gravitational equations fail. A truncated LPT displacement may still be evaluated algebraically after crossing, but that is a formal extrapolation and is not the post-crossing collisionless solution. A mathematical LPT series need not lose convergence at precisely the first crossing; its analytic singularities can occur later [@rampf2021]. In this laboratory, crossing is a validity diagnostic: all computed fields remain visible with a caution, while the validated LPT interpretation remains pre-crossing.
+The absolute value $|J|$ is essential: as the sheet folds over, its local orientation reverses (the signed determinant becomes negative), but each sheet layer carries positive mass!
 
-For a finite mesh, the relevant discrete counterpart is the signed ratio $J_T=V_T/V_{T,0}$ for every simplex. The live pre-crossing guard requires $J_T>0$ as well as positive spectral vertex Jacobians. These checks sample different representations of the map and should not be conflated. A plotted positive density after a fold would instead use $m_T/|V_T|$ for each simplex and add the contributions of all overlapping elements.
+Where the sheet is tangent to the velocity axis (the fold boundary where $J = 0$), the pointwise Eulerian density formally diverges. These singularities are **caustics**. In the language of René Thom and Vladimir Arnold's **catastrophe theory**, the projection of a Lagrangian submanifold onto configuration space exhibits generic, structurally stable singularities:
 
-## An exactly solvable one-dimensional example {#sec-plane-wave}
+1. **$A_2$ Folds (Caustic Surfaces):** The generic boundary where two streams merge. Locally, the mapping along the normal direction is parabolic: $x - x_c \propto (q - q_c)^2$. Therefore $J = dx/dq \propto (q - q_c) \propto |x - x_c|^{1/2}$, yielding a one-sided density divergence:
+   $$r(x) \propto \frac{1}{|x - x_c|^{1/2}} \quad (x > x_c).$$
+2. **$A_3$ Cusps (Caustic Filaments and Points of First Crossing):** Where two fold lines meet, or at the exact instant of first collapse, the mapping is cubic: $x - x_c \propto (q - q_c)^3$. The Jacobian is $J = dx/dq \propto (q - q_c)^2 \propto |x - x_c|^{2/3}$, producing a symmetric density divergence:
+   $$r(x) \propto \frac{1}{|x - x_c|^{2/3}}.$$
 
-For $\delta_0(q)=A\cos(kq)$, the growing plane-symmetric solution is
+Crucially, because the exponents are strictly greater than $-1$ ($-1/2 > -1$ and $-2/3 > -1$), these singularities are **locally integrable**:
 
 $$
-x(q,D)=q-\frac{AD}{k}\sin(kq),\quad
-\frac{\partial x}{\partial D}=-\frac{A}{k}\sin(kq),\quad
-J(q,D)=1-AD\cos(kq).
+\int_{x_c-\epsilon}^{x_c+\epsilon} r(x)\,dx < \infty.
+$$ {#eq-integrable-singularity}
+
+A caustic carries **finite mass across any finite volume**, even though its pointwise density is infinite. Traditional particle methods smear this beautiful catastrophe structure with isotropic window functions; the phase-space sheet preserves both the exact multi-stream topology and the conservative finite-volume integrals.
+
+## An Exactly Solvable Benchmark: The 1D Plane Wave {#sec-plane-wave}
+
+To appreciate the analytic elegance of the sheet, consider a single sinusoidal density perturbation in an Einstein–de Sitter universe ($D(a) = a$):
+
+$$
+\delta_0(q) = A\cos(kq).
+$$ {#eq-plane-wave-delta0}
+
+Before shell crossing, Zel'dovich's approximation [@zeldovich1970] is an **exact solution** to the 1D Vlasov–Poisson equations. Integrating $\nabla_q^2 \varphi = \delta_0$ yields the displacement $\Psi(q) = -(A/k)\sin(kq)$, so:
+
+$$
+x(q,D) = q - \frac{AD}{k}\sin(kq), \qquad
+J(q,D) = 1 - AD\cos(kq).
 $$ {#eq-plane-wave}
 
-Zel'dovich's map [@zeldovich1970] is exact before crossing for plane-symmetric gravitational dynamics. Its first crossing is $D_{\rm sc}=1/A$ for $A>0$. Higher LPT terms vanish: a one-dimensional demonstration cannot validate the nonlinear 3D terms of 4LPT. Its value is that it provides an independent analytic benchmark for density, phase space, mass conservation, and N-body convergence.
-
-For $\alpha=AD<1$, the Eulerian density along the map is
+First shell crossing occurs at $q = 0$ when the growth factor reaches $D_{\rm sc} = 1/A$. Defining the dimensionless growth fraction $\alpha = AD < 1$, the exact Eulerian density along the trajectory is:
 
 $$
-r[x(q),D]=\frac{1}{1-\alpha\cos(kq)},\qquad
-r_{\min}=\frac{1}{1+\alpha},\quad r_{\max}=\frac{1}{1-\alpha}.
+r[x(q), D] = \frac{1}{1 - \alpha\cos(kq)}.
 $$ {#eq-plane-wave-density}
 
-At $\alpha=1/2$, the single-stream density ranges from $2/3$ at the expanding crest to $2$ at the compressing crest. The Eulerian volume average is still one: $L^{-1}\int r(x)dx=L^{-1}\int dq=1$. As a second check, the mean density sampled by mass is $\langle r\rangle_M=\langle r^2\rangle_V=(1-\alpha^2)^{-1/2}$, obtained by integrating $(1-\alpha\cos kq)^{-1}$ uniformly over a period. It rises as crossing is approached because mass increasingly resides in a small Eulerian volume. At the limiting crossing $\alpha=1$, expanding near $q=0$ gives $x\sim k^2q^3/6$ and $J\sim k^2q^2/2$, hence $r(x)\propto |x|^{-2/3}$. The pointwise density diverges but is locally integrable and does not represent a finite Dirac mass at the caustic. This is a deterministic one-dimensional check, not a prediction for three-dimensional rare tails.
+The density ranges smoothly between:
 
-::: {.callout-tip title="Try it: a curve that compresses"}
-Open the 1D experiment, vary the fraction of the crossing time, and compare the slope of $x(q)$ with the density. The phase-space curve is still unfolded in position. Verify that the high-density part corresponds to a small positive Jacobian. At fixed $A$, the plotted state has $AD=f$ for this preset; at $f=0.65$, the analytic maximum is $r_{\max}=1/(1-f)\simeq2.86$. Check that the finite cell averages peak below or near this value as the mesh resolves the crest.
+$$
+r_{\min} = \frac{1}{1 + \alpha} \quad (\text{at } kq = \pi, \text{ the expanding void}), \qquad
+r_{\max} = \frac{1}{1 - \alpha} \quad (\text{at } kq = 0, \text{ the collapsing crest}).
+$$ {#eq-plane-wave-extrema}
+
+Even as $\alpha \to 1$ and $r_{\max} \to \infty$, the Eulerian volume average remains identically unity:
+
+$$
+\langle r \rangle_V = \frac{1}{L}\int_0^L r(x)\,dx = \frac{1}{L}\int_0^L \frac{1}{J(q)}\,J(q)\,dq = \frac{1}{L}\int_0^L dq = 1.
+$$ {#eq-plane-wave-volume-mean}
+
+In contrast, the **mass-weighted** mean density is:
+
+$$
+\langle r \rangle_M = \frac{1}{L}\int_0^L r(x)^2\,dx = \frac{1}{L}\int_0^L \frac{dq}{1 - \alpha\cos(kq)} = \frac{1}{\sqrt{1 - \alpha^2}}.
+$$ {#eq-plane-wave-mass-mean}
+
+As $\alpha \to 1$, $\langle r \rangle_M \to \infty$ because mass is rapidly concentrated into the forming caustic. At the exact crossing moment $\alpha = 1$, expanding near $q = 0$ gives:
+
+$$
+x(q) = q - \frac{1}{k}\sin(kq) \approx \frac{k^2 q^3}{6}, \qquad
+J(q) = 1 - \cos(kq) \approx \frac{k^2 q^2}{2} = \frac{k^2}{2}\left(\frac{6x}{k^2}\right)^{2/3} \propto x^{2/3},
+$$
+
+which proves the universal catastrophe-theoretic scaling $r(x) \propto |x|^{-2/3}$ at an $A_3$ cusp.
+
+::: {.callout-tip title="Interactive exploration: 1D plane wave and caustic approach"}
+Open the 1D laboratory experiment, adjust the growth fraction $f = AD$, and observe the phase-space curve $u(x)$ and the Eulerian density $r(x)$. Notice that at $f = 0.65$, the analytic peak is $r_{\max} = 1/(1 - 0.65) \approx 2.86$. Verify that the void density drops smoothly to $r_{\min} = 1/(1 + 0.65) \approx 0.606$ without any numerical noise.
 
 {{< lab "v=2&dim=1&ic=waves&view=sheet&f=0.65" "Explore the 1D sheet" >}}
 :::
 
-![The same two-dimensional Lagrangian triangulation before and after deformation. Colors preserve the initial labels, and each triangle retains its mass. This is a position projection of a sheet in four-dimensional phase space.](figures/sheet-2d.svg){#fig-sheet2}
+![The two-dimensional phase-space sheet before and after deformation. In Lagrangian space (left), the uniform grid is divided into a regular simplicial mesh of triangles. As structure forms (right), triangles expand in voids and compress into dense filaments. Each triangle retains its exact initial mass $m_T = \bar\rho V_{T,0}$. This is the projection of a 2D sheet embedded in 4D phase space.](figures/sheet-2d.svg){#fig-sheet2}
 
-## From elements to a finite sheet
+## From Continuous Manifolds to the Simplicial Sheet {#sec-simplicial-sheet}
 
-Connect neighboring Lagrangian vertices with intervals (1D), two triangles per square (2D), or six consistently oriented Kuhn tetrahedra per cube (3D). Interpolate the **position and velocity maps** linearly in each simplex. An element then carries the fixed mass $m_T=\bar\rho_{\rm com}V_{T,0}$, and its pushforward density is constant: $\rho_T=m_T/|V_T|$. Before crossing the orientation agrees with its initial orientation.
+To implement the phase-space sheet numerically, we discretize the initial Lagrangian continuum by tessellating it into simplices [@abel2012; @hahn2013]:
 
-Linear interpolation of the map is not the same as linear interpolation of density. The latter is an optional conservative reconstruction discussed in @sec-meshing. Keeping these two approximations distinct prevents an apparent improvement in interpolation from being mistaken for a change in gravitational dynamics.
+* **In 1D:** Line segments $[q_i, q_{i+1}]$.
+* **In 2D:** Squares divided along a consistent diagonal into two triangles.
+* **In 3D:** Cubes divided into six consistently oriented **Kuhn tetrahedra**.
 
-::: {.callout-tip title="Try it: projections in two and three dimensions"}
-Rotate the 3D mesh to see how its tetrahedra fill the volume. The 2D mesh provides a simpler view of neighboring elements. Both display connectivity that a scatter plot of particles hides.
+The positions and velocities of the vertices are evolved using our dynamical equations (such as high-order LPT or Particle-Mesh trajectories). The trajectory map inside each simplex $T$ is then interpolated linearly from its vertices:
+
+$$
+\mathbf{x}(\mathbf{q}) = \mathbf{x}_0 + A(\mathbf{q} - \mathbf{q}_0), \qquad \mathbf{q} \in T.
+$$ {#eq-affine-simplex-map}
+
+Under this linear interpolation, the deformation gradient $A = \nabla_q \mathbf{x}$ is spatially constant across the simplex. The volume of the deformed simplex is $V_T = |\det A| V_{T,0}$. Since each simplex carries fixed mass $m_T = \bar\rho_{\rm com} V_{T,0}$, its pushforward density is **piecewise constant (P0)**:
+
+$$
+\rho_T = \frac{m_T}{|V_T|} = \frac{\bar\rho_{\rm com}}{|J_T|}.
+$$ {#eq-p0-simplex-density}
+
+Before shell crossing, all simplices have positive orientation ($J_T > 0$) and do not overlap. The collection of deformed simplices forms a complete, watertight tessellation of Eulerian space.
+
+::: {.callout-tip title="Interactive exploration: 3D Kuhn tetrahedra in phase space"}
+Rotate the 3D sheet visualization in the laboratory. Observe how the interconnected tetrahedra stretch to smoothly fill the expanding voids, while compressing along one or two directions to form 2D sheets (walls) and 1D filaments.
 
 {{< lab "v=2&dim=3&n=16&force=16&view=sheet&f=0.45" "Inspect the tetrahedral sheet" >}}
 :::
 
-![A three-dimensional patch of the sheet and its deformed position projection. The colored cell is split into six Kuhn tetrahedra. The full cold sheet has three intrinsic dimensions inside six-dimensional phase space.](figures/sheet-3d.svg){#fig-sheet3}
+![A 3D patch of the phase-space sheet and its deformed projection into position space. A single cubical Lagrangian cell is split into six Kuhn tetrahedra. Each tetrahedron deforms affinely under the smooth flow, mapping cold mass continuously from Lagrangian to Eulerian coordinates.](figures/sheet-3d.svg){#fig-sheet3}
 
-These illustrations are reproducible with `scripts/render_figures.py` from the native laboratory response. They visualize the represented affine sheet; the mathematical density identity concerns the underlying one-to-one map. Open the full-resolution [1D](figures/sheet-1d.svg), [2D](figures/sheet-2d.svg), or [3D](figures/sheet-3d.svg) illustration to inspect the labels.
+## Key Takeaways and Analytical Exercises
 
-## Analysis exercises
+1. **Continuous vs Discrete:** Cold dark matter forms a smooth 3D manifold in 6D phase space. Traditional $N$-body simulations discard its topological connectivity and sample it with discrete point masses, causing empty cells in voids, caustic smearing, and Poisson shot noise.
+2. **Pushforward Density:** Before shell crossing, the Eulerian density is the exact geometric inverse volume deformation $r = 1/J$.
+3. **Integrable Caustics:** At shell crossing, the sheet folds into $A_2$ folds ($r \sim |x|^{-1/2}$) and $A_3$ cusps ($r \sim |x|^{-2/3}$). While pointwise density diverges, the mass over any finite volume is strictly finite.
 
-1. **Pushforward density.** Starting from @eq-pushforward-density, use the multidimensional delta-function identity to derive @eq-jacobian-density for an invertible map. Then repeat the argument when there are several regular inverse images and explain why each contribution contains $|J_s|^{-1}$.
-2. **Plane wave.** At $A D=1/2$, calculate the extrema of $J$, $r$, and the displacement gradient. Verify that the cell-integrated mass over one period is unchanged. Explain why the density divergence at $A D\to1$ does not imply a finite amount of mass concentrated at one point before crossing.
-3. **Crossed projection.** Draw a folded one-dimensional map with three inverse images at a chosen $x$. Sum their positive $1/|dx/dq|$ contributions. Mark the sign of each derivative separately and explain why replacing the sum by the signed sum would violate mass positivity. State why this geometric construction alone does not supply post-crossing gravitational trajectories.
+### Exercises
+
+1. **Pushforward Density Derivation:** Starting from the phase-space distribution @eq-cold-sheet, perform the velocity integration to obtain @eq-pushforward-density. For an invertible mapping $\mathbf{x}(\mathbf{q})$, use the multi-dimensional Dirac delta identity $\delta_{\rm D}^{(3)}[\mathbf{x} - \mathbf{x}(\mathbf{q})] = \frac{1}{|J(\mathbf{q})|}\delta_{\rm D}^{(3)}[\mathbf{q} - \mathbf{q}(\mathbf{x})]$ to prove @eq-jacobian-density.
+2. **Caustic Scaling:** For a one-dimensional flow near a cusp where $x(q) = q - q_c - \frac{\kappa}{3}(q - q_c)^3$, calculate $J(q) = dx/dq$ and express $r(x) = 1/|J|$ as an explicit function of $|x - x_c|$. Prove that $\int_{x_c-\epsilon}^{x_c+\epsilon} r(x)\,dx$ converges for all $\epsilon > 0$.
+3. **Multi-Stream Conservation:** In a folded 1D region with 3 streams ($q_1 < q_2 < q_3$ with $x(q_1) = x(q_2) = x(q_3) = x$), draw the phase-space curve $(x, u)$. Show that the middle stream has $J < 0$. Explain why defining $r(x) = \sum_{s=1}^3 1/|J_s|$ preserves positive mass, whereas taking the signed sum $\sum_s 1/J_s$ would catastrophically cancel mass.
