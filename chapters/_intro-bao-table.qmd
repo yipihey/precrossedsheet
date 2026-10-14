@@ -1,0 +1,6 @@
+| Box | Band | Min. vertex $J$ (BAO / smooth) | Inverted mass | Position RMS vs PM / displacement RMS | Modulation error, 4LPT sheet | Modulation error, 2LPT sheet | Modulation error, PM sheet | $\langle\lvert P_{\rm 4LPT}/P_{\rm PM}-1\rvert\rangle$ |
+|---|---|---|---|---|---|---|---|---|
+| 2D, $1000\,h^{-1}$Mpc, $256^2$ | $0.03$–$0.19\,h\,\mathrm{Mpc}^{-1}$ | 0.780 / 0.778 | 0.00% | 4.6% | 0.47% | 0.47% | 1.14% | 3.1% |
+| 3D, $600\,h^{-1}$Mpc, $64^3$ | $0.03$–$0.073\,h\,\mathrm{Mpc}^{-1}$ | 0.322 / 0.318 | 0.00% | 13.1% | 0.12% | — | 0.37% | 10.8% |
+
+: The BAO runs at $z=0$: one seed evolved with the oscillating and with the smooth transfer. The modulation error is the band average of $\lvert(P_{\rm BAO}/P_{\rm smooth})_{\rm measured}/(P_{\rm BAO}/P_{\rm smooth})_{\rm linear}-1\rvert$, the departure of the measured acoustic modulation from the one put in; because both runs share their phases it has no sample variance. The last column compares the 4LPT and PM sheets where the filtered input still carries most of the power (up to $0.1\,h\,\mathrm{Mpc}^{-1}$ in 2D); beyond that the PM reference at this resolution adds discreteness power where the input is damped by the $14\,h^{-1}$Mpc filter. {#tbl-intro-bao}

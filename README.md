@@ -5,10 +5,16 @@ sheet **before shell crossing**. Built from [yipihey/quadrant](https://github.co
 with the MIT-licensed nLPT and exact-deposition core from
 [Hopf–Cole cosmology](https://github.com/yipihey/hopf-cole-cosmology).
 
-The book covers 1D–3D sheet geometry, nLPT through fourth order, conservative
+The book opens with a pedagogical introduction built around two points: the
+tessellation measures density where CIC/TSC particle deposits cannot, and
+before shell crossing the map is one-to-one with nLPT adequate for it, which the
+laboratory lets you check, including for spectra with BAO wiggles. It then
+covers 1D–3D sheet geometry, nLPT through fourth order, conservative
 meshing and continuous Fourier modes, qualified validation against N-body,
 volume/mass PDFs, and directional derivatives for forward modeling. The live
-lab uses flat ΛCDM or EdS growth, an EH98 smooth physical spectrum and matched PM dynamics; the published replay preserves the original
+lab uses flat ΛCDM or EdS growth, an EH98 physical spectrum with or without
+baryon acoustic oscillations, CIC/TSC deposits of the same vertices for
+comparison, and matched PM dynamics; the published replay preserves the original
 DiscoDJ filtered-cosmology results and their limitations. Smaller scales and
 validated post-crossing LPT dynamics are future work. Crossed outputs remain available with a caution.
 

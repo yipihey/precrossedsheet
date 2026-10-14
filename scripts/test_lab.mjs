@@ -10,7 +10,7 @@ assert.equal(state.decodeHash('').dim,2);
 assert.match(state.encodeHash(defaults),/(^|&)v=3(&|$)/);
 for(const [key,hashKey] of state.HASH_SCHEMA)assert.match(state.encodeHash(defaults),new RegExp(`(^|&)${hashKey}=`),`complete link omits ${key}`);
 
-const experiment={...defaults,dim:3,n:64,fraction:.6234567891234567,epoch:'scaleFactor',scaleFactor:1.2345678901234567,order:3,seed:2650,ic:'gaussian',initialCutoff:6,omegaM:.31500000000001,omegaB:.049,h:.674,ns:.965,sigma8:.811,boxSize:300.123456789,initialSmoothing:14.25,smoothing:.047123456789,steps:512,mesh:128,forceMesh:64,view:'gradient',weight:'mass',backend:'gpu',rotate:-51.25,tilt:17.125,pubmodel:'nbody',pubest:'cic',pubr:42,paired:false};
+const experiment={...defaults,dim:3,n:64,fraction:.6234567891234567,epoch:'scaleFactor',scaleFactor:1.2345678901234567,order:3,seed:2650,ic:'gaussian',transfer:'bao',initialCutoff:6,omegaM:.31500000000001,omegaB:.049,h:.674,ns:.965,sigma8:.811,boxSize:300.123456789,initialSmoothing:14.25,smoothing:.047123456789,steps:512,mesh:128,forceMesh:64,view:'gradient',weight:'mass',backend:'gpu',rotate:-51.25,tilt:17.125,pubmodel:'nbody',pubest:'cic',pubr:42,paired:false};
 const encoded=state.encodeHash(experiment),decoded=state.decodeHash(encoded);
 assert.equal(decoded.schemaVersion,3);
 assert.deepEqual(decoded,state.normalizeState(experiment));
@@ -26,6 +26,10 @@ assert.equal(shortLegacy.initialCutoff,6);
 assert.equal(shortLegacy.scaleFactor,.50000000000001);
 
 const v2=state.decodeHash('#v=2&dim=3&n=48&f=0.73&seed=11&ic=gaussian&cutoff=5');
+assert.equal(v2.transfer,'smooth','links without a transfer fit keep the smooth EH98 spectrum');
+assert.equal(state.decodeHash('#v=3&ic=gaussian&transfer=bao').transfer,'bao');
+assert.equal(state.decodeHash('#v=3&ic=gaussian&transfer=wiggly').transfer,'smooth');
+assert.equal(state.coreRequest(state.decodeHash('#v=3&transfer=bao')).transfer,'bao','the transfer fit is a physical core input');
 assert.equal(v2.schemaVersion,3,'version-2 links migrate into the current schema');
 assert.equal(v2.dim,3);
 assert.equal(v2.n,48);

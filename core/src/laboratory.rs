@@ -47,6 +47,9 @@ pub struct LabRequest {
     pub epoch: String,
     #[serde(rename = "scaleFactor")]
     pub scale_factor: f64,
+    /// Linear transfer fit for Gaussian initial modes: "smooth" (EH98
+    /// non-oscillatory) or "bao" (EH98 with baryon acoustic oscillations).
+    pub transfer: String,
 }
 impl Default for LabRequest {
     fn default() -> Self {
@@ -71,6 +74,7 @@ impl Default for LabRequest {
             initial_cutoff: 3,
             epoch: "fraction".into(),
             scale_factor: 0.5,
+            transfer: "smooth".into(),
         }
     }
 }
@@ -145,6 +149,9 @@ impl LabRequest {
         if self.ic != "waves" && self.ic != "gaussian" {
             return Err("Unknown initial-condition family".into());
         }
+        if self.transfer != "smooth" && self.transfer != "bao" {
+            return Err("Transfer fit must be smooth (EH98 no-wiggle) or bao (EH98 with acoustic oscillations)".into());
+        }
         if self.seed > 9999 {
             return Err("Seed must be in [0,9999]".into());
         }
@@ -191,6 +198,7 @@ pub fn initial_cosmo(r: &LabRequest) -> Cosmo {
             r.sigma8,
             r.initial_smoothing,
             d1,
+            r.transfer == "bao",
         );
         c.sigma0 = c
             .delta0_hat
@@ -247,10 +255,64 @@ fn density(g: &Grid, x: &[f64], mesh: usize) -> Vec<f32> {
         sheet::sheet_density_3d_exact(g, &pos, None, mesh)
     }
 }
+/// Logarithmic bin count for the isotropic spectra: 12 on small meshes, up to 48
+/// on the largest, so that acoustic features remain visible where the mesh resolves them.
+pub fn spectrum_bins(mesh: usize) -> usize {
+    (mesh / 4).clamp(12, 48)
+}
 fn power(g: &Grid, rho: &[f32]) -> spectra::Spectrum {
     let mut eng = FftEngine::new(g);
     let contrast: Vec<f32> = rho.iter().map(|&v| v - 1.).collect();
-    spectra::power_spectrum(g, &mut eng, &contrast, 12)
+    spectra::power_spectrum(g, &mut eng, &contrast, spectrum_bins(g.n))
+}
+/// The linear power of *this realization*, D^2 |delta0_k|^2, averaged over the same
+/// isotropic bins as the measured fields, for bins lying entirely inside the radial
+/// cutoff (where the mesh modes and the input modes coincide). Unit-box units.
+fn realized_linear_bins(c: &Cosmo, eg: &Grid, d: f64, cutoff: usize) -> (Vec<f64>, Vec<f64>) {
+    let nbins = spectrum_bins(eg.n);
+    let edges = spectra::bin_edges(eg, nbins);
+    let lk0 = edges[0].ln();
+    let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
+    let bin_of = |k: f64| -> Option<usize> {
+        if k < edges[0] || k >= edges[nbins] {
+            None
+        } else {
+            Some((((k.ln() - lk0) / dlk).floor() as usize).min(nbins - 1))
+        }
+    };
+    let mut cnt = vec![0.0; nbins];
+    let mut ksum = vec![0.0; nbins];
+    for idx in 1..eg.size {
+        let k = eg.k2(idx).sqrt();
+        if let Some(b) = bin_of(k) {
+            cnt[b] += 1.;
+            ksum[b] += k;
+        }
+    }
+    let g = &c.grid;
+    let mut psum = vec![0.0; nbins];
+    let cut2 = (cutoff * cutoff) as i64;
+    for idx in 1..g.size {
+        let ijk = g.unravel(idx);
+        let m2: i64 = (0..g.dim).map(|a| { let m = g.ifreq(ijk[a]); m * m }).sum();
+        if m2 > cut2 {
+            continue;
+        }
+        if let Some(b) = bin_of(g.k2(idx).sqrt()) {
+            psum[b] += (d * c.delta0_hat[idx].norm() / g.size as f64).powi(2);
+        }
+    }
+    let kcut = 2. * std::f64::consts::PI * cutoff as f64;
+    let limit = kcut.min(eg.knyq());
+    let mut ks = Vec::new();
+    let mut ps = Vec::new();
+    for b in 0..nbins {
+        if cnt[b] > 0. && edges[b + 1] <= limit * (1. + 1e-9) {
+            ks.push(ksum[b] / cnt[b]);
+            ps.push(psum[b] / cnt[b]);
+        }
+    }
+    (ks, ps)
 }
 fn mean(v: &[f32]) -> f64 {
     v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64
@@ -357,20 +419,32 @@ struct RawObservations {
     rho: Vec<f32>,
     pmrho: Vec<f32>,
     cic: Vec<f32>,
+    tsc: Vec<f32>,
     ps: spectra::Spectrum,
     psc: spectra::Spectrum,
+    pst: spectra::Spectrum,
     psp: spectra::Spectrum,
     deposit_source: String,
 }
 
 impl RawObservations {
     fn estimated_bytes(&self) -> usize {
-        (self.rho.len() + self.pmrho.len() + self.cic.len()) * std::mem::size_of::<f32>()
-            + (self.ps.p.len() + self.psc.p.len() + self.psp.p.len())
+        (self.rho.len() + self.pmrho.len() + self.cic.len() + self.tsc.len()) * std::mem::size_of::<f32>()
+            + (self.ps.p.len() + self.psc.p.len() + self.pst.p.len() + self.psp.p.len())
                 * std::mem::size_of::<f64>()
                 * 3
             + self.deposit_source.capacity()
     }
+}
+
+/// CIC and TSC particle deposits of the LPT vertices treated as equal-mass
+/// point particles: the conventional estimators that the exact sheet replaces.
+fn particle_deposits(r: &LabRequest, g: &Grid, x: &[f64]) -> (Vec<f32>, Vec<f32>) {
+    let pos: Vec<f32> = x.iter().map(|&v| v as f32).collect();
+    (
+        sheet::cic_density(r.dim, &pos, g.size, 1.0, r.mesh),
+        sheet::tsc_density(r.dim, &pos, g.size, 1.0, r.mesh),
+    )
 }
 
 fn raw_observations(pending: &PendingLabRun, pm: &PmRun) -> RawObservations {
@@ -379,22 +453,19 @@ fn raw_observations(pending: &PendingLabRun, pm: &PmRun) -> RawObservations {
     let rho = density(g, &pending.x, r.mesh);
     let pmrho = density(g, &pm.state.x, r.mesh);
     let eg = Grid::new(r.dim, r.mesh, 1.0);
-    let cic = sheet::cic_density(
-        r.dim,
-        &pending.x.iter().map(|&v| v as f32).collect::<Vec<_>>(),
-        g.size,
-        1.0,
-        r.mesh,
-    );
+    let (cic, tsc) = particle_deposits(r, g, &pending.x);
     let ps = power(&eg, &rho);
     let psc = power(&eg, &cic);
+    let pst = power(&eg, &tsc);
     let psp = power(&eg, &pmrho);
     RawObservations {
         rho,
         pmrho,
         cic,
+        tsc,
         ps,
         psc,
+        pst,
         psp,
         deposit_source: "cpu-exact".into(),
     }
@@ -437,21 +508,17 @@ fn raw_observations_external(
     }
     let r = &pending.request;
     let g = &pending.c.grid;
-    let cic = sheet::cic_density(
-        r.dim,
-        &pending.x.iter().map(|&v| v as f32).collect::<Vec<_>>(),
-        g.size,
-        1.0,
-        r.mesh,
-    );
+    let (cic, tsc) = particle_deposits(r, g, &pending.x);
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     Ok(RawObservations {
         rho: rho.to_vec(),
         pmrho: pmrho.to_vec(),
-        cic: cic.clone(),
         ps: power(&eg, rho),
         psc: power(&eg, &cic),
+        pst: power(&eg, &tsc),
         psp: power(&eg, pmrho),
+        cic,
+        tsc,
         deposit_source: deposit_source.into(),
     })
 }
@@ -1816,8 +1883,10 @@ fn assemble_prepared(
     let summary = observables::density_summary(&rs, &rho, &probabilities);
     let pm_summary = observables::density_summary(&pms, &pmrho, &probabilities);
     let cic_summary = observables::density_summary(&cics, cic, &probabilities);
+    let tscs = observables::smooth_density(&eg, &raw.tsc, r.smoothing);
     let ps = &raw.ps;
     let psc = &raw.psc;
+    let pst = &raw.pst;
     let psp = &raw.psp;
     let mut ks = Vec::new();
     let mut powers = Vec::new();
@@ -1881,6 +1950,50 @@ fn assemble_prepared(
     let physical_volume = r.box_size.powi(r.dim as i32);
     let physical_k = |v: &[f64]| v.iter().map(|k| k / r.box_size).collect::<Vec<_>>();
     let physical_p = |v: &[f64]| v.iter().map(|p| p * physical_volume).collect::<Vec<_>>();
+    // The filtered linear input spectrum at the same physical wavenumbers,
+    // scaled to the output epoch; empty for the deterministic wave benchmark.
+    let (linear_k, linear_p, direct_linear_k, direct_linear_p) = if r.ic == "gaussian" {
+        let d1 = if c.cosmo.is_eds() { 1. } else { growth.d_of_a(1.) };
+        let spectrum = cosmological::LinearSpectrum::new(r.omega_m, r.omega_b, r.h, r.ns, r.sigma8, r.transfer == "bao");
+        let input = |k_unit: f64| {
+            let k = k_unit / r.box_size;
+            (k, spectrum.filtered_power(k, r.dim, r.box_size, r.initial_smoothing, d / d1, r.initial_cutoff))
+        };
+        let band: Vec<(f64, f64)> = ps.k.iter().map(|&k| input(k)).filter(|(_, p)| *p > 0.).collect();
+        let axis: Vec<(f64, f64)> = ks.iter().map(|&k| input(k)).filter(|(_, p)| *p > 0.).collect();
+        (
+            band.iter().map(|v| v.0).collect::<Vec<_>>(),
+            band.iter().map(|v| v.1).collect::<Vec<_>>(),
+            axis.iter().map(|v| v.0).collect::<Vec<_>>(),
+            axis.iter().map(|v| v.1).collect::<Vec<_>>(),
+        )
+    } else {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
+    let (realized_k, realized_p, direct_realized_k, direct_realized_p) = if r.ic == "gaussian" {
+        let (ks_r, ps_r) = realized_linear_bins(c, &eg, d, r.initial_cutoff);
+        let mut dk = Vec::new();
+        let mut dp = Vec::new();
+        for (i, k) in ks.iter().enumerate() {
+            let m = i + 1;
+            if m > r.initial_cutoff {
+                break;
+            }
+            let mut ijk = [0usize; 3];
+            ijk[0] = m;
+            let idx = g.ravel(ijk);
+            dk.push(*k);
+            dp.push((d * c.delta0_hat[idx].norm() / g.size as f64).powi(2));
+        }
+        (physical_k(&ks_r), physical_p(&ps_r), physical_k(&dk), physical_p(&dp))
+    } else {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
+    let initial_spectrum = if r.transfer == "bao" {
+        "EH98 CDM+baryon transfer with baryon acoustic oscillations and Silk damping; no radiation in late-time growth or massive neutrinos"
+    } else {
+        "EH98 smooth baryon-suppressed transfer; no BAO, radiation in late-time growth, or massive neutrinos"
+    };
     let safe = minj > 0. && mins > 0. && !pm.crossed;
     let crossing_diagnostic = if pm_arithmetic == "f64" {
         "f64 CPU polynomial extrema for every PM drift"
@@ -1908,14 +2021,14 @@ fn assemble_prepared(
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
         "cosmology":{"omegaM":r.omega_m,"omegaB":r.omega_b,"h":r.h,"ns":r.ns,"sigma8":r.sigma8},
         "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
-        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,"cicRho":cics,
-        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers)},
+        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,"cicRho":cics,"tscRho":tscs,
+        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers),"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
         "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},
-        "diagnostics":{"mass":mean(&rho),"pmMass":mean(&pmrho),"cicMass":mean(cic),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
+        "diagnostics":{"mass":mean(&rho),"pmMass":mean(&pmrho),"cicMass":mean(&raw.cic),"tscMass":mean(&raw.tsc),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
         "conventions":{"liveCosmology":if c.cosmo.is_eds(){"EdS"}else{"flat LCDM"},"initialBandCutoff":r.initial_cutoff,
         "modelGeometry":if r.dim==3 {"3D periodic matter field"} else {"Translationally invariant subspace of 3D cosmological equations; not a random 3D slice"},
-        "initialSpectrum":"EH98 smooth baryon-suppressed transfer; no BAO, radiation in late-time growth, or massive neutrinos",
+        "initialSpectrum":initial_spectrum,"transfer":r.transfer,
         "initialNormalization":"Gaussian spectrum sigma8 at z=0 before Gaussian filtering and radial cutoff; no realization RMS rescaling. Deterministic waves use fixed delta0 amplitudes independent of sigma8.",
         "initialFilter":"Gaussian exp(-k^2 R_initial^2/2) plus fixed radial integer-mode cutoff",
         "modeGenerator":"PSC Fourier mode hash v2, SplitMix64 and xoshiro256** Box-Muller, exact Hermitian pairing",

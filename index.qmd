@@ -5,45 +5,127 @@ subtitle: "From Lagrangian Dynamics to Conservative Observables in Cosmological 
 
 # A Continuous Description of Cold Matter {#sec-introduction}
 
-Cold dark matter is fundamentally collisionless and cold: in the early universe, its primordial thermal velocity dispersion is negligible. In the six-dimensional phase space $(\mathbf{x}, \mathbf{u})$, cold dark matter does not fill a six-dimensional volume. Instead, it occupies a **smooth, continuous three-dimensional manifold with zero intrinsic thickness** [@abel2012; @hahn2013]. 
+Cold dark matter is fundamentally collisionless and cold: in the early universe, its primordial thermal velocity dispersion is negligible. In the six-dimensional phase space $(\mathbf{x}, \mathbf{u})$, cold dark matter does not fill a six-dimensional volume. Instead, it occupies a **smooth, continuous three-dimensional manifold with zero intrinsic thickness** [@abel2012; @hahn2013]. Gravity stretches and folds this surface without tearing it.
 
-For nearly half a century, cosmological simulations have approximated this continuum by sampling it with billions of discrete point particles evolved via $N$-body algorithms and deposited onto Eulerian grids using window functions such as Cloud-In-Cell (CIC), Triangular-Shaped Cloud (TSC), or smoothed-particle hydrodynamics (SPH) kernels. While particle methods have powered decades of cosmological discovery, they suffer from profound structural limitations rooted in their discrete Monte Carlo nature:
+For nearly half a century, cosmological simulations have approximated this continuum by sampling it with discrete point particles evolved via $N$-body algorithms and deposited onto Eulerian grids using window functions such as Cloud-In-Cell (CIC), Triangular-Shaped Cloud (TSC), or smoothed-particle hydrodynamics (SPH) kernels. While particle methods have powered decades of cosmological discovery, they suffer from profound structural limitations rooted in their discrete Monte Carlo nature:
 
 * **In underdense regions (voids):** Particles diverge, leading to sampling starvation. Whenever the local inter-particle separation exceeds the grid cell size, Eulerian cells become completely empty ($\rho = 0$). This creates catastrophic Poisson shot noise and renders logarithmic density contrasts undefined ($\ln(1+\delta) \to -\infty$). Traditional particle methods fail to capture the smooth profiles of cosmic voids and distort the volume-weighted density probability distribution function (PDF) precisely where dark energy and modified gravity signatures are most pronounced.
 * **In overdense regions (caustics and filaments):** Traditional particle estimators convolve the density with spatial assignment windows ($W_{\rm CIC} = \prod \operatorname{sinc}^2(k_i\Delta x/2)$), artificially smearing out the sharp, infinite-density caustic folds predicted by catastrophe theory. Furthermore, discrete point masses introduce artificial two-body collisional relaxation, leading to spurious heating and the artificial fragmentation of cosmic filaments into numerical beads.
 * **In Fourier space:** Discrete point sampling injects an unavoidable Poisson shot-noise floor, $P_{\rm shot} = 1/\bar{n} = L^d / N_p$, which obscures physical modes at high wave numbers and requires heuristic subtraction.
 
-The **Abel, Hahn & Kähler (AHK) phase-space sheet** construction [@abel2012; @hahn2013] resolves these challenges by following the continuous phase-space manifold itself. Rather than treating simulation particles as independent point masses, they serve as the **vertices of a simplicial tessellation**—intervals in 1D, triangles in 2D, and Kuhn tetrahedra in 3D—that discretizes the three-dimensional Lagrangian sheet.
+The **Abel, Hahn & Kähler (AHK) phase-space sheet** construction [@abel2012; @hahn2013] resolves these challenges by following the continuous phase-space manifold itself. The particles of a simulation are not independent random samples of this sheet: they are its **vertices**—regularly spaced labels $\mathbf{q}$ whose current positions $\mathbf{x}(\mathbf{q}, a)$ record how the sheet has deformed. Connecting neighboring vertices into mass-carrying simplices—intervals in 1D, triangles in 2D, and Kuhn tetrahedra in 3D—discretizes the three-dimensional Lagrangian sheet into a watertight continuum.
 
-## The Pre-Shell-Crossing Diffeomorphism
+This report demonstrates two core principles:
 
-Before the onset of shell crossing, the mapping from initial Lagrangian labels $\mathbf{q}$ to current Eulerian comoving coordinates $\mathbf{x}(\mathbf{q}, a)$ is a **smooth, invertible diffeomorphism** ($J = \det(\partial\mathbf{x}/\partial\mathbf{q}) > 0$). In this regime:
+1. **The tessellation measures what particle deposits cannot.** Connecting neighboring vertices into mass-carrying elements turns $N$ particles into a continuous density field with **zero shot noise** ($P_{\rm shot} \equiv 0$) and **zero empty cells**, where CIC and TSC deposits of the exact same $N$ points fail.
+2. **Before shell crossing the map is one-to-one, and Lagrangian perturbation theory describes it well enough.** Density is pure geometry, $1+\delta = 1/J$, and high-order Lagrangian Perturbation Theory (nLPT) reproduces $N$-body simulations at the sub-percent level on filtered scales, accurately carrying features such as the baryon acoustic oscillations (BAO) through the nonlinear map.
 
-1. **Analytic Elegance:** The Eulerian density is the exact pushforward of the uniform Lagrangian mass measure:
-   $$\rho(\mathbf{x}, a) = \frac{\bar\rho_{\rm com}}{\det(\partial\mathbf{x}/\partial\mathbf{q})} = \frac{\bar\rho_{\rm com}}{J(\mathbf{q}, a)}.$$
-   Mass conservation is preserved identically without empirical tuning or particle counting.
-2. **Infinite Dynamic Range in Voids:** As a void expands, the simplices that cover it stretch smoothly. The density inside each element decreases continuously as $\rho_T = m_T / V_T$. There are **no empty cells, no sampling starvation, and zero Poisson shot noise**. The resulting volume-weighted PDF $p_V(r)$ remains smooth and strictly positive down to arbitrary underdensities.
-3. **Exact Geometric Integration:** When depositing the continuous sheet onto an Eulerian analysis grid, exact polyhedral intersection algorithms [@powell2015] compute the volume overlap of each deformed simplex with each grid cell with machine precision. This eliminates assignment smearing and preserves sharp density gradients.
-4. **Continuous Fourier Modes with Zero Shot Noise:** By evaluating the Fourier transform of individual simplices analytically via the Hermite–Genocchi divided-difference formula, continuous Fourier modes are obtained directly from vertex coordinates with **identically zero particle shot noise** ($P_{\rm shot} \equiv 0$).
+Every experiment below runs in your browser from the same tested Rust core, and every number quoted links to the test or run that produced it.
 
-When applied to cosmological initial conditions smoothed on a physical scale $R_f$ chosen such that no shell crossing occurs before a target redshift $z$, high-order Lagrangian Perturbation Theory (nLPT) provides a fast, deterministic, and highly accurate forward model. Through fourth order (4LPT), it accounts for nonlinear tidal shear, transverse displacements demanded by the Cauchy vorticity invariant, and coupled $\Lambda$CDM growth rates.
+## Density is Geometry {#sec-intro-geometry}
+
+Write the current comoving position of the Lagrangian fluid element $\mathbf{q}$ as $\mathbf{x} = \mathbf{q} + \boldsymbol{\Psi}(\mathbf{q}, a)$, where $\boldsymbol{\Psi}$ is the displacement field. Prior to shell crossing, the mapping $\mathbf{q} \mapsto \mathbf{x}$ is a **smooth, invertible diffeomorphism**. Mass conservation is simply the coordinate Jacobian change of variables $\bar\rho\,d^3q = \rho\,d^3x$:
+
+$$
+1+\delta(\mathbf{x}) = \frac{1}{J(\mathbf{q})}, \qquad J = \det\left(\delta_{ij} + \frac{\partial\Psi_i}{\partial q_j}\right).
+$$ {#eq-intro-jacobian}
+
+A patch of the sheet that has contracted is dense; one that has expanded is a cosmic void. Nothing has to be counted or smoothed. The determinant is evaluated directly from the displacement gradient, and @sec-sheet derives it from the phase-space Vlasov distribution.
+
+![The same two-dimensional Lagrangian triangulation before and after deformation. Colors preserve the initial labels; each triangle keeps its mass while its area changes. This is the position-space projection of a sheet living in four-dimensional phase space.](chapters/figures/sheet-2d.svg){#fig-intro-sheet2}
+
+The **first shell crossing** occurs at the first instant where $J(\mathbf{q}, a) = 0$ somewhere in the fluid: two distinct Lagrangian labels arrive at the same Eulerian position, the sheet folds in phase space, and @eq-intro-jacobian is replaced by a sum over multiple streams (@eq-multistream-density). This report focuses on the regime before that happens.
+
+## Measuring the Sheet: Tessellation versus Particle Deposits {#sec-intro-estimators}
+
+Suppose a simulation provides the positions of $N$ vertices and we require the density field on an Eulerian mesh of $M$ cells. The conventional approach treats each vertex as an isolated point of mass $1/N$ and deposits it onto neighboring cells using a spatial kernel: two cells per axis for CIC, three for TSC.
+
+The phase-space sheet approach [@abel2012; @hahn2013] connects neighboring labels into a simplicial mesh matching the initial lattice topology. Each element keeps its initial mass, so its density is simply its mass divided by its deformed volume ($\rho_T = m_T / V_T$). The mass in any Eulerian cell is the exact polyhedral volume intersection of the deformed simplices that overlap it [@powell2015].
+
+The difference is profound:
+* A point deposit has no information between particles. Wherever the mesh is finer than the particle spacing, cells remain completely empty, the density field degenerates into an artificial lattice of spikes, and the power spectrum hits a white Poisson noise floor $L^d/N$.
+* A connected element knows that the mass between vertices is continuous. As a void expands, simplices stretch smoothly, filling space and maintaining strictly positive density everywhere.
+
+The interactive widget below runs this comparison on an exactly solvable one-dimensional map. Three sinusoidal modes define the initial perturbation, the Zel'dovich map $x = q + D\,\Psi(q)$ is exact before crossing in plane symmetry (@sec-plane-wave), and the "converged map" curve is the same deposit with 16,384 vertices, verified against exact cell masses {{< test particle_deposits_conserve_mass_and_leave_a_uniform_lattice_uniform "same deposits in the core" >}}.
+
+```{=html}
+<div class="qd-widget" data-widget="intro-sheet"></div>
+<script type="module" src="app/js/widgets.js"></script>
+```
+
+Three features to explore in the widget:
+
+- **Make the mesh finer than the particles:** With $N=32$ vertices on $M=128$ cells at $70\%$ of the crossing time, the connected sheet reproduces the converged cell averages with an RMS error of $0.039$ in units of the mean density, while CIC and TSC have RMS errors of $1.1$ and $1.0$, leaving $66$ and $40$ of the $128$ cells completely empty. The sheet leaves zero empty cells. These numbers are pinned by the widget's automated test suite (`scripts/test_intro_sheet.mjs`), which also checks that every estimator conserves mass to machine precision.
+- **Look at the power spectrum:** The point deposits flatten onto the dashed Poisson shot-noise line $L/N$ at high $k$; the sheet follows the converged physical power orders of magnitude below it. The noise floor is an artifact of the estimator, not of the cosmological dynamics.
+- **Push past the crossing time:** The manifold folds, the sheet deposit continues conserving mass by summing over streams, and the density develops the integrable caustic spikes of catastrophe theory (@eq-plane-wave-density).
+
+The same comparison in two and three dimensions runs live in our laboratory, where the density view contrasts the continuous sheet against CIC and TSC maps of the same vertices and reports empty cell counts:
+
+::: {.callout-tip title="Try it: the same vertices, four density maps"}
+Deposit a $64^2$ Gaussian $\Lambda$CDM sheet on a $256^2$ mesh, four times finer than the vertex spacing. The sheet maps are smooth, continuous, and mass-conserving; the particle maps degenerate into discrete lattice artifacts.
+
+{{< lab "v=3&view=density&dim=2&n=64&force=64&mesh=256&ic=gaussian&cutoff=7&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64" "Open the estimator comparison" >}}
+:::
+
+![The experiment of the callout above, run natively. A $64^2$ Gaussian $\Lambda$CDM sheet at $z=0$ is deposited on a $256^2$ mesh as the exact sheet and as CIC and TSC point particles. The sheet fills every cell; CIC leaves $49154$ and TSC $28773$ of the $65536$ cells empty and both show the particle lattice. Their spectra rise onto the Poisson level $L^2/N$ beyond the particle Nyquist wavenumber, while the sheet spectrum stays orders of magnitude below it. Produced by `scripts/render_intro_figures.py`.](chapters/figures/intro-estimators.svg){#fig-intro-estimators}
+
+For cosmological volumes, the benchmark study of List et al. [@discodjstudy2026] quantifies this effect on unsmoothed $1.17\,h^{-1}\mathrm{Mpc}$ cells of a $300\,h^{-1}\mathrm{Mpc}$ box: with one particle per cell, CIC's emptiest cells reach $1+\delta = 0.02$–$0.09$ against $0.18$–$0.28$ for the exact sheet. The $0.1\%$ volume quantile is $58$–$109\%$ higher with the sheet. When the particle count is lowered to $64^3$, the largest shift of the $1$–$99\%$ density quantiles relative to the $256^3$ reference is $546\%$ (volume) and $1489\%$ (mass) for CIC against $1.9\%$ and $35\%$ for the sheet. Smoothing narrows the gap but does not close it: at $R_s = 7\,h^{-1}\mathrm{Mpc}$ and $64^3$ particles, the largest $1$–$99\%$ quantile shift is $2.2\%$ for the sheet against $10.6\%$ for CIC. The sheet converges first in cosmic voids and at small smoothing scales.
+
+This is why the tessellation is the natural density operator for a **forward model**. Field-level cosmological inference requires a density that is differentiable and smooth with respect to initial conditions, free of stochastic sampling noise that must otherwise be marginalized over, and capable of resolving voids with minimal elements. Constrained-realization pipelines such as [QuaiaICs](https://github.com/yipihey/QuaiaICs) take precisely this approach: Gaussian initial conditions, nLPT displacements, lightcone projection, and density evaluated from the tetrahedral sheet as $\rho \propto 1/|\det\partial\mathbf{x}/\partial\mathbf{q}|$, without ever invoking an intermediate CIC deposit or Eulerian grid. Survey-completion frameworks such as [ECHOES](https://github.com/yipihey/ECHOES) provide the complementary observational catalogs.
+
+## Before Shell Crossing the Map is One-to-One, and nLPT is Good Enough {#sec-intro-one-to-one}
+
+How much matter in a realistic $\Lambda$CDM volume undergoes shell crossing by $z=0$? For an initial field filtered at $R_f = 14\,h^{-1}\mathrm{Mpc}$, the benchmark study finds that only $0.38\%$ of the cosmic mass has ever occupied an inverted tetrahedron at $z=0$ in 4LPT, and $0.52\%$ in full $N$-body simulations [@discodjstudy2026]. The remaining $99.5\%$ is described rigorously by @eq-intro-jacobian. On these scales, the fundamental question is not multi-stream dynamics, but rather the quantitative accuracy of a finite-order Lagrangian expansion.
+
+Lagrangian perturbation theory expands the displacement field in powers of the linear growth factor, $\boldsymbol{\Psi} = \sum_n \boldsymbol{\Psi}^{(n)}$, derived from a single recursive system (@sec-lpt). For growing-mode perturbations, this series converges up to the first shell crossing [@rampf2021]. The laboratory directly measures this convergence by evolving the same vertices with a symplectic Particle-Mesh (PM) solver from identical initial modes and depositing both sheets with the exact polyhedral estimator (@sec-pm).
+
+The following native runs employ the maximum browser lattice: $64^3$ vertices in a $300\,h^{-1}\mathrm{Mpc}$ box with Planck $\Lambda$CDM cosmology, modes up to the 7th radial harmonic ($k \le 0.15\,h\,\mathrm{Mpc}^{-1}$), an initial filter $R_f = 14\,h^{-1}\mathrm{Mpc}$, matched $64^3$ force and observation grids, 128 PM timesteps, and output at $a=1$:
+
+{{< include chapters/_intro-order-table.qmd >}}
+
+Two key conclusions emerge:
+1. **Positive Jacobian Everywhere:** The minimum Jacobian remains positive and no element inverts at any order in LPT or in the PM reference. On this filtered field, the one-to-one diffeomorphism holds across the entire box at $z=0$.
+2. **Rapid Perturbative Convergence:** Measured with the exact sheet estimator, the power of successive orders converges rapidly toward fourth order: from $2.8\%$ difference at 1LPT to $1.1\%$ at 2LPT and $0.07\%$ at 3LPT. The smoothed variance converges from $3.6\%$ low to $1.3\%$ to $0.1\%$. The residual relative to the PM run ($8$–$9\%$ in displacement, $1$–$3\%$ in low-$k$ power) is dominated by the PM force-grid resolution; as shown in @sec-pm, refining the PM mesh drives the PM-to-4LPT power ratio from $0.83$ to $0.99$. The archived $256^3$ comparison confirms sub-percent accuracy on smoothed statistics (@sec-validation).
+
+::: {.callout-tip title="Try it: orders one to four against the same N-body run"}
+Open the fiducial run and switch the perturbative order. Because the epoch is specified by physical scale factor, changing order isolates the dynamical corrections at fixed time. Inspect the minimum Jacobians, inverted-mass fractions, and displacement residuals in the live diagnostics strip.
+
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&cutoff=7&L=300&Rini=14&smoothing=0.03&epoch=scaleFactor&a=1&order=4&steps=128&view=density" "Open the 64³ ΛCDM comparison" >}}
+:::
+
+### Acoustic Oscillations Survive the Nonlinear Map {#sec-intro-bao}
+
+A smooth, featureless power spectrum can mask subtle numerical failures: an estimator may capture the broad spectral envelope while washing out oscillatory features. The Baryon Acoustic Oscillations (BAO) provide the ultimate benchmark. The laboratory supports the full Eisenstein & Hu transfer function with acoustic oscillations alongside the smooth no-wiggle fit (@sec-bao-transfer), generates identical random phases for both, and overlays the filtered linear input on every measured spectrum. @fig-intro-bao illustrates this in a two-dimensional $1000\,h^{-1}\mathrm{Mpc}$ box with $256^2$ vertices, resolving the input to $k \simeq 0.19\,h\,\mathrm{Mpc}^{-1}$ across the first four acoustic peaks.
+
+![Baryon acoustic oscillations through the sheet. Left: the exact-sheet power spectrum of the 4LPT and PM maps at $z=0$ with the acoustic-oscillation transfer, the same phases evolved with the smooth transfer, and the two filtered linear inputs (ensemble means; the scatter of the measured curves about them is the sample variance of one seed). Right: the ratio of the BAO run to the smooth run for the linear input and for the measured 4LPT, 2LPT and PM sheets. The modulation of the input is carried through the nonlinear map, the tessellation and the estimator without being smoothed out or buried under a discreteness floor. Produced by `scripts/render_intro_figures.py` from native runs whose requests are stored with the figure.](chapters/figures/intro-bao.svg){#fig-intro-bao}
+
+The ratio in the right panel isolates the physical BAO feature: sharing random phases eliminates cosmic variance, so any deviation from the linear ratio reflects genuine nonlinear evolution or estimator error. The sheet preserves the acoustic modulation with a mean error of $0.5\%$ in 2D and $0.1\%$ in 3D; the PM reference exhibits slightly larger errors, and 2LPT already captures the acoustic peaks with high fidelity on these scales.
+
+{{< include chapters/_intro-bao-table.qmd >}}
+
+::: {.callout-tip title="Try it: wiggles in and wiggles out"}
+Run the two-dimensional box with the BAO transfer, then switch to the smooth fit at the same seed. The ratio of sheet power to linear input is nearly identical in both cases; the wiggles emerge and disappear with the physical input. The three-dimensional $600\,h^{-1}\mathrm{Mpc}$ box reaches the first acoustic trough.
+
+{{< lab "v=3&dim=2&n=256&force=256&mesh=256&ic=gaussian&transfer=bao&cutoff=31&L=1000&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 2D BAO experiment" >}}
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&transfer=bao&cutoff=7&L=600&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 3D BAO experiment" >}}
+:::
 
 ::: {.callout-important title="Scope and validity: the pre-shell-crossing regime"}
-The rigorous scientific foundation of this work concerns cosmological fields prior to shell crossing ($J > 0$). In this regime, the Lagrangian-to-Eulerian map is single-valued and the continuous sheet description is exact.
+The rigorous scientific conclusions of this work concern cosmological fields prior to shell crossing ($J > 0$). In this regime, the Lagrangian-to-Eulerian map is single-valued and the continuous sheet description is exact.
 
 When an un-smoothed or insufficiently smoothed field evolves past first shell crossing ($J \le 0$), the position-space projection of the sheet folds, creating multi-stream regions and caustics ($A_2$ folds and $A_3$ cusps). The interactive laboratory continues to track simplices and compute conservative multi-stream pushforward densities after crossing, accompanied by an explicit orientation diagnostic. However, single-stream LPT truncated at finite order is a formal algebraic extrapolation beyond its domain of validity once crossing occurs; true post-crossing collisionless dynamics require multi-stream gravitational tracking (such as the included Particle-Mesh solver). The validated domain of our forward model is therefore the pre-shell-crossing sheet on suitably filtered scales.
 :::
 
-## Structure of the Report
+## Structure of the Report {#sec-how-to-read}
 
 * **@sec-sheet: What is the Phase-Space Sheet?**
   Develops the physical foundations of the sheet: the Vlasov–Poisson system, Liouville's theorem, symplectic geometry, pushforward densities, and the catastrophe-theoretic anatomy of caustics, illustrated by an exact 1D plane-wave benchmark.
 * **@sec-lpt: Building the Sheet with nLPT**
   Derives Lagrangian Perturbation Theory through 4LPT from the cofactor fluid equations. Explains the invariant determinant building blocks $\mu_2$ and $\mu_3$, the Cauchy vorticity invariant that generates transverse Lagrangian displacements at 3rd and 4th order, and the coupled $\Lambda$CDM growth operators.
 * **@sec-cosmology: Cosmology, Initial Modes, and Physical Units**
-  Establishes the physical framework: the Eisenstein & Hu transfer function, $\sigma_8$ normalization via spherical top-hat integration, the criteria for selecting the pre-crossing smoothing scale $R_f$, and stable Hermitian mode generation under grid refinement.
+  Establishes the physical framework: the Eisenstein & Hu transfer function (both smooth and oscillatory BAO fits), $\sigma_8$ normalization via spherical top-hat integration, criteria for selecting the pre-crossing smoothing scale $R_f$, and stable Hermitian mode generation under grid refinement.
 * **@sec-meshing: Exact Meshing and Continuous Fourier Modes**
-  Directly contrasts the continuous sheet with traditional CIC, TSC, and SPH particle methods. Details exact polyhedral voxelization (Powell & Abel 2015, R3D), Eulerian assignment windows, grid aliasing, and the closed-form Hermite–Genocchi Fourier transform with zero shot-noise floor.
+  Directly contrasts the continuous sheet with traditional CIC, TSC, and SPH particle methods. Details exact polyhedral voxelization (Powell & Abel 2015, R3D), Eulerian assignment windows, grid aliasing, and the closed-form Hermite–Genocchi Fourier transform with zero shot-noise floor ($P_{\rm shot} \equiv 0$).
 * **@sec-validation: What the N-body Comparison Establishes**
   Formulates rigorous validation metrics (displacement RMS, field residuals, power ratios, density quantiles) and presents both archived large-scale $\Lambda$CDM evidence and a live, symplectic Particle-Mesh (PM) solver that traces the sheet's simplicial connectivity.
 * **@sec-pdfs: Which Density PDF?**
@@ -64,4 +146,4 @@ When an un-smoothed or insufficiently smoothed field evolves past first shell cr
 </div>
 ```
 
-The underlying numerical engine is implemented in high-performance Rust and compiled to WebAssembly for execution directly inside your browser, as well as native binaries for high-throughput batch processing. This report adheres to the **quadrant format**: every theoretical equation is linked directly to its verified implementation in the open-source codebase, every physical claim is backed by unit and integration tests, and every interactive link opens the exact experiment state in the laboratory.
+The underlying numerical engine is implemented in high-performance Rust and compiled to WebAssembly for execution directly inside your browser, as well as native binaries for high-throughput batch processing. The starting points of this investigation are the author's [Hopf–Cole cosmology study](https://yipihey.github.io/hopf-cole-cosmology/index.html) and the [DiscoDJ.jl LPT/PDF study](https://yipihey.github.io/DiscoDJ.jl/studies/lpt_pdf/report.html); the tested Rust nLPT and geometric integration core of the former is reused under its MIT license. This report adheres to the **quadrant format**: every theoretical equation is linked directly to its verified implementation in the open-source codebase, every physical claim is backed by unit and integration tests, and every interactive link opens the exact experiment state in the laboratory.

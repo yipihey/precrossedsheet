@@ -6,6 +6,8 @@ title: "A Guide to the Numerical Laboratory"
 
 The interactive WebAssembly laboratory (`app/index.html`) brings the theoretical concepts of this report to life directly inside your web browser. Driven by the same high-performance Rust core used for batch simulations, the laboratory enables real-time exploration of the phase-space sheet, high-order Lagrangian Perturbation Theory, and symplectic Particle-Mesh dynamics without requiring local software installation.
 
+The live model supports flat $\Lambda$CDM or EdS expansion, deterministic wave benchmarks or physical Gaussian modes drawn from the smooth or the BAO Eisenstein–Hu spectrum, and either a physical scale factor or a common reference growth fraction. @sec-cosmology states the amplitude normalization, mode generator, initial cutoff and dimensional conventions. Output includes sampled vertex and affine simplex Jacobian minima, a full-drift PM orientation check, and final inverted-element mass fractions. Crossing produces a caution and retains all finite outputs. This makes the model's breakdown inspectable; it does not extend the validated LPT domain.
+
 ### Key Features of the Laboratory
 
 1. **Three-Panel Density Visualization:**
@@ -33,11 +35,12 @@ The laboratory is structured around eight canonical numerical experiments design
 | **1. 1D Phase-Space Manifold** | Growth fraction $f = AD$ | Evolution of the continuous curve $(x, u)$ in phase space; approach to caustic singularity ($r \propto |x|^{-2/3}$) at $J = 0$. |
 | **2. Simplicial Mesh Geometry** | Dimension (2D/3D), viewing angle | Watertight simplicial tessellation; expansion of Kuhn tetrahedra in cosmic voids and anisotropic compression into walls and filaments. |
 | **3. LPT Orders (1 to 4)** | Order (1LPT to 4LPT) at fixed epoch | Successive non-linear tidal corrections; sharpening of cosmic web filaments; emergence of transverse displacements. |
-| **4. Sheet vs Traditional CIC Particles** | Density view; Eulerian mesh size | **Direct proof of sheet superiority:** Absence of empty cells in voids; elimination of particle shot noise; sharp caustic preservation. |
-| **5. LPT vs Particle-Mesh Dynamics** | PM timesteps and force mesh | Accuracy of 4LPT trajectories against symplectic $N$-body integration prior to shell crossing. |
-| **6. Volume vs Mass PDFs** | Weighting measure; observation filter $R_s$ | Contrast between void-dominated volume PDFs ($p_V$) and peak-dominated mass PDFs ($p_M = r p_V$); environmental smoothing. |
-| **7. Power Spectrum Derivatives** | Amplitude tangent; LPT order | Exact automatic differentiation of continuous Fourier power via confluent divided differences. |
-| **8. Published Cosmological Replay** | Observation radius $R_s$, model order | Empirical verification of sub-percent 4LPT accuracy on large, pre-crossing scales in $\Lambda$CDM. |
+| **4. Sheet vs Traditional CIC/TSC Particles** | Density view; Eulerian mesh size | **Direct proof of sheet superiority:** Absence of empty cells in voids; elimination of particle shot noise; sharp caustic preservation without kernel smearing. |
+| **5. Smooth vs BAO Transfer** | Transfer fit (smooth vs BAO) at fixed seed | Whether the nonlinear sheet preserves the acoustic modulation of the input without particle discreteness. |
+| **6. LPT vs Particle-Mesh Dynamics** | PM timesteps and force mesh | Accuracy of 4LPT trajectories against symplectic $N$-body integration prior to shell crossing. |
+| **7. Volume vs Mass PDFs** | Weighting measure; observation filter $R_s$ | Contrast between void-dominated volume PDFs ($p_V$) and peak-dominated mass PDFs ($p_M = r p_V$); environmental smoothing. |
+| **8. Power Spectrum Derivatives** | Amplitude tangent; LPT order | Exact automatic differentiation of continuous Fourier power via confluent divided differences. |
+| **9. Published Cosmological Replay** | Observation radius $R_s$, model order | Empirical verification of sub-percent 4LPT accuracy on large, pre-crossing scales in $\Lambda$CDM. |
 
 ::: {.callout-tip title="Start with a gentle three-dimensional field"}
 Launch the 3D laboratory experiment. Rotate the tetrahedral sheet to inspect the cosmic web. Toggle between the continuous sheet density and the CIC particle density to witness the dramatic elimination of void shot noise.
@@ -80,9 +83,12 @@ A compact standalone request specification is:
   "ns": 0.965, "sigma8": 0.811, "boxSize": 300,
   "initialSmoothing": 14, "smoothing": 0.03,
   "epoch": "scaleFactor", "scaleFactor": 0.5,
-  "fraction": 0.5, "order": 4, "steps": 128
+  "fraction": 0.5, "order": 4, "steps": 128,
+  "transfer": "smooth"
 }
 ```
+
+Here the observation radius is $R_s=0.03L=9\,h^{-1}\mathrm{Mpc}$ and the initial Gaussian radius is $14\,h^{-1}\mathrm{Mpc}$. The transfer field selects the smooth or the BAO fit; manifests written before it existed are read as smooth. The inactive fraction is still recorded; the `epoch` selector determines the actual clock. This is a live smooth-spectrum experiment, not an exact reproduction of the archive's top-hat-filtered transfer and integration setup.
 
 ## Browser Verification and Self-Checks
 

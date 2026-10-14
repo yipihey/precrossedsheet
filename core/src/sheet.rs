@@ -138,6 +138,42 @@ pub fn cic_density(dim: usize, pos: &[f32], npart: usize, l: f64, ne: usize) -> 
     rho.iter().map(|&v| (v * norm) as f32).collect()
 }
 
+/// Triangular-shaped-cloud (TSC) particle deposit on the same cell-centered
+/// lattice as `cic_density`: each particle spreads a quadratic B-spline over
+/// the three nearest cells per axis. Output ρ/ρ̄ with exact unit mean.
+pub fn tsc_density(dim: usize, pos: &[f32], npart: usize, l: f64, ne: usize) -> Vec<f32> {
+    let size = ne.pow(dim as u32);
+    let mut rho = vec![0.0f64; size];
+    let dxe = l / ne as f64;
+    let mut i0 = [0i64; 3];
+    let mut w = [[0.0f64; 3]; 3];
+    for p in 0..npart {
+        for a in 0..dim {
+            let s = pos[p * dim + a] as f64 / dxe - 0.5;
+            let i = (s + 0.5).floor();
+            let d = s - i;
+            i0[a] = i as i64;
+            w[a] = [0.5 * (0.5 - d).powi(2), 0.75 - d * d, 0.5 * (0.5 + d).powi(2)];
+        }
+        let ncell = 3usize.pow(dim as u32);
+        for c in 0..ncell {
+            let mut weight = 1.0;
+            let mut idx = 0usize;
+            let mut code = c;
+            for a in 0..dim {
+                let off = code % 3;
+                code /= 3;
+                weight *= w[a][off];
+                let ia = (i0[a] + off as i64 - 1).rem_euclid(ne as i64) as usize;
+                idx = idx * ne + ia;
+            }
+            rho[idx] += weight;
+        }
+    }
+    let norm = size as f64 / npart as f64;
+    rho.iter().map(|&v| (v * norm) as f32).collect()
+}
+
 /// Top-hat (cell-average) window: W(k) = Π_a sinc(k_a dx/2).  Cell-averaged
 /// estimators (exact deposits, dual sheet) carry W² in their power spectrum.
 pub fn tophat_cell_window(grid: &Grid, idx: usize) -> f64 {

@@ -3,11 +3,16 @@
 // URL-hash key/value pairs for laboratory links.
 import { encodeHash, makeDefaults, decodeHash } from './state.js';
 import { mountTwoPointWidget } from './two-point.js';
+import { mountIntroSheetWidget } from './intro-sheet.js';
 
 const VIEW_BY_WIDGET = { curve: 'sheet', sheet: 'sheet', density: 'density', spectra: 'spectra', pdf: 'pdf', gradient: 'gradient', published: 'published' };
 for (const host of document.querySelectorAll('.qd-widget')) {
   if (host.dataset.widget === 'two-point') {
     mountTwoPointWidget(host);
+    continue;
+  }
+  if (host.dataset.widget === 'intro-sheet') {
+    mountIntroSheetWidget(host);
     continue;
   }
   const state = { ...makeDefaults(), ...decodeHash(host.dataset.state || '') };

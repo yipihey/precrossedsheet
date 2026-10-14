@@ -1,3 +1,16 @@
+# Verification record — 2026-10-13
+
+## Pedagogical introduction, BAO transfer and particle deposits (engine 0.7.0, schema 3)
+
+- `make test` passes all 78 native Rust tests plus the state/replay, two-point and new introduction-widget JavaScript checks. New native coverage: the full Eisenstein–Hu fit shares the large-scale limit with the smooth fit, stays within 5% of it from 0.01 to 50 h/Mpc, crosses it at least six times across the BAO band with the first trough below 0.985 near 0.05 h/Mpc and the first crest above 1.02 near 0.08 h/Mpc, and changes the σ₈ normalization by under 1%; the filtered linear input follows the stated formula and vanishes above the cutoff; CIC and TSC deposits conserve mass, keep a mesh-matched lattice uniform and spread one particle with symmetric quadratic weights; a Gaussian BAO run reports the particle fields, their spectra and the linear input at exactly the core's formula, while manifests without the transfer field read as smooth and unknown fits are rejected.
+- `node scripts/test_intro_sheet.mjs` checks the 1D widget's pure functions: dΨ/dq = −δ₀, the crossing growth, mass conservation and nonnegativity of all three deposits, the uniform limit, agreement of the converged deposit with exact bisection cell masses to 1e-4, a sheet RMS error below a quarter of the CIC/TSC errors with zero empty cells at N = 32 on 128 cells, a CIC tail within a factor of four of the Poisson level while the sheet tail is below a tenth of it, conserved mass through a fold, and the permalink round trip.
+- `make test-wasm` rebuilds the engine and passes the existing mass, derivative, crossing, cache, typed-boundary and persistent-worker checks; the new request field flows through the unchanged Wasm facade.
+- `make check` resolves every source/test/lab provenance link, including the new `transfer` hash key. The 14-page book renders without unresolved references or citations.
+- The introduction's tables and BAO figure were produced by `scripts/render_intro_figures.py` from native runs in this container (engine 0.7.0, requests stored in the script and in `chapters/figures/intro-runs.json`): fiducial 64³ runs at z = 0 for orders 1–4 against the same PM trajectory, 2D 256² and 3D 64³ pairs with identical phases under the smooth and BAO transfers, and a 64² sheet on a 256² mesh for the estimator figure. The script asserts that its duplicated transfer evaluation matches the core's exported linear input. Browser timings are not quoted.
+- Rendered pages were reviewed in a headless browser: the introduction widget mounts, updates its three plots and table on every control, and has no console errors beyond blocked CDN fonts/KaTeX in the sandbox; the laboratory's new transfer control, presets, CIC/TSC maps and linear overlay render against the rebuilt Wasm package.
+
+The new content explains and demonstrates estimator properties and the pre-crossing one-to-one map; it adds no claim of post-crossing accuracy or of sub-percent 4LPT accuracy beyond the archived smoothed statistics.
+
 # Verification record — 2026-10-12
 
 ## Two-point geometry chapter and interval experiment (engine 0.6.0)

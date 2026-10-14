@@ -204,7 +204,7 @@ This continuous estimator has **no Eulerian cell window, no grid aliasing, and n
 
 ---
 
-## Zero Shot Noise: The Ultimate Advantage of the Sheet {#sec-zero-shot-noise}
+## Zero Shot Noise: The Decisive Advantage of the Continuous Sheet {#sec-zero-shot-noise}
 
 We now arrive at the most fundamental theoretical and numerical advantage of the phase-space sheet over traditional particle methods:
 
@@ -218,7 +218,9 @@ P_{\rm shot}^{\rm sheet} \equiv 0.
 $$ {#eq-zero-shot-noise}
 :::
 
-In traditional $N$-body simulations, the Poisson floor $P_{\rm shot} = L^d / N_p$ sets a hard limit on the dynamic range in Fourier space. In contrast, the continuous sheet spectrum reflects pure cosmological clustering and the geometric facets of the simplicial tessellation, with zero white-noise contamination.
+For independently sampled equal-mass points, the familiar Poisson shot noise contribution is $P_{\rm shot} = L^d / N_p$. In traditional cosmological $N$-body simulations, particles started on a lattice or glass develop an artificial white-noise floor that obscures physical clustering at high wave numbers. In the laboratory, Cloud-in-Cell{{< src sheet::cic_density >}} and Triangular-Shaped-Cloud{{< src sheet::tsc_density >}} deposits of the **same vertices treated as discrete point particles** illustrate assignment smearing and discreteness effects; both conserve mass exactly and reproduce a uniform lattice only on a matching mesh {{< test particle_deposits_conserve_mass_and_leave_a_uniform_lattice_uniform "particle deposits" >}}.
+
+The contrast is sharpest when the observation mesh is refined beyond the vertex spacing ($N_{\rm mesh} > N_{\rm vertex}$). Point deposits leave cells between particles completely empty ($\rho = 0$), driving the volume PDF logarithm to $-\infty$ and placing a flat white floor $L^d/N_p$ under the spectrum. In sharp contrast, the continuous sheet smoothly stretches tetrahedra across the cells, guaranteeing strictly positive, smooth density everywhere.
 
 | Feature | Traditional Particles (CIC/TSC/SPH) | Pre-Crossing Phase-Space Sheet |
 |---|---|---|
@@ -228,10 +230,11 @@ In traditional $N$-body simulations, the Poisson floor $P_{\rm shot} = L^d / N_p
 | **Fourier Shot Noise** | Flat Poisson shot-noise floor $P_{\rm shot} = L^d / N_p$ obscures high-$k$ modes | **Identically zero particle shot noise ($P_{\rm shot} \equiv 0$)** via Hermite–Genocchi modes |
 | **Conservation** | Approximate (grid-dependent) | Exact to machine precision ($\sum_C \rho_C V_C = \sum_T m_T = \bar\rho L^d$) |
 
-::: {.callout-tip title="Interactive exploration: comparing continuous modes and deposited spectra"}
-Open the spectra panel in the laboratory. Compare the exact continuous Hermite–Genocchi mode power with the cell-averaged deposited spectrum and the traditional CIC particle spectrum. Observe the cell-window suppression and note how the continuous sheet spectrum extends to high wave numbers with zero shot noise.
+::: {.callout-tip title="Interactive exploration: continuous modes vs deposited particle estimators"}
+Compare the exact cell-average sheet spectrum with the CIC and TSC spectra of the same LPT vertices. The direct Hermite–Genocchi modes provide a continuous P0 reference without cell windows or aliasing. The second link deposits a $64^2$ Gaussian sheet on a $256^2$ mesh and displays the exact sheet, CIC, and TSC density maps side by side with their empty-cell statistics.
 
 {{< lab "v=2&view=spectra&dim=2&n=16&force=16&mesh=48&f=0.5" "Compare continuous and deposited estimators" >}}
+{{< lab "v=3&view=density&dim=2&n=64&force=64&mesh=256&ic=gaussian&cutoff=7&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64" "Sheet, CIC and TSC maps of one run" >}}
 :::
 
 ## Key Takeaways and Analytical Exercises

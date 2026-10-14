@@ -34,6 +34,10 @@ The replay panel in our numerical laboratory embeds these archived simulation da
 
 ---
 
+## Two live checks the introduction relies on {#sec-intro-checks}
+
+The introduction (@sec-intro-one-to-one) quotes two native experiments produced by the same request/response facade as the browser: a fiducial $64^3$ run at $z=0$ compared order by order with the PM reference (@tbl-intro-orders), and a pair of runs with identical phases but the smooth and the oscillating Eisenstein–Hu transfer (@tbl-intro-bao, @fig-intro-bao). Both are reproducible with `scripts/render_intro_figures.py`, which stores the exact requests, re-executes them when the cached outputs are absent, and asserts that its own evaluation of the linear input agrees with the core's exported curve. They are convergence-limited by the browser lattice: their displacement and power residuals bound the LPT error only up to the PM resolution error discussed below, and the archived comparison remains the evidence for the smoothed sub-percent statements.
+
 ## A Live, Symplectic Particle-Mesh Solver {#sec-pm}
 
 To enable real-time, interactive exploration and verification within the browser, the laboratory includes a high-performance, fully symplectic Particle-Mesh (PM) solver{{< src nbody::evolve_cosmology >}}.

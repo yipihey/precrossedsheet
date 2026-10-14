@@ -10,7 +10,7 @@ export const LIMITS = Object.freeze({
 });
 export const SCHEMA = Object.freeze({
   dim: [1, 3], n: GRIDS, fraction: [.05, 1.5], epoch: ['fraction', 'scaleFactor'], scaleFactor: [.01, 2],
-  order: [1, 4], seed: [0, 9999], ic: ['waves', 'gaussian'], initialCutoff: [1, 32],
+  order: [1, 4], seed: [0, 9999], ic: ['waves', 'gaussian'], transfer: ['smooth', 'bao'], initialCutoff: [1, 32],
   omegaM: [.05, 1], omegaB: [0, .2], h: [.4, 1], ns: [.8, 1.2], sigma8: [.1, 1.5],
   boxSize: [50, 2000], initialSmoothing: [0, 200], smoothing: [0, .15], steps: STEPS,
   mesh: GRIDS, forceMesh: GRIDS, view: ['sheet', 'density', 'spectra', 'pdf', 'gradient', 'published'],
@@ -19,7 +19,7 @@ export const SCHEMA = Object.freeze({
 });
 const DEFAULTS = Object.freeze({
   dim: 2, n: 32, fraction: .5, epoch: 'fraction', scaleFactor: .5, order: 4, seed: 7,
-  ic: 'waves', initialCutoff: 3, omegaM: .315, omegaB: .049, h: .674, ns: .965, sigma8: .811,
+  ic: 'waves', transfer: 'smooth', initialCutoff: 3, omegaM: .315, omegaB: .049, h: .674, ns: .965, sigma8: .811,
   boxSize: 300, initialSmoothing: 14, smoothing: .03, steps: 64, mesh: 32, forceMesh: 32,
   view: 'sheet', weight: 'volume', backend: 'cpu', rotate: 35, tilt: 25,
   pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true, schemaVersion: STATE_VERSION,
@@ -31,6 +31,7 @@ export const HASH_SCHEMA = Object.freeze([
   ['dim', 'dim', 'num', [1, 3]], ['n', 'n', 'num', [16, 1024]], ['fraction', 'f', 'num', [.05, 1.5]],
   ['epoch', 'epoch', 'enum', ['fraction', 'scaleFactor']], ['scaleFactor', 'a', 'num', [.01, 2]],
   ['order', 'order', 'num', [1, 4]], ['seed', 'seed', 'num', [0, 9999]], ['ic', 'ic', 'enum', ['waves', 'gaussian']],
+  ['transfer', 'transfer', 'enum', ['smooth', 'bao']],
   ['initialCutoff', 'cutoff', 'num', [1, 32]], ['omegaM', 'Om', 'num', [.05, 1]], ['omegaB', 'Ob', 'num', [0, .2]],
   ['h', 'h', 'num', [.4, 1]], ['ns', 'ns', 'num', [.8, 1.2]], ['sigma8', 's8', 'num', [.1, 1.5]],
   ['boxSize', 'L', 'num', [50, 2000]], ['initialSmoothing', 'Rini', 'num', [0, 200]], ['smoothing', 'smoothing', 'num', [0, .15]],
@@ -43,7 +44,7 @@ export const HASH_SCHEMA = Object.freeze([
   ['pubr', 'pubr', 'num', [7, 42]], ['paired', 'paired', 'bool'],
 ]);
 const HASH_KEY = Object.freeze(Object.fromEntries(HASH_SCHEMA.map(([stateKey, hashKey]) => [stateKey, hashKey])));
-const ENUMS = new Set(['epoch', 'ic', 'view', 'weight', 'backend', 'pubmodel', 'pubest']);
+const ENUMS = new Set(['epoch', 'ic', 'transfer', 'view', 'weight', 'backend', 'pubmodel', 'pubest']);
 const GRID_CHOICES = new Set(['n', 'steps', 'mesh', 'forceMesh']);
 const INTEGER_RANGE = new Set(['dim', 'order', 'seed', 'initialCutoff', 'schemaVersion']);
 const ROTATION_RANGE = new Set(['rotate','tilt']);

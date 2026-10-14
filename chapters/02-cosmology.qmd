@@ -49,9 +49,14 @@ The laboratory provides two modes for specifying the output epoch:
 1. **Physical scale factor $a$:** Directly sets $z = 1/a - 1$.
 2. **Growth fraction $f = D(a) / D_{\rm ref}$:** References the output to the estimated first-crossing threshold of the realization. This provides a normalized clock that enables direct comparison across different cosmologies and realizations.
 
-## Initial Power Spectrum and $\sigma_8$ Normalization {#sec-initial-spectrum}
+## Initial Power Spectrum and Transfer Functions {#sec-initial-spectrum}
 
-To generate realistic cosmological initial conditions, the laboratory uses the Eisenstein & Hu [@eisenstein1998] transfer function $T(k)$, which incorporates the scale-dependent effective shape parameter $\Gamma(k)$, the physical turnover scale, and baryon suppression. The implementation{{< src cosmological::transfer >}} sets $T_{\rm CMB} = 2.7255\,\mathrm{K}$ and evaluates the transfer function in $h\,\mathrm{Mpc}^{-1}$ units.
+To generate realistic cosmological initial conditions, the laboratory provides both the Eisenstein & Hu [@eisenstein1998] smooth transfer function and their full transfer fit with baryon acoustic oscillations (BAO):
+
+1. **The Default Smooth Fit** {{< src cosmological::transfer >}}: Evaluates equations 26 and 28–31 of Eisenstein & Hu [@eisenstein1998] with the scale-dependent effective shape parameter $\Gamma(k)$. It accurately retains the broad turnover and baryon suppression while omitting acoustic oscillations.
+2. **The Full BAO Fit** {{< src cosmological::transfer_bao >}}: Evaluates their equations 2–24, capturing the complete acoustic oscillations of the baryon-photon plasma prior to recombination and Silk damping.
+
+Both fits adopt $T_{\rm CMB} = 2.7255\,\mathrm{K}$ and evaluate the transfer function in physical $h\,\mathrm{Mpc}^{-1}$ units.
 
 The un-filtered, $z=0$ linear matter power spectrum is:
 
@@ -59,14 +64,35 @@ $$
 P_{3,0}(k) = \mathcal{A}\,k^{n_s} T(k)^2.
 $$ {#eq-linear-spectrum-model}
 
-The overall amplitude $\mathcal{A}$ is determined rigorously by the root-mean-square variance of mass fluctuations in a sphere of radius $R_8 = 8\,h^{-1}\mathrm{Mpc}$:
+The overall amplitude $\mathcal{A}$ is normalized by the root-mean-square variance of linear mass fluctuations in a sphere of radius $R_8 = 8\,h^{-1}\mathrm{Mpc}$:
 
 $$
 \sigma_8^2 = \frac{1}{2\pi^2}\int_0^\infty k^3 P_{3,0}(k)\,W_{\rm TH}(k R_8)^2\,d\ln k, \qquad
 W_{\rm TH}(x) = \frac{3(\sin x - x\cos x)}{x^3}.
 $$ {#eq-sigma8-normalization}
 
-The numerical engine evaluates this integral over $10^{-5} \le k \le 100\,h\,\mathrm{Mpc}^{-1}$ using adaptive composite Simpson quadrature in $\ln k${{< src cosmological::variance >}}, verified against analytic limits{{< test smooth_transfer_has_correct_limits_and_sigma8_integral_converges "spectrum normalization" >}}.
+The numerical engine evaluates this integral over $10^{-5} \le k \le 100\,h\,\mathrm{Mpc}^{-1}$ using adaptive composite Simpson quadrature in $\ln k${{< src cosmological::variance >}}, verified against analytic limits{{< test smooth_transfer_has_correct_limits_and_sigma8_integral_converges "spectrum normalization" >}}. Because acoustic oscillations average out across the top-hat window, the $\sigma_8$ normalizations of the smooth and BAO fits agree to within $1\%$.
+
+### Acoustic Oscillations as a Precision Test of the Sheet Map {#sec-bao-transfer}
+
+For Planck 2018 parameters, the ratio of the BAO to smooth transfer fits oscillates about unity between $k \simeq 0.04$ and $0.3\,h\,\mathrm{Mpc}^{-1}$ with an amplitude of $\approx 3\%$ in $T(k)$ ($\approx 6\%$ in $P(k)$). The first acoustic trough lies near $k \simeq 0.05\,h\,\mathrm{Mpc}^{-1}$ and the first acoustic peak near $0.08\,h\,\mathrm{Mpc}^{-1}${{< test bao_transfer_oscillates_about_the_smooth_fit_and_shares_its_limits "BAO fit" >}}.
+
+These acoustic wiggles provide a rigorous test of cosmological forward models: the continuous sheet must transport this subtle, few-percent modulation through nonlinear gravitational evolution, simplicial tessellation, and Eulerian density estimation without smearing the peaks or introducing a discrete Poisson shot-noise floor.
+
+To test this directly, the laboratory reports the exact filtered linear spectrum:
+
+$$
+P_{{\rm lin},d}(k; a) = \left[\frac{D(a)}{D(1)}\right]^2 \frac{P_{3,0}(k)\,e^{-k^2 R_f^2}}{L^{3-d}}, \qquad k \le \frac{2\pi m_{\rm cut}}{L},
+$$ {#eq-filtered-linear-input}
+
+and identically zero above the radial cutoff $m_{\rm cut}${{< src cosmological::LinearSpectrum >}}{{< test filtered_linear_spectrum_follows_the_stated_formula_and_vanishes_above_the_cutoff "filtered input" >}}. In addition, the engine computes the **realized linear power** $D(a)^2 |\delta_{0,\mathbf{k}}|^2$ of the actual random mode draw for each bin{{< test gaussian_runs_report_particle_deposits_and_the_filtered_linear_input "realized input" >}}. In the linear regime, the exact continuous sheet power matches the realized linear curve mode by mode; at late times, any departure reflects physical nonlinear evolution or cell-window smoothing, entirely free of sample variance.
+
+::: {.callout-tip title="Interactive exploration: Baryon acoustic oscillations through the sheet"}
+Toggle between the smooth transfer function and the BAO fit at fixed random seed, and observe how the exact sheet, PM trajectories, and realized linear inputs track the acoustic wiggles in the power spectrum panel. A $1000\,h^{-1}\mathrm{Mpc}$ 2D box ($256^2$ lattice) resolves the input up to $k \simeq 0.19\,h\,\mathrm{Mpc}^{-1}$, capturing the first four acoustic peaks.
+
+{{< lab "v=3&dim=2&n=256&force=256&mesh=256&ic=gaussian&transfer=bao&cutoff=31&L=1000&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 2D BAO experiment" >}}
+{{< lab "v=3&dim=3&n=64&force=64&mesh=64&ic=gaussian&transfer=bao&cutoff=7&L=600&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open the 3D BAO experiment" >}}
+:::
 
 ## Stable Hermitian Mode Generation Under Refinement {#sec-stable-modes}
 

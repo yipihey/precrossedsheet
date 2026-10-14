@@ -15,7 +15,8 @@ This is a scientific laboratory of the pre-shell-crossing cold sheet, using nLPT
 | PM dynamics | Uniform/plane-wave benchmarks and convergence tests | Finite force mesh and timesteps; matched flat $\Lambda$CDM or EdS background |
 | Directional derivatives | Independent centered finite differences | Fixed cosmology and smooth CIC branches; crossing status is diagnostic |
 | Published PDF agreement | Packaged original summaries and source metadata | Original filters and small crossing contamination |
-| Physical initial modes | EH98 smooth transfer, $\sigma_8$ quadrature and Hermitian/refinement tests | Approximate transfer without BAO or massive neutrinos |
+| Physical initial modes | EH98 smooth or BAO transfer, $\sigma_8$ quadrature, oscillation and Hermitian/refinement tests | Fitting-function transfers without massive neutrinos; no Boltzmann table |
+| Sheet versus CIC/TSC on the same vertices | Exact 1D widget checks, mass and uniform-lattice tests, lab maps and spectra | Estimator comparison at fixed map; not a dynamics claim |
 | Optional GPU continuous modes/JVPs | Independent quadrature and complete-request comparisons | f32 precision; weak LPT mode recovery and CPU fallback; device-specific performance |
 | Optional resident GPU PM/JVP | Independent DFT force checks and original/quantized Rust PM references | f32 state, CIC and FFT; radix-2 force mesh; independent spatial-field and observation precision |
 | Optional GPU centered amplitude check | Independent endpoint integrals, retained Rust f64 comparison, repeat and recovery checks | Compensated f32 arithmetic; bounded endpoint phase gap; CPU fallback |
