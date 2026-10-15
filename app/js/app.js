@@ -229,7 +229,7 @@ function renderDensity(d) {
   drawDensityMap(maps,'LPT continuous sheet density',exact,'Observed density from exact LPT sheet deposition',dim,mesh,'exact-deposit-density',sharedMax,mean);
   if(cic.length) drawDensityMap(maps,'Traditional CIC particle density',cic,'Observed density from Cloud-in-Cell particle assignment on the same LPT vertices',dim,mesh,'cic-particle-density',sharedMax,mean);
   drawDensityMap(maps,'PM trajectory sheet density',pm,'Observed density from exact sheet deposition along particle-mesh trajectories',dim,mesh,'pm-trajectory-sheet-density',sharedMax,mean);
-  const cic=arr(d.cicRho),tsc=arr(d.tscRho);
+  const tsc=arr(d.tscRho);
   if(cic.length&&tsc.length){
     const ratio=mesh/Number(d.n||S.n);
     const q=panel('The same LPT vertices deposited as point particles', `CIC and TSC spread each of the ${Number(d.n||S.n)}${dim>1?`^${dim}`:''} vertices over 2 or 3 cells per axis instead of integrating the connected elements. The observation mesh is ${num(ratio,3)}× finer than the vertex spacing${ratio>1?'; cells between particles receive no mass and the fields acquire a shot-noise floor that the sheet does not have':'; refine the observation grid relative to the vertices to expose the discreteness'}. Same filter, color range and axes as above.`);

@@ -73,3 +73,16 @@ assert.equal(replay.execution.executedBackend,'cpu');
 assert.equal(replay.execution.fallbackReason,'device unavailable');
 
 console.log('Lab state migration and replay provenance checks passed.');
+
+import { readdir } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const appJsDir = fileURLToPath(new URL('../app/js', import.meta.url));
+const entries = await readdir(appJsDir, { withFileTypes: true, recursive: true });
+const jsFiles = entries.filter(e => e.isFile() && e.name.endsWith('.js')).map(e => path.join(e.parentPath || e.path, e.name));
+for (const f of jsFiles) {
+  execFileSync(process.execPath, ['--check', f]);
+}
+console.log(`Verified syntax of ${jsFiles.length} JavaScript files in app/js.`);
