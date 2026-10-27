@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 const stateSource=await readFile(new URL('../app/js/state.js',import.meta.url),'utf8');
 const state=await import(`data:text/javascript;base64,${Buffer.from(stateSource).toString('base64')}`);
 const workerUrl=new URL('../app/js/worker.js',import.meta.url).href;
-const coreUrl=new URL('../app/pkg/hcc_core.js',import.meta.url).href;
+const coreUrl=new URL('../app/pkg/hcc_core.js?v=20261027f',import.meta.url).href;
 const wasmPath=new URL('../app/pkg/hcc_core_bg.wasm',import.meta.url).pathname;
 
 // Bootstrap preinitializes the real wasm-bindgen module with bytes, then loads
@@ -88,6 +88,19 @@ await client.next((m)=>m.type==='phase'&&m.requestId===5&&m.phase==='preparing',
 client.send({type:'cancel',requestId:4});
 const afterStaleCancel=await resultFor(client,5);
 assert.equal(afterStaleCancel.type,'result',JSON.stringify(afterStaleCancel));
+const multiEstReq={...request(2,16),order:4,estimators:['2lpt:p0','3lpt:p0','4lpt:p0','pm:p0','4lpt:p1','pm:p1','4lpt:ngp','4lpt:cic','4lpt:tsc','pm:cic']};
+client.send(runMessage(51,multiEstReq));
+const multiEstRes=await resultFor(client,51);
+assert.equal(multiEstRes.type,'result',JSON.stringify(multiEstRes));
+for(const key of multiEstReq.estimators){
+  const entry=multiEstRes.result.customSeries?.[key];
+  assert.ok(entry,`customSeries missing ${key}`);
+  assert.equal(entry.rho.length,256,`rho length mismatch for ${key}`);
+  assert.ok(entry.power.length>0,`power empty for ${key}`);
+  assert.ok(entry.variance.tophat.length>0,`tophat variance empty for ${key}`);
+  assert.equal(entry.pdf.volume.length,80,`pdf volume length mismatch for ${key}`);
+  if(key.endsWith(':p0'))assert.ok(Array.isArray(entry.directShell)&&entry.directShell.length>0,`directShell missing for ${key}`);
+}
 await shutdown(client);
 
 // Test the async GPU cancellation boundary without requiring a GPU: the

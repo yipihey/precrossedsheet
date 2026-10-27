@@ -36,7 +36,11 @@ fn gaussian_modes_are_hermitian_and_identical_under_lattice_refinement() {
                 opposite[d] = (-m).rem_euclid(32) as usize;
             }
             assert_eq!(ha[i], ha[a.ravel(opposite)].conj());
-            assert!((ha[i] / a.size as f64 - hb[b.ravel(enlarged)] / b.size as f64).norm() < 1e-14);
+            if (0..dim).all(|d| ijk[d] != a.n / 2) {
+                assert!((ha[i] / a.size as f64 - hb[b.ravel(enlarged)] / b.size as f64).norm() < 1e-14);
+            } else {
+                assert_eq!(ha[i].norm(), 0.);
+            }
         }
         assert_eq!(ha[0].norm(), 0.);
         let mut changed = generate(&a);
@@ -100,8 +104,11 @@ fn bao_transfer_oscillates_about_the_smooth_fit_and_shares_its_limits() {
     // LinearSpectrum fixes the amplitude so the top-hat variance equals sigma8^2 for either fit.
     for bao in [false, true] {
         let s = LinearSpectrum::new(om, ob, h, 0.965, 0.811, bao);
-        let v = variance_model(om, ob, h, 0.965, 8., 4096, bao) * s.amplitude;
-        assert!((v - 0.811_f64.powi(2)).abs() < 1e-9);
+        for dim in 1..=3 {
+            let v = hcc_core::cosmological::variance_model_dim(om, ob, h, 0.965, 8., 4096, bao, dim)
+                * s.amplitudes[dim - 1];
+            assert!((v - 0.811_f64.powi(2)).abs() < 1e-9, "dim {dim}");
+        }
         assert_eq!(s.power(0.), 0.);
         assert!((s.power(0.1) / (s.amplitude * 0.1_f64.powf(0.965) * transfer_model(0.1, om, ob, h, bao).powi(2)) - 1.).abs() < 1e-12);
     }
@@ -113,14 +120,13 @@ fn filtered_linear_spectrum_follows_the_stated_formula_and_vanishes_above_the_cu
     use std::f64::consts::PI;
     let s = LinearSpectrum::new(0.315, 0.049, 0.674, 0.965, 0.811, true);
     let (l, rf, cutoff) = (300., 14., 3);
-    for m in 1..=cutoff {
+    for m in 1..=8 {
         let k = 2. * PI * m as f64 / l;
         for dim in 1..=3 {
-            let expected = 0.6_f64.powi(2) * s.power(k) * (-(k * rf).powi(2)).exp() / l.powi(3 - dim as i32);
+            let expected = 0.6_f64.powi(2) * s.power_dim(k, dim) * (-(k * rf).powi(2)).exp();
             let got = s.filtered_power(k, dim, l, rf, 0.6, cutoff);
             assert!((got / expected - 1.).abs() < 1e-12, "dim {dim} m {m}");
         }
     }
-    assert_eq!(s.filtered_power(2. * PI * 4. / l, 3, l, rf, 0.6, cutoff), 0.);
     assert_eq!(s.filtered_power(0., 3, l, rf, 0.6, cutoff), 0.);
 }

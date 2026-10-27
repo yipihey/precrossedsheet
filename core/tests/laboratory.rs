@@ -1048,12 +1048,25 @@ fn gaussian_runs_report_particle_deposits_and_the_filtered_linear_input() {
     let spectrum = LinearSpectrum::new(0.315, 0.049, 0.674, 0.965, 0.811, true);
     let growth_ratio = d["D"].as_f64().unwrap() / d["growthAtOne"].as_f64().unwrap();
     for (k, p) in linear_k.iter().zip(&linear) {
-        assert!(*k <= 2. * PI * 3. / 300. + 1e-9);
         let expected = spectrum.filtered_power(*k, 2, 300., 14., growth_ratio, 3);
         assert!((p / expected - 1.).abs() < 1e-9);
     }
     let axis: Vec<f64> = d["spectra"]["directLinearK"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-    assert_eq!(axis.len(), 3, "first-axis modes m=1..3 lie inside the cutoff");
+    let direct_k_late: Vec<f64> = d["spectra"]["directK"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let shell_k_late: Vec<f64> = d["spectra"]["k"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(
+        direct_k_late.len() >= count,
+        "directK should have at least as many k points as the gridded shell average ({} vs {})",
+        direct_k_late.len(),
+        count
+    );
+    assert!(
+        *direct_k_late.last().unwrap() >= *shell_k_late.last().unwrap(),
+        "directK should extend at least as far as the gridded shell average ({} vs {})",
+        direct_k_late.last().unwrap(),
+        shell_k_late.last().unwrap()
+    );
+    assert!(axis.len() >= 6, "first-axis linear modes are populated across the direct spectrum range");
     // The realized linear power of this seed: in the linear regime (1LPT, tiny growth) it equals
     // the measured sheet power mode by mode and bin by bin, up to the cell window and tiny
     // second-order terms; at later times it is the reference the nonlinear curves are read against.
@@ -1061,19 +1074,25 @@ fn gaussian_runs_report_particle_deposits_and_the_filtered_linear_input() {
     let early = run(&LabRequest { order: 1, scale_factor: 0.02, n: 64, mesh: 64, force_mesh: 64, ..request.clone() }).unwrap();
     let f = |v: &serde_json::Value| -> Vec<f64> { v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
     let (direct, direct_realized, direct_k) = (f(&early["spectra"]["direct"]), f(&early["spectra"]["directRealized"]), f(&early["spectra"]["directRealizedK"]));
-    assert_eq!(direct_realized.len(), 3);
+    assert!(direct.len() >= f(&early["spectra"]["k"]).len());
+    assert!(direct_realized.len() >= 6);
     for i in 0..3 {
         assert!((direct_k[i] - 2. * PI * (i + 1) as f64 / 300.).abs() < 1e-12);
         assert!((direct[i] / direct_realized[i] - 1.).abs() < 0.02, "mode {}: {} vs {}", i + 1, direct[i], direct_realized[i]);
     }
     let (sheet, k, realized, realized_k) = (f(&early["spectra"]["sheet"]), f(&early["spectra"]["k"]), f(&early["spectra"]["realized"]), f(&early["spectra"]["realizedK"]));
-    assert!(!realized.is_empty() && realized_k.iter().all(|k| *k <= 2. * PI * 3. / 300. + 1e-9));
-    for (kr, pr) in realized_k.iter().zip(&realized) {
+    assert!(!realized.is_empty());
+    for (kr, pr) in realized_k.iter().zip(&realized).filter(|(kr, _)| **kr <= 2. * PI * 3. / 300. + 1e-9) {
         let i = k.iter().position(|kk| (kk - kr).abs() < 1e-12).expect("realized bins share the measured bin centers");
         assert!((sheet[i] / pr - 1.).abs() < 0.04, "bin k={kr}: sheet {} vs realized {pr}", sheet[i]);
     }
     let realized_late: Vec<f64> = f(&d["spectra"]["realized"]);
-    assert!(realized_late.iter().zip(&linear).all(|(r, l)| *r > 0.05 * l && *r < 20. * l), "the realization scatters around its expectation");
+    assert!(
+        realized_late.iter().zip(&linear).zip(&linear_k)
+            .filter(|(_, k)| **k <= 2. * PI * 3. / 300. + 1e-9)
+            .all(|((r, l), _)| *r > 0.05 * l && *r < 20. * l),
+        "the realization scatters around its expectation"
+    );
     // The deterministic benchmark has no linear input spectrum, and unknown fits are rejected.
     let waves = run(&LabRequest { dim: 1, n: 32, steps: 32, ..Default::default() }).unwrap();
     assert!(waves["spectra"]["linear"].as_array().unwrap().is_empty());

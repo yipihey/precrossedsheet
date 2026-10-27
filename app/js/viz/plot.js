@@ -393,7 +393,8 @@ export class LinePlot {
     // series
     const plot = el('g', { 'clip-path': `url(#${clipId})` }, svg);
     this._decorate(plot, { sx, sy, m, pw, ph });
-    series.forEach((s, k) => {
+    const drawOrder = series.map((s, k) => ({ s, k })).sort((a, b) => (a.s.zOrder ?? 0) - (b.s.zOrder ?? 0));
+    drawOrder.forEach(({ s, k }) => {
       const color = s.color || PALETTE[k % PALETTE.length];
       const op = s.opacity ?? 1;
       const n = Math.min(s.x.length, s.y.length);

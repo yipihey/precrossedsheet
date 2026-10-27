@@ -8,6 +8,8 @@
 .DS_Store
 
 /.quarto/
+**/.quarto/
+talks/*/_build/
 **/*.quarto_ipynb
 
 # Local configuration and credentials

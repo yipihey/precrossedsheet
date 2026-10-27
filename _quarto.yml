@@ -4,6 +4,8 @@ project:
   pre-render:
     - scripts/build_info.py
     - scripts/brand_to_css.py
+  post-render:
+    - scripts/render_talks.py
   # copied verbatim into _site: the standalone laboratory with its WebAssembly package, and the API documentation
   resources:
     - app/**
@@ -28,6 +30,8 @@ book:
   search: true
   navbar:
     right:
+      - text: "Presentations"
+        href: chapters/08-talks.qmd
       - text: "Laboratory"
         href: app/index.html
       - icon: github
@@ -46,6 +50,7 @@ book:
     - chapters/05-two-point.qmd
     - chapters/06-inference.qmd
     - chapters/07-lab.qmd
+    - chapters/08-talks.qmd
     - chapters/references.qmd
   appendices:
     - chapters/notation.qmd

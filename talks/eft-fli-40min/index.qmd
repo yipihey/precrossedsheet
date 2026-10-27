@@ -1,0 +1,705 @@
+---
+title: "The Pre-Crossed Phase-Space Sheet"
+subtitle: "Why Exact Lagrangian Geometry + 4LPT is the Natural Forward Model for Field-Level Cosmology"
+author: "Tom Abel & Collaborators (precrossedsheet & DiscoDJ.jl)"
+format:
+  revealjs:
+    theme: simple
+    css: ../shared/slides.css
+    slide-number: c/t
+    width: 1400
+    height: 820
+    margin: 0.04
+    center: false
+    transition: none
+    navigation-mode: linear
+    controls: true
+    progress: true
+    hash: true
+    html-math-method: katex
+    include-after-body:
+      - text: |
+          <script type="module" src="../shared/react-lab-panels.js"></script>
+---
+
+## The Pre-Crossed Phase-Space Sheet {.unnumbered}
+
+<div class="title-hero">
+  <h1>The Pre-Crossed Phase-Space Sheet</h1>
+  <p>Why Exact Lagrangian Geometry + 4LPT is the Natural Forward Model for Field-Level Cosmology</p>
+  <div class="title-pills">
+    <span class="title-pill">40-Minute Pedagogical Seminar</span>
+    <span class="title-pill">Audience: PT / EFTofLSS &amp; Field-Level Inference Cosmologists</span>
+    <span class="title-pill">Live React.js + Rust/Wasm/WebGPU Interactive Panels</span>
+    <span class="title-pill">DiscoDJ.jl + precrossedsheet</span>
+  </div>
+</div>
+
+<div class="slide-grid-3" style="margin-top: 14px;">
+  <div class="slide-card blue">
+    <h3>Act I: The Forward-Modeling Dilemma (8 min)</h3>
+    <p>Why field-level inference needs a hard UV cutoff $\Lambda$ (or $R_f$), how existing pipelines (<code>LEFTfield</code>, Shifted-EFT, <code>BORG</code>, <code>LULO</code>, <code>Manticore</code>) trade off dynamics vs. discreteness, and why $R_f \sim 14\text{–}18\,h^{-1}\mathrm{Mpc}$ defines a controlled pre-crossed regime.</p>
+  </div>
+  <div class="slide-card accent">
+    <h3>Acts II &amp; III: Geometry &amp; 4LPT Dynamics (21 min)</h3>
+    <p>Continuous Kuhn-simplex sheet ($P_{\text{shot}} \equiv 0$, R3D voxelization, Hermite–Genocchi Fourier modes) + 4LPT cofactor dynamics, 1-pt PDFs, 2-pt copulas, and an exact parameter-free tidal shear law across $1100\,(h^{-1}\mathrm{Gpc})^3$.</p>
+  </div>
+  <div class="slide-card purple">
+    <h3>Acts IV &amp; V: Differentiable Inference (11 min)</h3>
+    <p>Space–time factorization of 4LPT, analytic confluent divided-difference JVPs, sub-percent BAO preservation, and interactive React + WebAssembly laboratory panels embedded directly in this deck.</p>
+  </div>
+</div>
+
+::: {.notes}
+Welcome everyone. This 40-minute pedagogical seminar is designed for perturbation-theory, EFTofLSS, and field-level inference cosmologists. Several slides contain live React.js + Rust/WebAssembly panels running directly inside the browser.
+:::
+
+---
+
+## Slide 1: The Field-Level Inference Bottleneck <span class="act-badge act-1">Act I · 00:00–02:00</span>
+
+<div class="slide-grid-55-45">
+  <div>
+    <div class="slide-card blue" style="margin-bottom: 10px;">
+      <h3>Why Field-Level Inference (FLI) Beyond $P(k)$ and $B(k_1,k_2,k_3)$?</h3>
+      <ul>
+        <li>Stage-IV surveys (DESI, Euclid, Rubin LSST, SPHEREx, Roman) map the full 3D non-Gaussian cosmic web—filaments, walls, and deep cosmic voids.</li>
+        <li>Extracting that non-Gaussian information requires evaluating a differentiable forward model $\hat{\delta}_{\mathbf{k}}[\delta_{\mathrm{in}}]$ (and its Jacobian $\partial\hat{\delta}/\partial\delta_{\mathrm{in}}$) inside Hamiltonian Monte Carlo (HMC) or Simulation-Based Inference (SBI) loops:
+          $$\ln\mathcal{P}(\delta_{\mathrm{in}}, \theta \mid \delta_{\mathrm{obs}}) = -\frac{1}{2}\sum_{\mathbf{k}} \frac{|\delta_{\mathrm{obs}}(\mathbf{k}) - \hat{\delta}_{\mathbf{k}}[\delta_{\mathrm{in}}, \theta]|^2}{\sigma_\epsilon^2(k)} - \frac{1}{2}\sum_{|\mathbf{q}|<\Lambda}\frac{|\delta_{\mathrm{in}}(\mathbf{q})|^2}{P_{\mathrm{lin}}(q)} + \text{const.}$$
+        </li>
+      </ul>
+    </div>
+    <div class="slide-card warn">
+      <h3>The Dilemma Facing Every Existing Forward Model</h3>
+      <ul>
+        <li><strong>Eulerian PT / EFTofLSS (<code>LEFTfield</code>):</strong> Analytically clean &amp; fast, but expands in $\delta(\mathbf{x})$—diverging in voids ($\delta \to -1$) and erasing large coherent displacements unless infrared-resummed.</li>
+        <li><strong>Grid-Based LPT + CIC / PM $N$-Body (<code>BORG</code>):</strong> Gets large-scale displacements right, but represents a continuous sheet as discrete point particles—polluting voids with empty cells ($\rho=0$) and high-$k$ with $1/\bar{n}$ shot noise!</li>
+      </ul>
+    </div>
+  </div>
+  <div>
+    <div class="slide-fig tall">
+      <img src="../../chapters/figures/intro-sheet-hero.svg" alt="Continuous phase-space sheet vs discrete particles" />
+      <div class="slide-fig-caption">
+        <strong>The Core Thesis:</strong> Dark matter in the controlled UV-filtered regime ($\Lambda$ / $R_f$) is a smooth 3D submanifold $(\mathbf{q}, \mathbf{x}(\mathbf{q}), \mathbf{v}(\mathbf{q}))$ of 6D phase space—<em>not</em> a cloud of point particles.
+      </div>
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 2: What Existing Field-Level Pipelines Actually Do (1/2) <span class="act-badge act-1">Act I · 02:00–03:30</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card">
+    <h3>1. <code>LEFTfield</code> — Grid-Based $n$LPT + Eulerian Bias Expansion</h3>
+    <p><em>Schmidt, Elsner, Jasche, Nguyen, Kostić, Tucci, Stadler et al. (2019–2025)</em></p>
+    <div class="slide-grid-2" style="gap: 8px; margin: 6px 0;">
+      <div class="slide-fig compact">
+        <img src="../assets/figures/leftfield_slice_L010.png" alt="LEFTfield slice Lambda=0.10" />
+        <div class="slide-fig-caption">$\Lambda = 0.10\,h\,\mathrm{Mpc}^{-1}$ vs $N$-body (Schmidt+ 2019)</div>
+      </div>
+      <div class="slide-fig compact">
+        <img src="../assets/figures/leftfield_slice_L014.png" alt="LEFTfield slice Lambda=0.14" />
+        <div class="slide-fig-caption">$\Lambda = 0.14\,h\,\mathrm{Mpc}^{-1}$: UV residuals grow</div>
+      </div>
+    </div>
+    <ul>
+      <li>Sharp spherical cutoff $W_\Lambda(\mathbf{k}) = \Theta(\Lambda - |\mathbf{k}|)$ at $\Lambda \sim 0.10\text{–}0.20\,h\,\mathrm{Mpc}^{-1}$, $n$LPT on a padded cubic grid, followed by Eulerian bias operators $\mathcal{O}(\mathbf{x})$ at $\Lambda' \ge \Lambda$.</li>
+      <li><strong>Why they moved from Eulerian grid Jacobian to CIC (2021):</strong> Evaluating $\delta = |\mathbf{I}+\mathbf{M}|^{-1}-1$ on the Eulerian grid became numerically unstable near shell crossing, so <code>LEFTfield</code> switched to displacing pseudo-particles + CIC assignment (introducing the CIC window and discreteness noise).</li>
+    </ul>
+  </div>
+
+  <div class="slide-card">
+    <h3>2. Shifted-Operator EFT / Lagrangian IR Resummation</h3>
+    <p><em>Schmittfull, Simonović, Assassi, Zaldarriaga (2019) &amp; Ivanov et al. (2024)</em></p>
+    <div class="slide-grid-2" style="gap: 8px; margin: 6px 0;">
+      <div class="slide-fig compact">
+        <img src="../assets/figures/schmittfull_cic_zeldovich_slice.png" alt="Schmittfull CIC shifted operators" />
+        <div class="slide-fig-caption">CIC-deposited Zel'dovich shifted operators $\tilde{\mathcal{O}}_i(\mathbf{x})$</div>
+      </div>
+      <div class="slide-fig compact">
+        <img src="../assets/figures/schmittfull_pdf_shifted.png" alt="Schmittfull 1-pt PDF" />
+        <div class="slide-fig-caption">1-pt PDF at $R = 5\,h^{-1}\mathrm{Mpc}$ across $z$</div>
+      </div>
+    </div>
+    <ul>
+      <li>Displace uniform grid points by $\boldsymbol{\Psi}_1(\mathbf{q}) = \int_{|\mathbf{k}|<\Lambda} \frac{i\mathbf{k}}{k^2}\delta_1(\mathbf{k})e^{i\mathbf{k}\cdot\mathbf{q}}$ and deposit with <strong>CIC</strong> onto an Eulerian mesh:
+        $$\tilde{\mathcal{O}}_n(\mathbf{k}) = \int d^3q\,\mathcal{O}_n(\mathbf{q})\,e^{-i\mathbf{k}\cdot(\mathbf{q}+\boldsymbol{\Psi}_1(\mathbf{q}))}$$
+      </li>
+      <li>Matches 1-loop $P(k)$ &amp; $B(k)$ because orthogonalized linear transfer functions $b_i(k)$ absorb CIC window &amp; shot noise in 2-pt space—<strong>but raw real-space voids and high-$k$ phases remain particle-discretized!</strong></li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 3: What Existing Field-Level Pipelines Actually Do (2/2) <span class="act-badge act-1">Act I · 03:30–05:00</span>
+
+<div class="slide-grid-3">
+  <div class="slide-card">
+    <h3>3. <code>BORG</code> (2LPT / PM / tCOLA + CIC)</h3>
+    <p><em>Jasche &amp; Wandelt (2013); Lavaux &amp; Jasche (2016); Leclercq et al. (2020)</em></p>
+    <div class="slide-fig compact" style="margin: 6px 0;">
+      <img src="../assets/figures/borg_pm_chrono_sg.png" alt="BORG PM local universe" />
+      <div class="slide-fig-caption"><code>BORG-PM</code> Supergalactic plane (Lavaux &amp; Jasche 2016)</div>
+    </div>
+    <ul>
+      <li><code>BORG-2LPT</code> / <code>BORG-PM</code> ($128^3\text{–}256^3$, $\Delta x \sim 2.6\text{–}4\,h^{-1}\mathrm{Mpc}$) uses differentiable <strong>CIC</strong> particle assignment inside HMC.</li>
+      <li>Smooth enough for gradients, but voids suffer from $1/\bar{n}$ particle shot noise and zero-density cells.</li>
+    </ul>
+  </div>
+
+  <div class="slide-card">
+    <h3>4. <code>BORG-EM</code> &amp; <code>LULO</code> ($N$-Body Emulator inside HMC)</h3>
+    <p><em>Doeser, Jamieson, Stopyra, Lavaux, Leclercq, Jasche (2024, 2025)</em></p>
+    <div class="slide-fig compact" style="margin: 6px 0;">
+      <img src="../assets/figures/doeser_borg_em_fig1.png" alt="BORG-EM emulator vs COLA" />
+      <div class="slide-fig-caption"><code>BORG-EM</code> neural displacement emulator vs 10-step COLA &amp; $N$-body</div>
+    </div>
+    <ul>
+      <li>Replaces 2LPT/tCOLA inside HMC with a 3D CNN displacement emulator trained on <code>Gadget-4</code> (correcting $N$-body displacements to $\sim 1\%$ at $k \le 0.4\,h\,\mathrm{Mpc}^{-1}$).</li>
+      <li>Still deposits discrete particles onto the Eulerian grid via <strong>CIC</strong>!</li>
+    </ul>
+  </div>
+
+  <div class="slide-card">
+    <h3>5. <code>Manticore-Local</code> (2025) &amp; HMC vs. SBI (2026)</h3>
+    <p><em>McAlpine et al. (2025); Doeser, Leclercq et al. (2026)</em></p>
+    <div class="slide-fig compact" style="margin: 6px 0;">
+      <img src="../assets/figures/manticore_local_borg_density.png" alt="Manticore-Local posterior slice" />
+      <div class="slide-fig-caption"><code>Manticore-Local</code> $256^3$ 2M++ inference ($\Delta x = 3.9\,h^{-1}\mathrm{Mpc}$)</div>
+    </div>
+    <ul>
+      <li><code>Manticore-Local</code> inferences at $N=256^3$ still rely on CIC during HMC and require re-simulating with <code>Swift</code> $N$-body at $1024^3$ afterward.</li>
+      <li><strong>What if the forward model inside inference already had exact continuous sheet geometry + 4LPT?</strong></li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 4: Why Eulerian PT Struggles while Lagrangian PT Stays Controlled <span class="act-badge act-1">Act I · 05:00–06:30</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card blue">
+    <h3>Eulerian vs. Lagrangian Expansion Variable</h3>
+    <ul>
+      <li><strong>Eulerian Perturbation Theory (EPT)</strong> expands in the density contrast $\delta(\mathbf{x}, t) = \rho(\mathbf{x},t)/\bar\rho - 1$:
+        <ul>
+          <li>A bulk flow $\mathbf{x} = \mathbf{q} + \boldsymbol{\Psi}_{\mathrm{IR}}$ changes Eulerian phases by $\mathcal{O}(\mathbf{k}\cdot\boldsymbol{\Psi}_{\mathrm{IR}} \gg 1)$ without changing local dynamics—requiring explicit IR resummation.</li>
+          <li>In voids ($\delta \to -1$) and filaments ($\delta \gtrsim 2$), Taylor series in $\delta$ fail to converge; cumulant expansions can even predict unphysical $\rho < 0$.</li>
+        </ul>
+      </li>
+      <li><strong>Lagrangian Perturbation Theory (LPT)</strong> expands the trajectory map $\mathbf{x}(\mathbf{q}, a) = \mathbf{q} + \boldsymbol{\Psi}(\mathbf{q}, a)$:
+        <ul>
+          <li>Mass conservation is <strong>exact and non-perturbative in $\delta$</strong>:
+            $$1 + \delta(\mathbf{x}(\mathbf{q}, a)) = \frac{1}{J(\mathbf{q}, a)}, \qquad J(\mathbf{q}, a) \equiv \det\!\bigl[\mathbf{I} + \nabla_{\mathbf{q}}\boldsymbol{\Psi}(\mathbf{q}, a)\bigr]$$
+          </li>
+          <li>Even a gentle $30\%$ Lagrangian stretching ($J \approx 2.2$) produces a deep nonlinear void ($\delta \approx -0.55$) smoothly and with guaranteed positivity $\rho > 0$!</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+
+  <div class="slide-card accent">
+    <h3>The Exact Mathematical Condition for Single-Stream Validity</h3>
+    <ul>
+      <li>The map $\mathbf{q} \mapsto \mathbf{x}(\mathbf{q}, a)$ is a smooth diffeomorphism on $\mathbb{T}^d$ if and only if:
+        $$J(\mathbf{q}, a) = \det\!\left(\delta_{ij} + \frac{\partial\Psi_i(\mathbf{q}, a)}{\partial q_j}\right) > 0 \quad \forall\,\mathbf{q} \in \mathbb{T}^d$$
+      </li>
+      <li><strong>First shell crossing</strong> occurs at the earliest scale factor $a_{\times}$ where $\min_{\mathbf{q}} J(\mathbf{q}, a_{\times}) = 0$ (a pancake fold caustic where one eigenvalue of $\nabla_{\mathbf{q}}\boldsymbol{\Psi}$ reaches $-1$).</li>
+      <li>Before $a_{\times}$:
+        <ol>
+          <li>Single-stream pressureless fluid equations are <strong>exact</strong> (zero multi-stream velocity dispersion $\sigma_{ij} \equiv 0$).</li>
+          <li>Kelvin's circulation theorem guarantees $\nabla_{\mathbf{x}} \times \mathbf{u} = \mathbf{0}$ everywhere.</li>
+          <li>The phase-space sheet never tears or self-intersects—and 4LPT converges rapidly!</li>
+        </ol>
+      </li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 5: The UV Cutoff Dictionary ($R_f \leftrightarrow \Lambda$) & Controlled Pre-Crossed Regime <span class="act-badge act-1">Act I · 06:30–08:00</span>
+
+<div class="slide-grid-55-45">
+  <div class="slide-card">
+    <h3>Translating Gaussian Smoothing $R_f$ to Sharp-$k$ Cutoff $\Lambda$</h3>
+    <p>Every EFT/FLI pipeline regularizes initial UV modes with either a sharp-$k$ filter $\Theta(\Lambda - k)$ or a Gaussian filter $W_G(k R_f) = \exp(-\frac{1}{2}k^2 R_f^2)$. Matching the variance of the displacement gradient tensor $\sigma^2(\nabla\boldsymbol{\Psi})$ gives $\Lambda_{\mathrm{eff}} \simeq \sqrt{5}/R_f \approx 2.24/R_f$ (or half-power $k_{1/2} = \sqrt{\ln 2}/R_f \approx 0.83/R_f$):</p>
+
+| Gaussian $R_f$ [$h^{-1}\mathrm{Mpc}$] | Sharp-$k$ $\Lambda_{\mathrm{eff}}$ [$h\,\mathrm{Mpc}^{-1}$] | Linear $\sigma(R_f, z=0)$ | Uncrossed Mass Fraction ($z=0$) | Physical Regime at $z=0$ |
+| :---: | :---: | :---: | :---: | :--- |
+| **$18$** | $\sim 0.12$ | $0.259$ | **$99.96\%$** | Almost purely pre-crossed ($\sim 4\times 10^{-4}$ crossed) |
+| **$14$** | $\sim 0.16$ | $0.326$ | **$99.51\%$** | Controlled pre-crossed benchmark (`LEFTfield` $\Lambda=0.14$) |
+| **$10$** | $\sim 0.22$ | $0.422$ | **$97.54\%$** | Mild localized filament crossing (`LEFTfield` $\Lambda=0.20$) |
+| **$6$** | $\sim 0.37$ | $0.581$ | **$99.1\%$** ($a=0.58$) / $91\%$ ($z=0$) | High-$z$ DESI/Euclid regime ($z \gtrsim 0.7$) |
+
+  </div>
+
+  <div class="slide-card warn">
+    <h3>Where Does $1\%$ Shell Crossing Occur in Planck $\Lambda$CDM?</h3>
+    <ul>
+      <li>Across our $1100\,(h^{-1}\mathrm{Gpc})^3$ suite (`DiscoDJ.jl/studies/mass_cdf`), the crossed mass fraction $f_\times = P(J \le 0)$ follows an exponential rare-event law in $1/\sigma^2$:
+        <ul>
+          <li>$\sigma = 0.26$ ($R_f = 18\,h^{-1}\mathrm{Mpc}$): $f_\times = 4.2 \times 10^{-4}$ ($0.04\%$)</li>
+          <li>$\sigma = 0.33$ ($R_f = 14\,h^{-1}\mathrm{Mpc}$): $f_\times = 4.9 \times 10^{-3}$ ($0.49\%$)</li>
+          <li>$\sigma = 0.58$ ($R_f = 6\,h^{-1}\mathrm{Mpc}$ at $z\approx 0.7$): $f_\times = 8.9 \times 10^{-3}$ ($0.89\%$)</li>
+        </ul>
+      </li>
+      <li><strong>Crucial insight for EFT/FLI cosmologists:</strong> At the UV cutoffs $\Lambda \sim 0.10\text{–}0.16\,h\,\mathrm{Mpc}^{-1}$ already used in <code>LEFTfield</code> and <code>BORG</code>, <strong>$>99.5\%$ of the universe is still in the single-stream pre-crossed regime at $z=0$</strong> (and down to $R_f \sim 6\,h^{-1}\mathrm{Mpc}$ at $z \ge 1$)!</li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 6: Why Particle Assignment Fails Even Before Shell Crossing <span class="act-badge act-2">Act II · 08:00–10:00</span>
+
+<div class="slide-grid-45-55">
+  <div>
+    <div class="slide-card warn" style="margin-bottom: 10px;">
+      <h3>The Hidden Discretization Bug in Standard Pipelines</h3>
+      <ul>
+        <li>Suppose $J(\mathbf{q}, a) > 0$ everywhere—the physics is 100% single-stream and smooth.</li>
+        <li>Standard pipelines discard the Lagrangian connectivity and treat vertices $\mathbf{x}_{\mathbf{i}}$ as point particles deposited with NGP, CIC, or TSC:
+          $$\rho_C^{\mathrm{CIC}} = \frac{1}{\Delta x^d}\sum_p m_p W_{\mathrm{CIC}}(\mathbf{x}_p - \mathbf{x}_C)$$
+        </li>
+        <li>In an expanding void where $J = 4$, inter-vertex spacing grows by $4^{1/3} \approx 1.6\times$. Whenever Eulerian cell size $\Delta x_{\mathrm{mesh}} \lesssim \Delta x_{\mathrm{void}}$, particles separate farther than the kernel support:
+          <ul>
+            <li><strong>Voids shatter into artificial empty cells ($\rho_C = 0$, $\delta_C = -1$)!</strong></li>
+            <li>Log-density likelihoods $\ln(1+\delta)$ diverge!</li>
+            <li>High-$k$ power is swamped by white shot noise $P_{\mathrm{shot}} = L^3/N_p$ convolved with $\operatorname{sinc}^{2p}(k\Delta x/2)$.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <div>
+    <div class="slide-fig tall">
+      <img src="../../chapters/figures/intro-estimators.svg" alt="Continuous sheet P0 and P1 vs CIC particle deposition" />
+      <div class="slide-fig-caption">
+        <strong>Same 4LPT vertex trajectories, different density estimators:</strong> When $M > N$, CIC breaks the continuous sheet into isolated spikes separated by artificial vacuum ($\rho = 0$), whereas the continuous sheet ($P_0$ and $P_1$) remains strictly positive and smooth everywhere.
+      </div>
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 7: The Simplicial Phase-Space Sheet & Exact R3D Voxelization <span class="act-badge act-2">Act II · 10:00–12:30</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card accent">
+    <h3>Kuhn Freudenthal Triangulation &amp; Exact Clipping</h3>
+    <ul>
+      <li>Partition each Lagrangian cell $[\mathbf{i}, \mathbf{i}+\mathbf{1}]\Delta q$ into $d!$ simplices indexed by permutations $\pi \in S_d$ ($2$ triangles per cell in 2D; $6$ tetrahedra per cell in 3D, Total $= 6 N^3$).</li>
+      <li>Each simplex $T$ carries exact conserved mass $m_T = \bar\rho\,(\Delta q)^d / d!$ and deformed signed volume:
+        $$V_T = \frac{1}{d!}\det\bigl[\mathbf{x}_1 - \mathbf{x}_0,\;\dots,\;\mathbf{x}_d - \mathbf{x}_0\bigr], \qquad \rho_T = \frac{m_T}{|V_T|} > 0$$
+      </li>
+      <li><strong>Piecewise-Constant Sheet ($P_0$, Powell &amp; Abel 2015 `R3D`):</strong> Clip each simplex $T$ against the $2d$ bounding half-spaces of each Eulerian cell $C$ via Sutherland–Hodgman / R3D convex polytope clipping:
+        $$\rho_C^{(P_0)} = \frac{1}{|C|}\sum_{T} \rho_T\,\operatorname{Vol}(T \cap C), \qquad \sum_C \rho_C^{(P_0)} |C| = M_{\mathrm{tot}} \text{ (to } 10^{-15}\text{)}$$
+      </li>
+      <li><strong>Piecewise-Linear Sheet ($P_1$):</strong> Evaluate exact nodal Jacobians $J_a$ at vertices, form $\rho_a = \bar\rho / J_a$, and integrate the barycentric linear field across $T \cap C$ using the exact centroid $\bar{\mathbf{x}}_{T\cap C}$.</li>
+    </ul>
+  </div>
+
+  <div>
+    <div class="slide-fig" style="margin-bottom: 10px;">
+      <img src="../../chapters/figures/intro-3d-sheet.svg" alt="3D Kuhn tetrahedra and sheet vs CIC" />
+      <div class="slide-fig-caption">
+        <strong>3D $\Lambda$CDM Benchmark ($L = 500\,h^{-1}\mathrm{Mpc}$):</strong> 6 Kuhn tetrahedra tile every Lagrangian cell without gaps or overlaps.
+      </div>
+    </div>
+    <div class="slide-card blue">
+      <h3>Quantitative Payoff ($64^3$ vs $256^3$ Reference)</h3>
+      <ul>
+        <li>On a $64^3$ grid deposited onto a $128^3$ mesh, <strong>CIC leaves $66.3\%$ of all Eulerian cells completely empty ($\rho = 0$)</strong> and has a $>500\%$ density quantile error.</li>
+        <li>From the <strong>exact same $64^3$ 4LPT vertices</strong>, the $P_0$ / $P_1$ sheet has <strong>$0.0\%$ empty cells</strong> and matches the $256^3$ reference density distribution to <strong>$1.6\%$</strong>!</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 8: Live React Panel 1 — Trajectories $\times$ Estimators & Log-Density Maps <span class="act-badge act-2">Act II · 12:30–14:30</span>
+
+<div class="react-slide-lab-mount" data-panel="estimator-density"></div>
+
+---
+
+## Slide 9: Continuous Mesh-Free Fourier Modes via Hermite–Genocchi Divided Differences <span class="act-badge act-2">Act II · 14:30–16:30</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card accent">
+    <h3>Exact Fourier Transform of a Deformed Simplex (No Grid!)</h3>
+    <ul>
+      <li>Can we compute the Fourier mode $\delta^{\mathrm{sheet}}(\mathbf{k})$ of the piecewise-constant sheet <strong>directly from the vertex coordinates $\mathbf{x}_0, \dots, \mathbf{x}_d$ without any Eulerian grid or FFT</strong>?</li>
+      <li>Map $T$ to the unit reference simplex $\Delta^d = \{\mathbf{u} \ge 0 : \sum_{j=1}^d u_j \le 1\}$ via $\mathbf{x}(\mathbf{u}) = \mathbf{x}_0 + \sum_{j=1}^d u_j(\mathbf{x}_j - \mathbf{x}_0)$. Since $\rho_T V_T = m_T$, the geometric Jacobian $d!\,V_T$ cancels $\rho_T$:
+        $$I_T(\mathbf{k}) = \int_T \rho_T\,e^{-i\mathbf{k}\cdot\mathbf{x}}\,d^d x = m_T\,d!\int_{\Delta^d} \exp\!\left(s_0 + \sum_{j=1}^d u_j(s_j - s_0)\right) d^d u$$
+        where $s_j \equiv -i\mathbf{k}\cdot\mathbf{x}_j$ are the pure imaginary vertex phases.</li>
+      <li>By the <strong>Hermite–Genocchi theorem</strong>, this integral is the $d$-th divided difference of $\exp$:
+        $$\boxed{I_T(\mathbf{k}) = m_T\,d!\,\exp[s_0, s_1, \dots, s_d]}, \qquad \delta^{\mathrm{sheet}}(\mathbf{k}) = \frac{1}{\bar\rho L^d}\sum_T I_T(\mathbf{k}) - \delta_{\mathbf{k},\mathbf{0}}$$
+      </li>
+    </ul>
+  </div>
+
+  <div class="slide-card blue">
+    <h3>Removable Coincident-Phase Singularities &amp; Zero Shot Noise</h3>
+    <ul>
+      <li>Explicitly in 1D ($d=1$) and 2D ($d=2$):
+        $$\exp[s_0, s_1] = \frac{e^{s_1} - e^{s_0}}{s_1 - s_0}, \qquad 2!\,\exp[s_0, s_1, s_2] = 2\sum_{a=0}^2 \frac{e^{s_a}}{\prod_{b\neq a}(s_a - s_b)}$$
+      </li>
+      <li>When a wavevector $\mathbf{k}$ is nearly orthogonal to a simplex edge ($|s_a - s_b| \ll 1$), naive subtraction suffers catastrophic cancellation.</li>
+      <li>In <code>observables.rs</code> (and our WebGPU WGSL kernel), we sort arguments so $|s_i - s_j|$ is minimal and replace small differences by a 12-termHorner Taylor series of the confluent divided difference—giving <strong>machine precision ($\sim 10^{-15}$) across all wavevectors</strong>!</li>
+      <li><strong>No grid aliasing, no assignment window $\operatorname{sinc}(k\Delta x/2)$, and $P_{\mathrm{shot}} \equiv 0$!</strong></li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 10: Live React Panel 2 — 16-Ray Brillouin-Zone Simplex Spectrum & Nonlinear Transfer <span class="act-badge act-2">Act II · 16:30–18:00</span>
+
+<div class="react-slide-lab-mount" data-panel="simplex-spectra"></div>
+
+---
+
+## Slide 11: Building the Sheet with 4LPT — Cofactor Recursion & Cauchy Curl Invariant <span class="act-badge act-3">Act III · 18:00–20:00</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card">
+    <h3>Why LPT is Purely Polynomial (Matsubara 2015; Rampf+ 2012)</h3>
+    <ul>
+      <li>Transforming the Euler–Poisson divergence equation to $\mathbf{q}$-space via the cofactor matrix $C_{ij} = \partial J/\partial F_{ij} = J(F^{-1})_{ji}$ <strong>cancels the $1/J$ chain-rule factor against the $J$ in $\rho/\bar\rho - 1 = 1/J - 1$</strong>:
+        $$C_{ij}\left(\frac{d^2}{dt^2} + 2H\frac{d}{dt}\right)\Psi_{i,j} = \frac{3}{2}\Omega_m(a)H(a)^2 (J - 1)$$
+      </li>
+      <li>Expanding $J - 1 = \operatorname{tr}\mathbf{M} + \mu_2(\mathbf{M},\mathbf{M}) + \mu_3(\mathbf{M},\mathbf{M},\mathbf{M})$ in symmetric invariant polynomials $\mu_2(\mathbf{A},\mathbf{B}) = \frac{1}{2}(\operatorname{tr}\mathbf{A}\operatorname{tr}\mathbf{B} - \operatorname{tr}(\mathbf{A}\mathbf{B}))$ gives closed longitudinal recursions at every order $n=1,2,3,4$.</li>
+    </ul>
+    <h3 style="margin-top: 8px;">The Transverse Piece: Cauchy Vorticity Invariant at $n \ge 3$</h3>
+    <ul>
+      <li>Eulerian irrotationality ($\nabla_{\mathbf{x}}\times\mathbf{u} = \mathbf{0}$) in Lagrangian coordinates reads $\epsilon_{ijk}F_{lj}\dot{F}_{lk} = 0$, which <strong>forces a non-zero Lagrangian curl starting at 3LPT</strong>:
+        $$\nabla_{\mathbf{q}} \times \boldsymbol{\Psi}^{(3)} = -\frac{1}{3}\epsilon_{ijk}\Psi_{l,j}^{(1)}\Psi_{l,k}^{(2)} \neq \mathbf{0}$$
+      </li>
+      <li>At <strong>4LPT</strong>, this 3LPT magnetic-type curl couples back into the longitudinal displacement divergence!</li>
+    </ul>
+  </div>
+
+  <div class="slide-card blue">
+    <h3>Exact Coupled $\Lambda$CDM Growth ODEs &amp; Space–Time Factorization</h3>
+    <ul>
+      <li>In exact $\Lambda$CDM (`growth.rs` &amp; `DiscoDJ.jl`), different spatial vertices evolve with distinct coupled growth functions $g_\tau(a)$ solving $\mathcal{L}_a g_\tau \equiv g_\tau'' + \bigl(\frac{3}{a} + \frac{E'}{E}\bigr)g_\tau' - \frac{3\Omega_{m,0}}{2a^5 E^2}g_\tau = S_\tau(a)$:
+        <ul>
+          <li>$n=1$: $D_1(a)$ (1 spatial gradient field)</li>
+          <li>$n=2$: $D_2(a) \approx -\frac{3}{7}\Omega_m^{-1/143} D_1^2$ (1 quadratic field $\mu_2(\mathbf{M}^{(1)},\mathbf{M}^{(1)})$)</li>
+          <li>$n=3$: $D_{3a}, D_{3b}, D_{3c}$ (cubic determinant $\mu_3$, rescattered $\mu_2(\mathbf{M}^{(1)},\mathbf{M}^{(2)})$, and transverse curl)</li>
+          <li>$n=4$: 6 longitudinal channels $D_{4a}\dots D_{4f}$ + 2 transverse channels</li>
+        </ul>
+      </li>
+      <li><strong>Space–Time Factorization Advantage:</strong> All 13 spatial basis fields $\mathbf{S}^\tau(\mathbf{q})$ depend <em>only</em> on the initial conditions $\delta_0(\mathbf{q})$. Evaluating the sheet at any redshift $z$ or growth history on a lightcone is an instant linear combination $\boldsymbol{\Psi}(\mathbf{q}, a) = \sum_\tau g_\tau(a)\mathbf{S}^\tau(\mathbf{q})$!</li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 12: Study 1 (`DiscoDJ.jl`) — One-Point Volume & Mass PDFs ($1\text{LPT}\to 4\text{LPT}$ vs $N$-Body) <span class="act-badge act-3">Act III · 20:00–22:00</span>
+
+<div class="slide-grid-55-45">
+  <div class="slide-card">
+    <h3>Isolating Trajectory Error from Estimator Error (`studies/lpt_pdf`)</h3>
+    <p>In both <code>precrossedsheet</code> and <code>DiscoDJ.jl</code> ($L=300\,h^{-1}\mathrm{Mpc}$, $R_f = 14\,h^{-1}\mathrm{Mpc}$, $z=0$), we evolve the vertices with 1–4LPT and with a full $N$-body solver, keeping the <strong>same Kuhn tetrahedral sheet connectivity</strong> on both so any difference is pure dynamics:</p>
+
+| Smoothing $R_s$ [$h^{-1}\mathrm{Mpc}$] | Observable / Metric | 1LPT (Zel'dovich) | 2LPT | 3LPT | **4LPT** |
+| :---: | :--- | :---: | :---: | :---: | :---: |
+| **$7$ ($\frac{1}{2}R_f$)** | Variance $\sigma^2/\sigma^2_{\mathrm{NB}} - 1$ | $-18.3\%$ | $-9.4\%$ | $-4.0\%$ | **$-2.6\%$** |
+| **$7$ ($\frac{1}{2}R_f$)** | Vol $0.1\% / 99.9\%$ quantiles | $-19.7\% / -26.4\%$ | $+10.8\% / -10.8\%$ | $-6.3\% / -5.1\%$ | **$+4.3\% / -2.8\%$** |
+| **$14$ ($R_f$)** | Variance $\sigma^2/\sigma^2_{\mathrm{NB}} - 1$ | $-9.1\%$ | $-5.0\%$ | $-1.4\%$ | **$-0.9\%$** |
+| **$14$ ($R_f$)** | Mass $99\% / 99.9\%$ quantiles | $-19.2\% / -23.0\%$ | $-7.5\% / -9.1\%$ | $-3.5\% / -4.2\%$ | **$-1.9\% / -2.4\%$** |
+| **$28$ ($2R_f$)** | Max $|\text{quantile shift}|$ | $9.3\%$ | $2.8\%$ | $1.1\%$ | **$0.5\%$** |
+| **$42$ ($3R_f$)** | Max $|\text{quantile shift}|$ | $5.1\%$ | $1.3\%$ | $0.3\%$ | **$0.1\%$** |
+
+  </div>
+
+  <div class="slide-card accent">
+    <h3>Two Dual Measures of Cosmic Structure</h3>
+    <ul>
+      <li><strong>Volume-Weighted PDF $p_V(r)$ ($r \equiv \rho/\bar\rho$):</strong> Weights each simplex by its deformed Eulerian volume $V_T \propto J_T$—dominated by expanding <strong>cosmic voids</strong> ($r \ll 1$).
+        <ul>
+          <li>Notice the alternating-sign asymptotic convergence in the deep void tail ($0.1\%$ quantile): $-19.7\% \to +10.8\% \to -6.3\% \to \mathbf{+4.3\%}$.</li>
+        </ul>
+      </li>
+      <li><strong>Mass-Weighted PDF $p_M(r) = r\,p_V(r)$:</strong> Weights each simplex equally by its conserved Lagrangian mass $m_T$—sensitive to collapsing <strong>filaments, walls, and peaks</strong> ($r > 1$).
+        <ul>
+          <li>Monotonic convergence in the dense tail: $-23.0\% \to -9.1\% \to -4.2\% \to \mathbf{-2.4\%}$ at $R_s = R_f$.</li>
+        </ul>
+      </li>
+      <li><strong>Takeaway:</strong> 2LPT is too narrow in both tails; at $R_s \ge R_f$, <strong>4LPT reproduces the full non-Gaussian $N$-body 1-point PDF to $\lesssim 1\%$!</strong></li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 13: Live React Panel 3 — 1LPT $\to$ 4LPT vs. PM Sheet ($\sigma^2(R)$ & One-Point PDFs) <span class="act-badge act-3">Act III · 22:00–23:30</span>
+
+<div class="react-slide-lab-mount" data-panel="lpt-convergence-variance-pdf"></div>
+
+---
+
+## Slide 14: Study 2 (`DiscoDJ.jl`) — Separating the Spatial Copula from the 1-Point PDF <span class="act-badge act-3">Act III · 23:30–25:00</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card blue">
+    <h3>How Do We Separate 1-Point Non-Gaussianity from Spatial Geometry?</h3>
+    <ul>
+      <li>Two fields can have the exact same 1-point PDF $p_V(\rho)$ but different spatial clustering $\xi(r)$, or identical rank-ordered spatial structure (copula) with slightly different 1-point tails.</li>
+      <li><strong>Rank-Gaussianization Test (`studies/lpt_pdf/copula`):</strong>
+        <ol>
+          <li>Sort the single-stream tetrahedral densities $\rho_T = \bar\rho / J_T$ across the volume.</li>
+          <li>Map each element's rank $R_i \in \{1,\dots,N\}$ to a unit Gaussian score:
+            $$y(\mathbf{q}_i) = \Phi^{-1}\!\left(\frac{R_i - 1/2}{N}\right), \qquad y \sim \mathcal{N}(0, 1)$$
+          </li>
+          <li>By construction, 1LPT, 2LPT, 3LPT, 4LPT, and $N$-body now have the <strong>exact same unit-Gaussian 1-point PDF</strong>! Any remaining difference in $\xi_y(r)$ or cross-correlation $r_y(k)$ is pure <strong>spatial copula error</strong>.</li>
+        </ol>
+      </li>
+    </ul>
+  </div>
+
+  <div class="slide-card accent">
+    <h3>What the Copula Decomposition Reveals</h3>
+    <ul>
+      <li><strong>Result 1 — 2LPT Has a Real Copula Residual that 4LPT Eliminates:</strong>
+        <ul>
+          <li>Even after equalizing the 1-point PDF, 2LPT exhibits a converged two-point copula residual $\Delta\xi_y = \xi_y^{\mathrm{LPT}} - \xi_y^{\mathrm{NB}} \approx 5.7\times 10^{-3}$ at $r = 20\text{–}30\,h^{-1}\mathrm{Mpc}$ ($z=0$).</li>
+          <li><strong>3LPT and 4LPT remove $75\%\text{–}95\%$ of this 2LPT copula error!</strong></li>
+          <li>Why? Because the 3LPT Cauchy vorticity curl $\nabla_{\mathbf{q}}\times\boldsymbol{\Psi}^{(3)}$ and 4LPT tidal rescattering rotate and shear filament/wall alignments into their true $N$-body geometry.</li>
+        </ul>
+      </li>
+      <li><strong>Result 2 — Where $N$-Body Differs at $r \sim 10\,h^{-1}\mathrm{Mpc}$:</strong>
+        <ul>
+          <li>In raw density $\delta$, $N$-body has slightly higher clustering at $r \sim 8\text{–}12\,h^{-1}\mathrm{Mpc}$.</li>
+          <li>In copula space $\xi_y(r)$, 4LPT and $N$-body are nearly indistinguishable—proving that the small-scale raw difference comes almost entirely from the sharpest $\sim 0.1\%$ 1-point peak tail, <strong>not from any displacement of the cosmic web!</strong></li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 15: Study 3 (`mass_cdf`) — An Exact Parameter-Free Law on the Pre-Crossed Sheet <span class="act-badge act-3">Act III · 25:00–27:30</span>
+
+<div class="slide-grid-55-45">
+  <div class="slide-card">
+    <h3>How Much Mass Resides Above the Mean Density $\bar\rho$?</h3>
+    <ul>
+      <li>In linear theory, $\delta_L$ is a symmetric Gaussian, so the mass fraction above $\bar\rho$ is $F_M(>\bar\rho) = P(\delta_L > 0) = \frac{1}{2}$.</li>
+      <li>On the nonlinear pre-crossed sheet, $\rho(\mathbf{q}) > \bar\rho \iff J(\mathbf{q}) < 1 \iff -\ln J(\mathbf{q}) > 0$. Expanding $-\ln J$ in the linear density $\delta_L$ and traceless tidal shear $T_{ij} = (\partial_i\partial_j/\nabla^2 - \frac{1}{3}\delta_{ij})\delta_L$:
+        $$-\ln J = \delta_L + \frac{13}{42}\delta_L^2 + \frac{2}{7}T_{ij}T^{ij} + \mathcal{O}(\delta_L^3) \quad \Longrightarrow \quad \left.-\ln J\right|_{\delta_L = 0} \simeq \frac{2}{7}T_{ij}T^{ij} > 0$$
+      </li>
+      <li><strong>Tidal shear focusing:</strong> Even fluid elements with $\delta_L = 0$ are compressed ($J < 1$) by anisotropic tidal shear! A Cornish–Fisher / Edgeworth expansion of $W = (-\ln J)/\sigma$ yields an <strong>exact odd-power law in $\sigma$</strong>:
+        $$\boxed{F_M(>\bar\rho) = P(J < 1) = \frac{1}{2} + A_1\,\sigma + A_3\,\sigma^3 + \mathcal{O}(\sigma^5)}$$
+        $$A_1^{\mathrm{EdS}} = \frac{4}{21\sqrt{2\pi}} = 0.075989\dots, \qquad A_1^{\Lambda\mathrm{CDM}}(a) = \frac{1 + D_2(a)/D_1(a)^2}{3\sqrt{2\pi}} = 0.075509 \quad (z=0)$$
+      </li>
+    </ul>
+  </div>
+
+  <div>
+    <div class="slide-fig" style="margin-bottom: 8px;">
+      <img src="../assets/figures/fig1_Yodd_over_sigma_vs_sigma2.png" alt="Y_odd / sigma vs sigma^2 across 1100 Gpc^3" />
+      <div class="slide-fig-caption">
+        <strong>Tested across $1100\,(h^{-1}\mathrm{Gpc})^3$ (`studies/mass_cdf`):</strong> $Y_{\mathrm{odd}}/\sigma = A_1 + A_3\sigma^2$ confirms $A_1^{\mathrm{EdS}} = 0.075984 \pm 0.000054$ ($0.07\%$ precision) and resolves the $0.6\%$ exact-$\Lambda$CDM shift in $D_2/D_1^2$ at $>15\sigma$!
+      </div>
+    </div>
+    <div class="slide-fig compact">
+      <img src="../assets/figures/fig4_shear_focusing.png" alt="Tidal shear focusing at delta_L = 0" />
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 16: Why 4LPT is Essential for $A_3$ + P1-FEM & PM $N$-Body Validation <span class="act-badge act-3">Act III · 27:30–29:00</span>
+
+<div class="slide-grid-2">
+  <div>
+    <div class="slide-grid-2" style="gap: 8px; margin-bottom: 8px;">
+      <div class="slide-fig compact">
+        <img src="../assets/figures/fig3_transition_fractions.png" alt="One-way street transition fractions" />
+        <div class="slide-fig-caption"><strong>One-way street ($F_{-+} \equiv 0$):</strong> Zero initially overdense elements expand below $\bar\rho$; all $1.6\%$ excess mass comes from $\delta_L < 0$ sheared above $\bar\rho$.</div>
+      </div>
+      <div class="slide-fig compact">
+        <img src="../assets/figures/fig6_convergence_A1_A3.png" alt="Convergence of A1 and A3 across LPT orders" />
+        <div class="slide-fig-caption"><strong>Why 4LPT is required for $A_3$:</strong> 2LPT ($-0.0073$) and 3LPT ($+0.0103$) miss $A_3$; <strong>4LPT converges</strong> to $+0.0021$ (5LPT &amp; 6LPT shift by $<4\times 10^{-5}$).</div>
+      </div>
+    </div>
+    <div class="slide-card blue">
+      <h3>Why Does $A_3$ Require 4LPT?</h3>
+      <p>By cumulant counting, every degree-$k$ polynomial part $P_k$ of $-\ln J$ up to $k=4$ enters the $\mathcal{O}(\sigma^3)$ Edgeworth coefficient $A_3$ via $\kappa_4 \sim \langle P_1^3 P_3\rangle + \langle P_1^2 P_2^2\rangle$. Truncating at 2LPT or 3LPT omits the $P_4$ counter-terms!</p>
+    </div>
+  </div>
+
+  <div class="slide-card accent">
+    <h3>FEM &amp; PM $N$-Body Agreement Down to Small Scales ($R_f = 4\text{–}14\,h^{-1}\mathrm{Mpc}$)</h3>
+    <ul>
+      <li><strong>P1 Finite-Element $N$-Body Check (`disco-dj-fem`):</strong>
+        <ul>
+          <li>Evolving the tetrahedral sheet with a P1-FEM Poisson solver and matching the discrete linear operator yields agreement with 4LPT on $F_M(>\bar\rho)$ to <strong>$(3\text{–}4)\times 10^{-5}$ ($0.2\%$ of the nonlinear migration)</strong>!</li>
+        </ul>
+      </li>
+      <li><strong>Pushing $R_f$ Down Past First Crossing (`mass_cdf` §16):</strong>
+        <ul>
+          <li>At $R_f = 8\,h^{-1}\mathrm{Mpc}$ ($\sigma = 0.49$, $0.14\%$ crossed): $\frac{1}{2} + A_1\sigma + A_3\sigma^3$ matches PM $N$-body within $0.09\%$.</li>
+          <li>At $R_f = 6\,h^{-1}\mathrm{Mpc}$ ($\sigma = 0.58$, $0.9\%$ crossed) and $R_f = 4\,h^{-1}\mathrm{Mpc}$ ($\sigma = 0.78$, $5.2\%$ crossed): the 3-term law still tracks PM $N$-body within <strong>$0.2\%\text{–}0.5\%$</strong>, and the 4LPT void mass fraction $F_M(<0.5\bar\rho)$ agrees with PM $N$-body to <strong>$0.4\%\text{–}1.6\%$</strong>!</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 17: Four Structural Advantages for Field-Level Inference <span class="act-badge act-4">Act IV · 29:00–31:00</span>
+
+<div class="slide-grid-2">
+  <div class="slide-card accent">
+    <h3>1. Zero Shot Noise ($P_{\mathrm{shot}} \equiv 0$) $\Rightarrow$ Smooth HMC Posteriors</h3>
+    <ul>
+      <li>No discrete particle counting noise, no artificial empty void cells where $\ln(1+\delta)$ diverges, and no stochastic white-noise floor contaminating high-$k$ modes in the field-level likelihood.</li>
+    </ul>
+    <h3 style="margin-top: 10px;">2. Exact Space–Time Factorization on Lightcones</h3>
+    <ul>
+      <li>In PM or COLA, changing $\Omega_m$, $w_0, w_a$, or evaluating a continuous redshift lightcone $z(\chi)$ requires re-running time integration steps.</li>
+      <li>In 4LPT, the 13 spatial tensors $\mathbf{S}^\tau(\mathbf{q})$ are computed once from $\delta_0(\mathbf{q})$; evaluating any $a(\chi)$ on a lightcone (`lpt_lightcone` in <code>DiscoDJ.jl</code>) is an instant local linear combination!</li>
+    </ul>
+  </div>
+
+  <div class="slide-card purple">
+    <h3>3. Exact Positivity &amp; Mass Conservation by Construction</h3>
+    <ul>
+      <li>$1 + \delta(\mathbf{q}, a) = 1/J(\mathbf{q}, a) > 0$ everywhere before shell crossing, and R3D cell clipping preserves $\sum_C \rho_C V_C = M_{\mathrm{tot}}$ to machine precision.</li>
+      <li>Furthermore, any local Lagrangian bias expansion $1+\delta_g(\mathbf{q}) = F[\delta_L, T_{ij}T^{ij}, \operatorname{tr}T^3, \nabla^2\delta_L]$ can be carried directly on the tetrahedra!</li>
+    </ul>
+    <h3 style="margin-top: 10px;">4. End-to-End Differentiability (Analytic JVPs &amp; VJPs)</h3>
+    <ul>
+      <li>Every stage—initial modes $\delta_0(\mathbf{k}) \to$ 4LPT recursion $\to$ vertex positions $\mathbf{x}_i \to$ continuous Hermite–Genocchi Fourier modes $I_T(\mathbf{k})$—has <strong>exact closed-form derivatives</strong> (`tangent.rs` &amp; `DiscoDJ.jl`).</li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Slide 18: Exact Analytic Gradients via Confluent Divided Differences <span class="act-badge act-4">Act IV · 31:00–33:00</span>
+
+<div class="slide-grid-55-45">
+  <div class="slide-card">
+    <h3>Differentiating Through 4LPT and Simplex Fourier Modes (`tangent.rs`)</h3>
+    <ul>
+      <li><strong>Step 1 — Tangent LPT Recursion:</strong> Given any initial mode perturbation $\dot{\delta}_0(\mathbf{k})$, forward-mode Jacobian-Vector Products (JVPs) propagate through the bilinear $\mu_2$ and trilinear $\mu_3$ operators via exact Leibniz rules:
+        $$\dot{\mu}_2(\mathbf{A}, \mathbf{B}) = \mu_2(\dot{\mathbf{A}}, \mathbf{B}) + \mu_2(\mathbf{A}, \dot{\mathbf{B}}), \qquad \dot{\mathbf{x}}_i = \sum_{n=1}^4 D_n(a)\dot{\boldsymbol{\Psi}}^{(n)}(\mathbf{q}_i)$$
+      </li>
+      <li><strong>Step 2 — Differentiating the Continuous Simplex Mode $I_T(\mathbf{k})$:</strong>
+        <ul>
+          <li>How do we differentiate $I_T(\mathbf{k}) = m_T\,d!\,\exp[s_0, \dots, s_d]$ with respect to vertex positions $\dot{\mathbf{x}}_i$ ($\dot{s}_i = -i\mathbf{k}\cdot\dot{\mathbf{x}}_i$) without any grid or finite differences?</li>
+          <li>By the <strong>confluent divided-difference theorem</strong>, differentiating with respect to knot $s_i$ simply repeats $s_i$ as a confluent argument of order $d+1$:
+            $$\boxed{\frac{\partial}{\partial s_i}\exp[s_0, \dots, s_d] = \exp[s_0, \dots, s_d, s_i] \implies \dot{I}_T(\mathbf{k}) = m_T\,d!\sum_{i=0}^d \dot{s}_i\,\exp[s_0, \dots, s_d, s_i]}$$
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+
+  <div>
+    <div class="slide-fig tall">
+      <img src="../../chapters/figures/intro-inference.svg" alt="Analytic JVP vs finite difference verification" />
+      <div class="slide-fig-caption">
+        <strong>Machine-Precision Gradient Verification:</strong> Analytic confluent divided-difference JVP $\partial P_0(k)/\partial A$ matches central finite differences across all wavenumbers without step-size tuning or CIC spline discontinuities.
+      </div>
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 19: Baryon Acoustic Oscillations Survive the Nonlinear Sheet Map <span class="act-badge act-4">Act IV · 33:00–35:00</span>
+
+<div class="slide-grid-45-55">
+  <div class="slide-card accent">
+    <h3>Phase-Matched BAO vs. Smooth No-Wiggle Benchmark</h3>
+    <ul>
+      <li>Evolve identical initial random phases with the full oscillating Eisenstein &amp; Hu (1998) BAO transfer function $T_{\mathrm{BAO}}(k)$ and with the smooth no-wiggle transfer function $T_{\mathrm{nw}}(k)$.</li>
+      <li>The subtle $\sim 6\%$ acoustic modulation across the first four BAO peaks ($k \in [0.02, 0.30]\,h\,\mathrm{Mpc}^{-1}$) is transported through the 4LPT displacement map, the Kuhn triangulation, and the R3D estimator:
+        <ul>
+          <li><strong>2D ($L = 1000\,h^{-1}\mathrm{Mpc}$, $64^2 \to 128^2$):</strong> Mean BAO modulation error is <strong>$0.47\%$</strong> ($P_0$ sheet) vs. $1.85\%$ (CIC).</li>
+          <li><strong>3D ($L = 1000\,h^{-1}\mathrm{Mpc}$, $32^3 \to 64^3$):</strong> Mean BAO modulation error is <strong>$0.12\%$</strong> ($P_0$ sheet)—preserving the acoustic ruler without shot-noise corruption!</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+
+  <div>
+    <div class="slide-fig tall">
+      <img src="../../chapters/figures/intro-bao.svg" alt="BAO preservation on the pre-crossed sheet" />
+      <div class="slide-fig-caption">
+        <strong>Acoustic peaks carried intact through 4LPT + Sheet Deposition:</strong> Ratio $P_{\mathrm{BAO}}(k)/P_{\mathrm{nw}}(k)$ in 2D and 3D shows the four acoustic peaks preserved cleanly on the continuous sheet.
+      </div>
+    </div>
+  </div>
+</div>
+
+---
+
+## Slide 20: Live React Panel 4 — BAO Wiggle Ratio & Analytic JVP Inference Explorer <span class="act-badge act-4">Act IV · 35:00–37:00</span>
+
+<div class="react-slide-lab-mount" data-panel="bao-jvp-inference"></div>
+
+---
+
+## Slide 21: Conceptual Synthesis — Where Does the Pre-Crossed Sheet Sit? <span class="act-badge act-5">Act V · 37:00–38:30</span>
+
+| Aspect | Eulerian PT / EFTofLSS (`LEFTfield`) | Grid LPT / PM + CIC (`BORG`, Shifted-EFT) | **Pre-Crossed Phase-Space Sheet (4LPT + R3D / HG)** |
+| :--- | :--- | :--- | :--- |
+| **Dynamical Variable** | Eulerian density $\delta(\mathbf{x})$ (breaks as $|\delta|\to 1$) | Discrete point trajectories $\mathbf{x}_p(t)$ | Continuous sheet $\mathbf{x}(\mathbf{q},a) = \mathbf{q}+\boldsymbol{\Psi}$; **exact** $1+\delta = 1/J$ |
+| **UV Regularization** | Sharp-$k$ $\Lambda$ + Eulerian counterterms $c_s^2 k^2\delta$ | Grid cutoff + force softening | Initial smoothing $R_f \leftrightarrow \Lambda$ keeping $J(\mathbf{q},a) > 0$ |
+| **Voids ($\delta \to -1$)** | Poor (Taylor series in $\delta$ diverges) | Empty cells ($\rho_C = 0$), $\ln(1+\delta)$ diverges | **Exact & strictly positive** ($\rho_T = m_T/V_T > 0$ everywhere) |
+| **Shot Noise $P_{\mathrm{shot}}$** | Stochastic counterterm $P_{\epsilon\epsilon} \sim k^0, k^2$ | $L^3/N_p$ white noise floor + $\operatorname{sinc}^{2p}$ window | **Identically zero ($P_{\mathrm{shot}} \equiv 0$)** |
+| **1-pt PDFs & Copulas** | Cumulant expansion fails in tails | Noisy in voids; 2LPT has copula residual | **$\lesssim 1\%$ match to $N$-body PDFs**; 4LPT removes 75–95% of 2LPT copula error |
+| **Exact Tidal Law $F_M(>\bar\rho)$** | Approximate in $\delta$ | Corrupted by CIC smoothing/discreteness | **Exact parameter-free** $\frac{1}{2} + A_1\sigma + A_3\sigma^3$ to $10^{-4}$ |
+| **Differentiability** | Analytic for $n$-pt / grid operators | Adjoint PM + piecewise-linear CIC splines | **Exact analytic JVPs** via confluent divided differences |
+
+<div class="slide-card accent" style="margin-top: 10px;">
+  <h3>How This Connects to EFT Bias &amp; Small-Scale Physics</h3>
+  <p>The pre-crossed 4LPT sheet serves as the <strong>exact deterministic infrared/mesoscale backbone</strong> (resolving all large-scale displacements, voids, BAO phases, and tidal shear non-perturbatively without shot noise), on top of which UV multi-stream/galaxy bias response functions $\rho_{\mathrm{gal}}(\mathbf{q}) = F[J(\mathbf{q}), T_{ij}T^{ij}(\mathbf{q}), \operatorname{tr}T^3(\mathbf{q})]$ live directly on the Lagrangian tetrahedra!</p>
+</div>
+
+---
+
+## Slide 22: Summary & Multi-Audience Presentation Hub <span class="act-badge act-5">Act V · 38:30–40:00</span>
+
+<div class="slide-grid-3">
+  <div class="slide-card accent">
+    <h3>1. The Tessellation Measures What Particles Cannot</h3>
+    <p>Connecting vertices into mass-carrying Kuhn simplices eliminates empty void cells ($66.3\% \to 0.0\%$), drives particle shot noise to identically zero ($P_{\mathrm{shot}} \equiv 0$), and yields exact Hermite–Genocchi Fourier modes without grid aliasing.</p>
+  </div>
+  <div class="slide-card blue">
+    <h3>2. Before Shell Crossing, 4LPT is Remarkably Complete</h3>
+    <p>At $R_f \sim 14\text{–}18\,h^{-1}\mathrm{Mpc}$ ($\Lambda \sim 0.12\text{–}0.16\,h\,\mathrm{Mpc}^{-1}$, $>99.5\%$ single-stream at $z=0$), 4LPT matches $N$-body 1-pt PDFs to $\lesssim 1\%$, removes 75–95% of 2LPT's 2-pt copula error, and obeys the exact tidal shear focusing law $F_M(>\bar\rho) = \frac{1}{2} + A_1\sigma + A_3\sigma^3$ across $1100\,(h^{-1}\mathrm{Gpc})^3$.</p>
+  </div>
+  <div class="slide-card purple">
+    <h3>3. Ready for Differentiable Field-Level Inference</h3>
+    <p>With space–time factorized 4LPT tensors, exact R3D voxelization, confluent divided-difference JVPs, and $0.12\%$ 3D BAO modulation accuracy, the pre-crossed sheet is a fast, noise-free forward model for Stage-IV cosmology.</p>
+  </div>
+</div>
+
+<div class="slide-card" style="margin-top: 12px;">
+  <h3>Explore the Live Laboratory, Book &amp; Companion Presentation Tracks</h3>
+  <ul>
+    <li><strong>Full Interactive WebAssembly / WebGPU Laboratory:</strong> <a href="../../app/index.html" target="_blank"><code>/app/index.html</code></a> (up to $1024^2$ 2D vertices, Coolwarm $[0.1, 10]$ log density, persistent Trajectory $\times$ Estimator matrix, 3D $\Lambda$CDM benchmarks).</li>
+    <li><strong>Presentations &amp; Audience Summaries Hub:</strong> <a href="../../chapters/08-talks.html" target="_blank"><code>/chapters/08-talks.html</code></a> — includes this 40-min EFT/FLI seminar, plus dedicated tracks for <strong>15-min Conference Summary</strong>, <strong>30-min SBI/HMC Inference Workshop</strong>, and <strong>45-min Computational Methods &amp; WebGPU</strong>.</li>
+    <li><strong>Repositories:</strong> <a href="https://github.com/yipihey/precrossedsheet" target="_blank"><code>github.com/yipihey/precrossedsheet</code></a> &amp; <a href="https://github.com/yipihey/DiscoDJ.jl" target="_blank"><code>github.com/yipihey/DiscoDJ.jl</code></a></li>
+  </ul>
+</div>

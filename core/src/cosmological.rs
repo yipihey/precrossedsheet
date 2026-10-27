@@ -95,13 +95,56 @@ pub fn top_hat(x: f64) -> f64 {
         3. * (x.sin() - x * x.cos()) / x.powi(3)
     }
 }
+/// Dimension-appropriate top-hat Fourier window W_d(kR):
+/// d=1: sin(x)/x; d=2: 2 J_1(x)/x; d=3: 3(sin x - x cos x)/x^3.
+pub fn top_hat_dim(x: f64, dim: usize) -> f64 {
+    let ax = x.abs();
+    match dim {
+        1 => {
+            if ax < 0.01 {
+                1. - x * x / 6. + x.powi(4) / 120. - x.powi(6) / 5040.
+            } else {
+                x.sin() / x
+            }
+        }
+        2 => {
+            if ax <= 8.0 {
+                let h2 = 0.25 * x * x;
+                let mut term = 1.0;
+                let mut sum = 1.0;
+                for m in 1..=24 {
+                    term *= -h2 / (m as f64 * (m + 1) as f64);
+                    sum += term;
+                }
+                sum
+            } else {
+                // Hankel asymptotic expansion for 2 J_1(x) / x on x > 8
+                let inv8x = 1.0 / (8.0 * ax);
+                let inv8x2 = inv8x * inv8x;
+                // mu = 4*1^2 = 4; a_k = prod_{j=1}^k (4 - (2j-1)^2) / k!
+                let a1 = 3.0;
+                let a2 = 3.0 * (-5.0) / 2.0;
+                let a3 = a2 * (-21.0) / 3.0;
+                let a4 = a3 * (-45.0) / 4.0;
+                let a5 = a4 * (-77.0) / 5.0;
+                let a6 = a5 * (-117.0) / 6.0;
+                let p = 1.0 - a2 * inv8x2 + a4 * inv8x2 * inv8x2 - a6 * inv8x2.powi(3);
+                let q = a1 * inv8x - a3 * inv8x * inv8x2 + a5 * inv8x * inv8x2 * inv8x2;
+                let chi = ax - 0.75 * PI;
+                let j1 = (2.0 / (PI * ax)).sqrt() * (p * chi.cos() - q * chi.sin());
+                2.0 * j1 / ax
+            }
+        }
+        _ => top_hat(x),
+    }
+}
 /// Integral sigma_R^2 for the unfiltered continuum 3D spectrum A k^ns T^2
 /// with the non-oscillatory transfer. Simpson integration in ln k,
 /// 10^-5..100 h/Mpc, independent of the box/grid.
 pub fn variance(omega_m: f64, omega_b: f64, h: f64, ns: f64, radius: f64, intervals: usize) -> f64 {
     variance_model(omega_m, omega_b, h, ns, radius, intervals, false)
 }
-/// The same top-hat variance integral for either transfer fit.
+/// The same top-hat variance integral for either transfer fit in 3D.
 pub fn variance_model(
     omega_m: f64,
     omega_b: f64,
@@ -110,6 +153,22 @@ pub fn variance_model(
     radius: f64,
     intervals: usize,
     bao: bool,
+) -> f64 {
+    variance_model_dim(omega_m, omega_b, h, ns, radius, intervals, bao, 3)
+}
+/// Top-hat variance integral in `dim` dimensions (d = 1, 2, 3) for unit
+/// amplitude P_d(k) = k^{3 - d + ns} T(k)^2, so that the dimensionless
+/// power per ln k, Delta^2(k) ~ k^{3 + ns} T(k)^2, matches 3D and the
+/// d-dimensional top-hat variance at R = 8 Mpc/h is normalized to sigma8^2.
+pub fn variance_model_dim(
+    omega_m: f64,
+    omega_b: f64,
+    h: f64,
+    ns: f64,
+    radius: f64,
+    intervals: usize,
+    bao: bool,
+    dim: usize,
 ) -> f64 {
     assert!(intervals > 0 && intervals % 2 == 0);
     let lo = 1e-5_f64.ln();
@@ -128,12 +187,18 @@ pub fn variance_model(
         sum += weight
             * k.powf(3. + ns)
             * transfer_model(k, omega_m, omega_b, h, bao).powi(2)
-            * top_hat(k * radius).powi(2);
+            * top_hat_dim(k * radius, dim).powi(2);
     }
-    sum * step / (6. * PI * PI)
+    let norm = match dim {
+        1 => 3. * PI,
+        2 => 6. * PI,
+        _ => 6. * PI * PI,
+    };
+    sum * step / norm
 }
-/// The unfiltered z=0 linear 3D spectrum P(k)=A k^ns T(k)^2 in (Mpc/h)^3,
-/// normalized by sigma8 through the spherical top-hat variance.
+/// The unfiltered z=0 linear spectrum in d dimensions:
+/// P_d(k) = A_d k^{3 - d + ns} T(k)^2 in (Mpc/h)^d, normalized so that the
+/// d-dimensional top-hat variance at R = 8 Mpc/h equals sigma8^2.
 #[derive(Clone, Debug)]
 pub struct LinearSpectrum {
     pub omega_m: f64,
@@ -141,32 +206,97 @@ pub struct LinearSpectrum {
     pub h: f64,
     pub ns: f64,
     pub bao: bool,
-    /// A = sigma8^2 / sigma_8^2[A=1], fixed at construction.
+    /// 3D amplitude A_3 = sigma8^2 / sigma_{8,3D}^2[A=1].
     pub amplitude: f64,
+    /// Dimension-specific amplitudes [A_1, A_2, A_3] matching sigma8^2 in d-D top-hats.
+    pub amplitudes: [f64; 3],
 }
+/// Isotropic Fourier filter window W(k R) for either a Gaussian filter
+/// exp(-(k R)^2 / 2) (`gaussian_window = true`) or a d-dimensional real-space
+/// top-hat sphere/disk/interval (`gaussian_window = false`).
+pub fn filter_window(dim: usize, x: f64, gaussian_window: bool) -> f64 {
+    if gaussian_window {
+        (-0.5 * x.powi(2)).exp()
+    } else {
+        top_hat_dim(x, dim.clamp(1, 3))
+    }
+}
+
 impl LinearSpectrum {
     pub fn new(omega_m: f64, omega_b: f64, h: f64, ns: f64, sigma8: f64, bao: bool) -> Self {
-        let amplitude = sigma8.powi(2) / variance_model(omega_m, omega_b, h, ns, 8., 4096, bao);
-        Self { omega_m, omega_b, h, ns, bao, amplitude }
+        let s8_2 = sigma8.powi(2);
+        let amplitudes = [
+            s8_2 / variance_model_dim(omega_m, omega_b, h, ns, 8., 4096, bao, 1),
+            s8_2 / variance_model_dim(omega_m, omega_b, h, ns, 8., 4096, bao, 2),
+            s8_2 / variance_model_dim(omega_m, omega_b, h, ns, 8., 4096, bao, 3),
+        ];
+        Self { omega_m, omega_b, h, ns, bao, amplitude: amplitudes[2], amplitudes }
     }
     /// P_{3,0}(k) for k in h/Mpc.
     pub fn power(&self, k: f64) -> f64 {
+        self.power_dim(k, 3)
+    }
+    /// P_{d,0}(k) = A_d k^{3 - d + ns} T(k)^2 in (Mpc/h)^d, with d-D top-hat sigma8 normalization.
+    pub fn power_dim(&self, k: f64, dim: usize) -> f64 {
         if k <= 0. {
             return 0.;
         }
-        self.amplitude
-            * k.powf(self.ns)
+        let d = dim.clamp(1, 3);
+        self.amplitudes[d - 1]
+            * k.powf((3 - d) as f64 + self.ns)
             * transfer_model(k, self.omega_m, self.omega_b, self.h, self.bao).powi(2)
     }
     /// The laboratory's filtered, growth-scaled input spectrum in d dimensions:
-    /// (D/D1)^2 P_{3,0}(k) exp(-k^2 R^2) / L^{3-d}, in (Mpc/h)^d, for k below
-    /// the radial integer-mode cutoff and zero above it.
-    pub fn filtered_power(&self, k: f64, dim: usize, box_size: f64, initial_smoothing: f64, growth_ratio: f64, cutoff: usize) -> f64 {
-        if k * box_size > 2. * PI * cutoff as f64 + 1e-9 {
+    /// (D/D1)^2 P_{d,0}(k) exp(-k^2 R^2), in (Mpc/h)^d.
+    pub fn filtered_power(&self, k: f64, dim: usize, _box_size: f64, initial_smoothing: f64, growth_ratio: f64, _cutoff: usize) -> f64 {
+        if k <= 0. {
             return 0.;
         }
-        growth_ratio.powi(2) * self.power(k) * (-(k * initial_smoothing).powi(2)).exp()
-            / box_size.powi(3 - dim as i32)
+        growth_ratio.powi(2) * self.power_dim(k, dim) * (-(k * initial_smoothing).powi(2)).exp()
+    }
+    /// Filtered linear continuum variance sigma^2(R) at physical radius `radius` (Mpc/h)
+    /// for either a d-dimensional real-space top-hat (`gaussian_window = false`) or
+    /// a Gaussian filter exp(-k^2 R^2 / 2) (`gaussian_window = true`).
+    pub fn filtered_variance(
+        &self,
+        dim: usize,
+        initial_smoothing: f64,
+        growth_ratio: f64,
+        radius: f64,
+        gaussian_window: bool,
+    ) -> f64 {
+        let intervals = 1024usize;
+        let lo = 1e-5_f64.ln();
+        let hi = 100_f64.ln();
+        let step = (hi - lo) / intervals as f64;
+        let d = dim.clamp(1, 3);
+        let mut sum = 0.0;
+        for i in 0..=intervals {
+            let k = (lo + i as f64 * step).exp();
+            let weight = if i == 0 || i == intervals {
+                1.0
+            } else if i % 2 == 0 {
+                2.0
+            } else {
+                4.0
+            };
+            let w = if gaussian_window {
+                (-0.5 * (k * radius).powi(2)).exp()
+            } else {
+                top_hat_dim(k * radius, d)
+            };
+            sum += weight
+                * k.powf(3.0 + self.ns)
+                * transfer_model(k, self.omega_m, self.omega_b, self.h, self.bao).powi(2)
+                * (-(k * initial_smoothing).powi(2)).exp()
+                * w.powi(2);
+        }
+        let norm = match d {
+            1 => 3.0 * PI,
+            2 => 6.0 * PI,
+            _ => 6.0 * PI * PI,
+        };
+        growth_ratio.powi(2) * self.amplitudes[d - 1] * sum * step / norm
     }
 }
 fn mix(mut z: u64) -> u64 {
@@ -182,9 +312,9 @@ pub fn mode_seed(seed: u64, mode: [i64; 3]) -> u64 {
     }
     out
 }
-/// Fourier coefficients in a unit-coordinate grid. The full 3D z=0 spectrum
-/// sets the coefficient variance P3(k)/L^3 in every dimension. In d<3 this
-/// selects a translationally invariant subspace, not a random 3D slice.
+/// Fourier coefficients in a unit-coordinate grid. The d-dimensional z=0
+/// spectrum P_d(k) sets the coefficient variance P_d(k)/L^d so that the
+/// d-dimensional top-hat variance at R = 8 Mpc/h equals sigma8^2.
 /// `growth_at_one` converts z=0 normalization to the early-time D~a convention.
 pub fn gaussian_hat(
     grid: &Grid,
@@ -202,22 +332,23 @@ pub fn gaussian_hat(
 ) -> Vec<C64> {
     let spectrum = LinearSpectrum::new(omega_m, omega_b, h, ns, sigma8, bao);
     let mut out = vec![C64::new(0., 0.); grid.size];
+    let _ = cutoff;
     for i in 1..grid.size {
         let ijk = grid.unravel(i);
+        if (0..grid.dim).any(|a| grid.n % 2 == 0 && ijk[a] == grid.n / 2) {
+            continue;
+        }
         let mut mode = [0_i64; 3];
         for a in 0..grid.dim {
             mode[a] = grid.ifreq(ijk[a]);
         }
         let m2 = mode.iter().map(|m| m * m).sum::<i64>();
-        if m2 > (cutoff * cutoff) as i64 {
-            continue;
-        }
         let positive = *mode.iter().find(|&&m| m != 0).unwrap() > 0;
         let canonical = if positive { mode } else { mode.map(|m| -m) };
         let mut rng = Rng::new(mode_seed(seed, canonical));
         let k = 2. * PI * (m2 as f64).sqrt() / box_size;
-        let p = spectrum.power(k) * (-(k * initial_smoothing).powi(2)).exp();
-        let scale = grid.size as f64 * (p / (2. * box_size.powi(3))).sqrt() / growth_at_one;
+        let p = spectrum.power_dim(k, grid.dim) * (-(k * initial_smoothing).powi(2)).exp();
+        let scale = grid.size as f64 * (p / (2. * box_size.powi(grid.dim as i32))).sqrt() / growth_at_one;
         let z = C64::new(rng.normal(), rng.normal()) * scale;
         out[i] = if positive { z } else { z.conj() };
     }

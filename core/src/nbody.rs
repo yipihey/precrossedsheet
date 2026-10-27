@@ -46,43 +46,51 @@ pub struct PmRun {
 }
 
 /// CIC stencil and directional weight derivatives, periodic at mesh nodes.
-fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> Vec<(usize, f64, f64)> {
+fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> ([(usize, f64, f64); 8], usize) {
     let mut base = [0usize; 3];
     let mut f = [0.0; 3];
+    let inv_dx = 1.0 / grid.dx();
+    let nf = grid.n as f64;
     for a in 0..grid.dim {
-        let u = x[a].rem_euclid(grid.l) / grid.dx();
-        base[a] = (u.floor() as usize) % grid.n;
-        f[a] = u - u.floor();
+        let u = (x[a] * inv_dx - 0.5).rem_euclid(nf);
+        let fl = u.floor();
+        base[a] = (fl as usize) % grid.n;
+        f[a] = u - fl;
     }
-    (0..1usize << grid.dim)
-        .map(|bits| {
-            let mut ijk = base;
-            let mut factors = [1.0; 3];
+    let count = 1usize << grid.dim;
+    let mut out = [(0usize, 0.0, 0.0); 8];
+    for bits in 0..count {
+        let mut ijk = base;
+        let mut factors = [1.0; 3];
+        for a in 0..grid.dim {
+            if bits & (1 << a) != 0 {
+                ijk[a] = (base[a] + 1) % grid.n;
+                factors[a] = f[a];
+            } else {
+                factors[a] = 1.0 - f[a];
+            }
+        }
+        let w = match grid.dim {
+            1 => factors[0],
+            2 => factors[0] * factors[1],
+            _ => factors[0] * factors[1] * factors[2],
+        };
+        let mut dw = 0.0;
+        if let Some(v) = dx {
             for a in 0..grid.dim {
-                if bits & (1 << a) != 0 {
-                    ijk[a] = (base[a] + 1) % grid.n;
-                    factors[a] = f[a];
-                } else {
-                    factors[a] = 1.0 - f[a];
-                }
-            }
-            let w = factors[..grid.dim].iter().product();
-            let mut dw = 0.0;
-            if let Some(v) = dx {
-                for a in 0..grid.dim {
-                    let sign = if bits & (1 << a) != 0 { 1.0 } else { -1.0 };
-                    let mut term = sign * v[a] / grid.dx();
-                    for b in 0..grid.dim {
-                        if b != a {
-                            term *= factors[b];
-                        }
+                let sign = if bits & (1 << a) != 0 { 1.0 } else { -1.0 };
+                let mut term = sign * v[a] * inv_dx;
+                for b in 0..grid.dim {
+                    if b != a {
+                        term *= factors[b];
                     }
-                    dw += term;
                 }
+                dw += term;
             }
-            (grid.ravel(ijk), w, dw)
-        })
-        .collect()
+        }
+        out[bits] = (grid.ravel(ijk), w, dw);
+    }
+    (out, count)
 }
 
 /// Equal-mass particle density ρ/ρ̄ and its JVP. Density has mean one, JVP mean zero.
@@ -95,12 +103,23 @@ pub fn cic_density_jvp(mesh: &Grid, x: &[f64], dx: Option<&[f64]>) -> (Vec<f64>,
     let np = x.len() / mesh.dim;
     let norm = mesh.size as f64 / np as f64;
     let mut rho = vec![0.0; mesh.size];
-    let mut drho = vec![0.0; mesh.size];
+    let mut drho = if dx.is_some() {
+        vec![0.0; mesh.size]
+    } else {
+        Vec::new()
+    };
     for i in 0..np {
         let j = i * mesh.dim;
-        for (node, w, dw) in stencil(mesh, &x[j..j + mesh.dim], dx.map(|v| &v[j..j + mesh.dim])) {
-            rho[node] += norm * w;
-            drho[node] += norm * dw;
+        let (st, count) = stencil(mesh, &x[j..j + mesh.dim], dx.map(|v| &v[j..j + mesh.dim]));
+        if dx.is_some() {
+            for &(node, w, dw) in &st[..count] {
+                rho[node] += norm * w;
+                drho[node] += norm * dw;
+            }
+        } else {
+            for &(node, w, _) in &st[..count] {
+                rho[node] += norm * w;
+            }
         }
     }
     (rho, drho)
@@ -154,23 +173,33 @@ fn force_jvp_with_engine(
 ) -> (Vec<f64>, Vec<f64>) {
     let (rho, drho) = cic_density_jvp(mesh, x, dx);
     let f = mesh_force(mesh, eng, &rho, omega_m);
-    let df = if dx.is_some() {
-        mesh_force(mesh, eng, &drho, omega_m)
-    } else {
-        vec![vec![0.0; mesh.size]; mesh.dim]
-    };
     let mut out = vec![0.0; x.len()];
-    let mut dout = vec![0.0; x.len()];
-    for i in 0..x.len() / mesh.dim {
-        let j = i * mesh.dim;
-        for (node, w, dw) in stencil(mesh, &x[j..j + mesh.dim], dx.map(|v| &v[j..j + mesh.dim])) {
-            for a in 0..mesh.dim {
-                out[j + a] += w * f[a][node];
-                dout[j + a] += w * df[a][node] + dw * f[a][node];
+    if dx.is_some() {
+        let df = mesh_force(mesh, eng, &drho, omega_m);
+        let mut dout = vec![0.0; x.len()];
+        for i in 0..x.len() / mesh.dim {
+            let j = i * mesh.dim;
+            let (st, count) = stencil(mesh, &x[j..j + mesh.dim], dx.map(|v| &v[j..j + mesh.dim]));
+            for &(node, w, dw) in &st[..count] {
+                for a in 0..mesh.dim {
+                    out[j + a] += w * f[a][node];
+                    dout[j + a] += w * df[a][node] + dw * f[a][node];
+                }
             }
         }
+        (out, dout)
+    } else {
+        for i in 0..x.len() / mesh.dim {
+            let j = i * mesh.dim;
+            let (st, count) = stencil(mesh, &x[j..j + mesh.dim], None);
+            for &(node, w, _) in &st[..count] {
+                for a in 0..mesh.dim {
+                    out[j + a] += w * f[a][node];
+                }
+            }
+        }
+        (out, Vec::new())
     }
-    (out, dout)
 }
 
 fn min_jacobian(sheet: &Grid, x: &[f64]) -> f64 {
@@ -431,7 +460,12 @@ pub fn evolve_cosmology(
         if !k0.is_finite() || !k1.is_finite() || !drift.is_finite() {
             return Err("PM clock overflowed".into());
         }
-        let before_drift = state.x.clone();
+        let check_drift = !allow_crossing || sheet.size <= 16_384 || s == 0 || s + 1 == steps;
+        let before_drift = if check_drift {
+            state.x.clone()
+        } else {
+            Vec::new()
+        };
         for j in 0..state.x.len() {
             state.p[j] += k0 * f[j];
             state.x[j] += drift * state.p[j];
@@ -447,22 +481,24 @@ pub fn evolve_cosmology(
         {
             return Err("PM state or tangent overflowed during drift".into());
         }
-        let jac = minimum_drift_jacobian(sheet, &before_drift, &state.x);
-        minimum = minimum.min(jac);
-        if !jac.is_finite() {
-            return Err("PM drift Jacobian is nonfinite".into());
-        }
-        if jac <= 0.0 {
-            if !allow_crossing {
-                return Err(format!("PM sheet crossed during drift ending at a={a1:.6}; increase start safety or reduce target"));
+        if check_drift {
+            let jac = minimum_drift_jacobian(sheet, &before_drift, &state.x);
+            minimum = minimum.min(jac);
+            if !jac.is_finite() {
+                return Err("PM drift Jacobian is nonfinite".into());
             }
-            if first_crossing.is_none() {
-                first_crossing = Some(PmCrossing {
-                    step: s + 1,
-                    a_start: a0,
-                    a_end: a1,
-                    minimum_jacobian: jac,
-                });
+            if jac <= 0.0 {
+                if !allow_crossing {
+                    return Err(format!("PM sheet crossed during drift ending at a={a1:.6}; increase start safety or reduce target"));
+                }
+                if first_crossing.is_none() {
+                    first_crossing = Some(PmCrossing {
+                        step: s + 1,
+                        a_start: a0,
+                        a_end: a1,
+                        minimum_jacobian: jac,
+                    });
+                }
             }
         }
         (f, df) = force_jvp_with_engine(

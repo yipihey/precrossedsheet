@@ -237,6 +237,9 @@ impl PendingLabRun {
     pub fn lpt_positions(&self) -> Vec<f32> {
         self.inner.lpt_positions()
     }
+    pub fn lpt_density_p1(&self) -> Vec<f32> {
+        self.inner.lpt_density_p1()
+    }
     pub fn pm_p(&self) -> Vec<f32> {
         self.inner.pm_initial_component(1)
     }
@@ -302,7 +305,7 @@ pub fn exact_sheet_density(
 /// vec4<f32> positions as used by the GPU PM boundary.
 #[wasm_bindgen]
 pub fn pm_drift_minimum(dim: usize, n: usize, start: &[f32], end: &[f32]) -> Result<f64, JsValue> {
-    let cap = [0, 1024, 256, 128][dim.min(3)];
+    let cap = [0, 1024, 1024, 128][dim.min(3)];
     if !(1..=3).contains(&dim)
         || ![16, 24, 32, 48, 64, 96, 128, 256, 512, 1024].contains(&n)
         || n > cap
@@ -432,6 +435,39 @@ impl PreparedLabRun {
             .finish_with_finite_difference(channels, finite_difference, execution)
             .map(|v| v.to_string())
             .map_err(|e| JsValue::from_str(&e))
+    }
+    pub fn q_f64(&self) -> Vec<f64> {
+        self.inner.q_f64().to_vec()
+    }
+    pub fn x_f64(&self) -> Vec<f64> {
+        self.inner.x_f64().to_vec()
+    }
+    pub fn v_f64(&self) -> Vec<f64> {
+        self.inner.v_f64().to_vec()
+    }
+    pub fn pm_x_f64(&self) -> Vec<f64> {
+        self.inner.pm_x_f64().to_vec()
+    }
+    pub fn pm_v_f64(&self) -> Vec<f64> {
+        self.inner.pm_v_f64().to_vec()
+    }
+    pub fn rho_f32(&self) -> Vec<f32> {
+        self.inner.rho_f32().to_vec()
+    }
+    pub fn rho_p1_f32(&self) -> Vec<f32> {
+        self.inner.rho_p1_f32().to_vec()
+    }
+    pub fn pm_rho_f32(&self) -> Vec<f32> {
+        self.inner.pm_rho_f32().to_vec()
+    }
+    pub fn cic_rho_f32(&self) -> Vec<f32> {
+        self.inner.cic_rho_f32().to_vec()
+    }
+    pub fn tsc_rho_f32(&self) -> Vec<f32> {
+        self.inner.tsc_rho_f32().to_vec()
+    }
+    pub fn custom_rho_f32(&self, key: &str) -> Vec<f32> {
+        self.inner.custom_rho_f32(key)
     }
 }
 

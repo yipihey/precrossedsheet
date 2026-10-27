@@ -106,6 +106,26 @@ fn rasterize_tri(t: &[(f64, f64); 3], wv: Option<[f64; 3]>, mass: f64, ne: usize
     let _ = l;
 }
 
+/// Nearest-grid-point (NGP) particle deposit on the same cell-centered
+/// lattice as `cic_density` and `tsc_density`: each particle assigns its
+/// entire mass to the cell containing its position. Output ρ/ρ̄ with exact unit mean.
+pub fn ngp_density(dim: usize, pos: &[f32], npart: usize, l: f64, ne: usize) -> Vec<f32> {
+    let size = ne.pow(dim as u32);
+    let mut rho = vec![0.0f64; size];
+    let dxe = l / ne as f64;
+    for p in 0..npart {
+        let mut idx = 0usize;
+        for a in 0..dim {
+            let s = pos[p * dim + a] as f64 / dxe - 0.5;
+            let ia = ((s + 0.5).floor() as i64).rem_euclid(ne as i64) as usize;
+            idx = idx * ne + ia;
+        }
+        rho[idx] += 1.0;
+    }
+    let norm = size as f64 / npart as f64;
+    rho.iter().map(|&v| (v * norm) as f32).collect()
+}
+
 /// Cloud-in-cell deposit of unit-mass particles (interleaved positions) onto
 /// an `ne^dim` grid.  Returns ρ/ρ̄.
 pub fn cic_density(dim: usize, pos: &[f32], npart: usize, l: f64, ne: usize) -> Vec<f32> {
@@ -450,4 +470,144 @@ pub fn sheet_density_3d_exact(grid: &Grid, pos: &[f32], wv: Option<&[f32]>, ne: 
     }
     let cell = dxe * dxe * dxe;
     mass.iter().map(|&m| (m / cell) as f32).collect()
+}
+
+/// Simultaneous exact P0 and P1 sheet deposit in 2D from a single polygon-clipping pass.
+pub fn sheet_density_2d_exact_p0_p1(grid: &Grid, pos: &[f32], wv: &[f32], ne: usize) -> (Vec<f32>, Vec<f32>) {
+    assert_eq!(grid.dim, 2);
+    let n = grid.n;
+    let l = grid.l;
+    let dxe = l / ne as f64;
+    let mut mass0 = vec![0.0f64; ne * ne];
+    let mut mass1 = vec![0.0f64; ne * ne];
+    let tri_mass = grid.dx() * grid.dx() * 0.5;
+    let get = |i: usize, j: usize, oi: f64, oj: f64| -> [f64; 2] {
+        let idx = ((i % n) * n + (j % n)) * 2;
+        [pos[idx] as f64 + oi, pos[idx + 1] as f64 + oj]
+    };
+    let wgt = |i: usize, j: usize| -> f64 { wv[(i % n) * n + (j % n)] as f64 };
+    let mut poly = Poly::<2>::with_capacity(32);
+    let mut ws = VoxWorkspace::<2>::new(64);
+    for i in 0..n {
+        for j in 0..n {
+            let oi = if i + 1 == n { l } else { 0.0 };
+            let oj = if j + 1 == n { l } else { 0.0 };
+            let p00 = get(i, j, 0.0, 0.0);
+            let p10 = get(i + 1, j, oi, 0.0);
+            let p01 = get(i, j + 1, 0.0, oj);
+            let p11 = get(i + 1, j + 1, oi, oj);
+            let (w00, w10, w01, w11) = (wgt(i, j), wgt(i + 1, j), wgt(i, j + 1), wgt(i + 1, j + 1));
+            for (t0, w) in [([p00, p10, p11], [w00, w10, w11]), ([p00, p11, p01], [w00, w11, w01])] {
+                let base = [(t0[0][0] / dxe).floor() as i64, (t0[0][1] / dxe).floor() as i64];
+                let t = [[t0[0][0] - base[0] as f64 * dxe, t0[0][1] - base[1] as f64 * dxe], [t0[1][0] - base[0] as f64 * dxe, t0[1][1] - base[1] as f64 * dxe], [t0[2][0] - base[0] as f64 * dxe, t0[2][1] - base[1] as f64 * dxe]];
+                let area2 = (t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1]);
+                if area2.abs() < 1e-300 { continue; }
+                let area = 0.5 * area2.abs();
+                let inv = 1.0 / area2;
+                let mut a = [0.0f64; 3];
+                let mut b = [[0.0f64; 2]; 3];
+                for c in 0..3 {
+                    let (p1, p2) = (t[(c + 1) % 3], t[(c + 2) % 3]);
+                    a[c] = (p1[0] * p2[1] - p2[0] * p1[1]) * inv;
+                    b[c] = [(p1[1] - p2[1]) * inv, (p2[0] - p1[0]) * inv];
+                }
+                let wmean = (w[0] + w[1] + w[2]) / 3.0;
+                let dens = tri_mass / area;
+                poly.init_triangle(t[0], t[1], t[2]);
+                voxelize_ws(&mut ws, &poly, dxe, 1, |c, m| {
+                    let iw = (c[0] + base[0]).rem_euclid(ne as i64) as usize;
+                    let jw = (c[1] + base[1]).rem_euclid(ne as i64) as usize;
+                    let idx = iw * ne + jw;
+                    mass0[idx] += dens * m[0];
+                    let mut s = 0.0;
+                    for cc in 0..3 { s += w[cc] * (a[cc] * m[0] + b[cc][0] * m[1] + b[cc][1] * m[2]); }
+                    mass1[idx] += dens * s / wmean;
+                });
+            }
+        }
+    }
+    let cell = dxe * dxe;
+    (
+        mass0.iter().map(|&m| (m / cell) as f32).collect(),
+        mass1.iter().map(|&m| (m / cell) as f32).collect(),
+    )
+}
+
+/// Simultaneous exact P0 and P1 sheet deposit in 3D from a single tetrahedral-clipping pass.
+pub fn sheet_density_3d_exact_p0_p1(grid: &Grid, pos: &[f32], wv: &[f32], ne: usize) -> (Vec<f32>, Vec<f32>) {
+    assert_eq!(grid.dim, 3);
+    let n = grid.n;
+    let l = grid.l;
+    let dxe = l / ne as f64;
+    let mut mass0 = vec![0.0f64; ne * ne * ne];
+    let mut mass1 = vec![0.0f64; ne * ne * ne];
+    let tet_mass = grid.dx().powi(3) / 6.0;
+    let get = |i: usize, j: usize, k: usize, off: [f64; 3]| -> [f64; 3] {
+        let idx = (((i % n) * n + (j % n)) * n + (k % n)) * 3;
+        [pos[idx] as f64 + off[0], pos[idx + 1] as f64 + off[1], pos[idx + 2] as f64 + off[2]]
+    };
+    const TETS: [[usize; 4]; 6] = [[0, 1, 3, 7], [0, 1, 5, 7], [0, 2, 3, 7], [0, 2, 6, 7], [0, 4, 5, 7], [0, 4, 6, 7]];
+    let mut poly = Poly::<3>::with_capacity(64);
+    let mut ws = VoxWorkspace::<3>::new(96);
+    for i in 0..n {
+        let oi = if i + 1 == n { l } else { 0.0 };
+        for j in 0..n {
+            let oj = if j + 1 == n { l } else { 0.0 };
+            for k in 0..n {
+                let ok = if k + 1 == n { l } else { 0.0 };
+                let mut c = [[0.0f64; 3]; 8];
+                let mut cw = [1.0f64; 8];
+                for b in 0..8 {
+                    let (bx, by, bz) = (b & 1, (b >> 1) & 1, (b >> 2) & 1);
+                    c[b] = get(i + bx, j + by, k + bz, [if bx == 1 { oi } else { 0.0 }, if by == 1 { oj } else { 0.0 }, if bz == 1 { ok } else { 0.0 }]);
+                    cw[b] = wv[(((i + bx) % n) * n + ((j + by) % n)) * n + ((k + bz) % n)] as f64;
+                }
+                for t in TETS.iter() {
+                    let p0 = [c[t[0]], c[t[1]], c[t[2]], c[t[3]]];
+                    let w = [cw[t[0]], cw[t[1]], cw[t[2]], cw[t[3]]];
+                    let base = [(p0[0][0] / dxe).floor() as i64, (p0[0][1] / dxe).floor() as i64, (p0[0][2] / dxe).floor() as i64];
+                    let mut p = p0;
+                    for v in 0..4 { for a in 0..3 { p[v][a] -= base[a] as f64 * dxe; } }
+                    let e1 = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]];
+                    let e2 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]];
+                    let e3 = [p[3][0] - p[0][0], p[3][1] - p[0][1], p[3][2] - p[0][2]];
+                    let det = e1[0] * (e2[1] * e3[2] - e2[2] * e3[1]) - e1[1] * (e2[0] * e3[2] - e2[2] * e3[0]) + e1[2] * (e2[0] * e3[1] - e2[1] * e3[0]);
+                    if det.abs() < 1e-300 { continue; }
+                    let vol = det.abs() / 6.0;
+                    let dens = tet_mass / vol;
+                    let inv = 1.0 / det;
+                    let mrows = [
+                        [(e2[1] * e3[2] - e2[2] * e3[1]) * inv, (e3[0] * e2[2] - e3[2] * e2[0]) * inv, (e2[0] * e3[1] - e2[1] * e3[0]) * inv],
+                        [(e3[1] * e1[2] - e3[2] * e1[1]) * inv, (e1[0] * e3[2] - e1[2] * e3[0]) * inv, (e3[0] * e1[1] - e3[1] * e1[0]) * inv],
+                        [(e1[1] * e2[2] - e1[2] * e2[1]) * inv, (e2[0] * e1[2] - e2[2] * e1[0]) * inv, (e1[0] * e2[1] - e1[1] * e2[0]) * inv],
+                    ];
+                    let mut a = [1.0f64, 0.0, 0.0, 0.0];
+                    let mut bb = [[0.0f64; 3]; 4];
+                    for r in 0..3 {
+                        let bc = mrows[r];
+                        let ac = -(bc[0] * p[0][0] + bc[1] * p[0][1] + bc[2] * p[0][2]);
+                        a[r + 1] = ac; bb[r + 1] = bc;
+                        a[0] -= ac; for q in 0..3 { bb[0][q] -= bc[q]; }
+                    }
+                    let wmean = (w[0] + w[1] + w[2] + w[3]) / 4.0;
+                    poly.init_tet(p);
+                    voxelize_ws(&mut ws, &poly, dxe, 1, |cidx, m| {
+                        let iw = (cidx[0] + base[0]).rem_euclid(ne as i64) as usize;
+                        let jw = (cidx[1] + base[1]).rem_euclid(ne as i64) as usize;
+                        let kw = (cidx[2] + base[2]).rem_euclid(ne as i64) as usize;
+                        let idx = (iw * ne + jw) * ne + kw;
+                        mass0[idx] += dens * m[0];
+                        let mut s = 0.0;
+                        for cc in 0..4 { s += w[cc] * (a[cc] * m[0] + bb[cc][0] * m[1] + bb[cc][1] * m[2] + bb[cc][2] * m[3]); }
+                        mass1[idx] += dens * s / wmean;
+                    });
+                }
+            }
+        }
+    }
+    let cell = dxe * dxe * dxe;
+    (
+        mass0.iter().map(|&m| (m / cell) as f32).collect(),
+        mass1.iter().map(|&m| (m / cell) as f32).collect(),
+    )
 }

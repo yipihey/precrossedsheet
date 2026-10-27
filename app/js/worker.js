@@ -1,7 +1,7 @@
 // A persistent worker owns the Wasm facade and (when requested) its GPU device.
 // Jobs are serialized. A newer request replaces the queued request and asks an
 // asynchronous GPU run to stop between submitted batches.
-import init, * as wasmApi from '../pkg/hcc_core.js';
+import init, * as wasmApi from '../pkg/hcc_core.js?v=20261027f';
 
 let wasmReady;
 let gpuContext = null;
@@ -71,7 +71,8 @@ function start(data) {
 
 async function execute(task) {
   const started = performance.now();
-  if (!wasmReady) wasmReady = init();
+  const inBrowserWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261027f', import.meta.url) }) : init();
   try { await wasmReady; } catch (error) { wasmReady = null; throw error; }
   const wasm = wasmApi;
   if (cancelled(task)) return {};
@@ -171,7 +172,7 @@ async function execute(task) {
       if (cancelled(task)) return {};
       attemptedValidation = error?.gpuValidation || attemptedContext?.validation || null;
       if (attemptedContext && attemptedContext !== gpuContext) await disposeContext(attemptedContext);
-      await disposeGpu();
+      if (gpuContextNeedsReinit || ['device-destroy','destroy-device','device-loss'].includes(task.policy?.forceGpuFailure)) await disposeGpu();
       const fallbackStarted = performance.now();
       channels = copyF64(prepared.direct_cpu());
       stageTimes.directMilliseconds += performance.now() - fallbackStarted;
@@ -225,7 +226,7 @@ async function execute(task) {
       fdExecution = { backend: 'gpu', provenance: 'gpu-compensated-f32', precision: 'high/low f32 endpoint inputs and compensated GPU integrals; f64 host power difference', h: metadata.h, ...attempt };
     } catch (error) {
       if (cancelled(task)) return {};
-      await disposeGpu();
+      if (gpuContextNeedsReinit || task.policy.forceFdFailure === 'device-loss') await disposeGpu();
       cpuFd(String(error?.message || error), attempt);
     }
   } else {
@@ -338,6 +339,7 @@ async function execute(task) {
     result.execution.precision = 'compensated GPU finite differences with f64 CPU direct modes and finalization';
   }
   stageTimes.finalizationMilliseconds = performance.now() - finalizationStarted;
+  attachBinaryFields(prepared, result);
   if (result.execution) result.execution.timings = { ...(result.execution.timings || {}), stages: stageTimes };
   if (result.execution?.gpuAttempt?.timings) result.execution.gpuAttempt.timings.stages = stageTimes;
   task.execution = result.execution || execMeta;
@@ -366,13 +368,15 @@ async function preparePhysical(task, wasm, preparedCtor) {
   let pending = null, seed = null;
   const request = JSON.stringify(task.state), requestedGpu = task.policy.requested === 'gpu' && task.state.dim > 1 && !task.policy.forceGpuFailure;
   const radix = (n) => Number.isInteger(n) && n >= 2 && (n & (n-1)) === 0;
-  const gpuLpt = requestedGpu && !task.policy.disableLpt && radix(task.state.n) && typeof wasm.GpuLptSeed === 'function';
-  const gpuPm = requestedGpu && !task.policy.disablePm && radix(task.state.forceMesh);
-  const gpuDeposit = requestedGpu && !task.policy.disableDeposit;
+  const gridCells = (task.state.n || 0) ** (task.state.dim || 1);
+  const meshCells = (task.state.mesh || 0) ** (task.state.dim || 1);
+  const gpuLpt = requestedGpu && !task.policy.disableLpt && radix(task.state.n) && gridCells <= 262144 && typeof wasm.GpuLptSeed === 'function';
+  const gpuPm = requestedGpu && !task.policy.disablePm && radix(task.state.forceMesh) && gridCells <= 13824;
+  const gpuDeposit = requestedGpu && !task.policy.disableDeposit && gridCells <= 65536 && meshCells <= 65536;
   const forcePhysical = ['forceLptFailure','forcePmFailure','forceDepositFailure'].some(k => task.policy[k]);
-  let lptExecution = { backend: 'cpu', precision: 'f32 nLPT tensors; f64 cosmological growth/state', fallbackReason: task.policy.disableLpt ? 'GPU nLPT disabled for an explicit reference comparison.' : requestedGpu && !gpuLpt ? 'GPU nLPT requires a radix lattice in 2D/3D.' : null };
-  let pmExecution = { backend: 'cpu', precision: 'f64', fallbackReason: task.policy.disablePm ? 'Resident PM disabled for an explicit reference comparison.' : requestedGpu && !gpuPm ? 'Resident PM requires a power-of-two force mesh.' : null };
-  let depositExecution = { backend: 'cpu', provenance: 'cpu-exact', arithmeticPrecision: 'f64 geometry and accumulation', fallbackReason: task.policy.disableDeposit ? 'GPU exact deposition disabled for an explicit reference comparison.' : null };
+  let lptExecution = { backend: 'cpu', precision: 'f32 nLPT tensors; f64 cosmological growth/state', fallbackReason: task.policy.disableLpt ? 'GPU nLPT disabled for an explicit reference comparison.' : requestedGpu && !gpuLpt ? (gridCells > 262144 ? 'Large lattice uses CPU f64 LPT construction.' : 'GPU nLPT requires a radix lattice in 2D/3D.') : null };
+  let pmExecution = { backend: 'cpu', precision: 'f64', fallbackReason: task.policy.disablePm ? 'Resident PM disabled for an explicit reference comparison.' : requestedGpu && !gpuPm ? (gridCells > 13824 ? 'Large-grid laboratory omits PM evolution.' : 'Resident PM requires a power-of-two force mesh.') : null };
+  let depositExecution = { backend: 'cpu', provenance: 'cpu-exact', arithmeticPrecision: 'f64 geometry and accumulation', fallbackReason: task.policy.disableDeposit ? 'GPU exact deposition disabled for an explicit reference comparison.' : requestedGpu && !gpuDeposit ? 'Large observation grid uses CPU exact deposition.' : null };
   const source = gpuLpt ? 'gpu-f32' : 'cpu-f64', arithmetic = gpuPm ? 'f32' : 'f64', depositSource = gpuDeposit ? DEPOSIT_SOURCE : 'cpu-exact';
   const key = physicalKey(task.state);
   try {
@@ -461,7 +465,7 @@ async function preparePhysical(task, wasm, preparedCtor) {
         if (cancelled(task)) return null;
         pm=null;
         pmExecution={backend:'cpu',precision:'f64',fallbackReason:String(error?.message||error),gpuAttempt:attempt};
-        await disposeGpu();
+        if (gpuContextNeedsReinit || task.policy.forcePmFailure === 'device-loss') await disposeGpu();
       }
     }
     let prepared = null;
@@ -478,12 +482,9 @@ async function preparePhysical(task, wasm, preparedCtor) {
         const options={signal:task.controller.signal,shouldCancel:()=>cancelled(task),maxGpuBytes:failure==='limits'?1:512*1024*1024,
           onProgress:p=>send({type:'progress',requestId:task.requestId,phase:'exact-deposit',...p})};
         const count=meta.n**meta.dim*4;
-        // CPU PM is computed once by the pending object's retained oracle when
-        // the force backend cannot run on this device; no sampling is involved.
-        const pmPositions=cachedPmPositions || (pm?pm.x:copyF32(pending.pm_reference()).subarray(0,count));
         const input={dim:meta.dim,n:meta.n,meshN:task.state.mesh,boxSize:1};
         const lpt=await runExactDeposit(context.device,{...input,positions:copyF32(pending.lpt_positions())},options);
-        const pmDensity=await runExactDeposit(context.device,{...input,positions:pmPositions},options);
+        const pmDensity=gridCells>13824?lpt:await runExactDeposit(context.device,{...input,positions:cachedPmPositions || (pm?pm.x:copyF32(pending.pm_reference()).subarray(0,count))},options);
         if(cancelled(task))return null;
         attempt={...attempt,timings:{lpt:lpt.timings,pm:pmDensity.timings},diagnostics:{lpt:lpt.diagnostics,pm:pmDensity.diagnostics},kernelProvenance:lpt.provenance};
         if(failure==='readback')throw new Error('Forced exact-deposition readback failure.');
@@ -635,6 +636,27 @@ function finish(prepared, channels, execution, fdValues = null) {
     ? prepared.finish_with_finite_difference(channels, fdValues, JSON.stringify(execution))
     : prepared.finish(channels, JSON.stringify(execution));
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
+}
+function attachBinaryFields(prepared, out) {
+  if (!out || typeof prepared?.rho_f32 !== 'function') return out;
+  if (!out.q || out.q.length === 0) out.q = prepared.q_f64();
+  if (!out.x || out.x.length === 0) out.x = prepared.x_f64();
+  if (!out.v || out.v.length === 0) out.v = prepared.v_f64();
+  if (!out.pmX || out.pmX.length === 0) out.pmX = prepared.pm_x_f64();
+  if (!out.pmV || out.pmV.length === 0) out.pmV = prepared.pm_v_f64();
+  if (!out.rho || out.rho.length === 0) out.rho = prepared.rho_f32();
+  if (!out.rhoP1 || out.rhoP1.length === 0) out.rhoP1 = prepared.rho_p1_f32();
+  if (!out.pmRho || out.pmRho.length === 0) out.pmRho = prepared.pm_rho_f32();
+  if (!out.cicRho || out.cicRho.length === 0) out.cicRho = prepared.cic_rho_f32();
+  if (!out.tscRho || out.tscRho.length === 0) out.tscRho = prepared.tsc_rho_f32();
+  if (out.customSeries && typeof prepared.custom_rho_f32 === 'function') {
+    for (const [k, entry] of Object.entries(out.customSeries)) {
+      if (entry && (!entry.rho || entry.rho.length === 0)) {
+        entry.rho = prepared.custom_rho_f32(k);
+      }
+    }
+  }
+  return out;
 }
 function cpuExecution(requestedBackend, fallbackReason) {
   return {

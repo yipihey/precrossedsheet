@@ -6,6 +6,7 @@ use crate::grid::Grid;
 use num_complex::Complex64 as C64;
 use std::f64::consts::PI;
 
+#[derive(Clone, Debug)]
 pub struct Spectrum {
     pub k: Vec<f64>,
     pub p: Vec<f64>,

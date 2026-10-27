@@ -1,0 +1,96 @@
+# Presentations & Audience Summaries {#sec-talks}
+
+The mathematical and numerical results developed across this monograph—and verified at scale in the companion [`DiscoDJ.jl`](https://github.com/yipihey/DiscoDJ.jl) studies (`studies/lpt_pdf` and `studies/mass_cdf`)—serve several distinct research communities:
+
+1. **Perturbation Theory (PT), EFTofLSS, and Field-Level Inference (FLI) Cosmologists** building forward models (`LEFTfield`, Shifted-EFT, `BORG`, `LULO`, `Manticore`).
+2. **Observational & Survey Cosmologists** analyzing galaxy clustering, voids, and BAO reconstruction in Stage-IV surveys (DESI, Euclid, Rubin LSST, Roman, SPHEREx).
+3. **Bayesian Inference & Machine-Learning Researchers** developing Hamiltonian Monte Carlo (HMC) samplers, differentiable forward models, and Simulation-Based Inference (SBI) pipelines.
+4. **Computational Astrophysicists & Applied Mathematicians** working on phase-space tessellations, exact polyhedral voxelization (`R3D`), Hermite–Genocchi divided differences, and GPU/WebAssembly scientific computing.
+
+To make these results immediately accessible to each audience, the repository organizes a multi-track **Presentations & Audience Summaries** suite under `talks/`, powered by **Quarto Reveal.js** and **embedded React.js + Rust/WebAssembly (`hcc_core`) interactive laboratory panels**.
+
+---
+
+## Presentation Series Overview {#sec-talk-tracks}
+
+| Track & Audience | Format & Duration | Core Focus & Built-In Interactive Panels | Links |
+| :--- | :--- | :--- | :--- |
+| **Track 1: PT / EFTofLSS & Field-Level Inference Seminar**<br>(`talks/eft-fli-40min/`) | **40-Minute Pedagogical Seminar**<br>(22 Reveal.js slides + 4 live React/Wasm panels) | Full 5-Act synthesis: UV cutoff dictionary ($R_f \leftrightarrow \Lambda$), comparison with `LEFTfield` / Shifted-EFT / `BORG` / `LULO` / `Manticore`, Kuhn-simplex R3D deposition, 16-ray Brillouin-zone Hermite–Genocchi Fourier modes, 4LPT cofactor & Cauchy curl equations, 1-pt PDFs, 2-pt copulas, exact tidal shear law $F_M(>\bar\rho) = \frac{1}{2} + A_1\sigma + A_3\sigma^3$ across $1100\,(h^{-1}\mathrm{Gpc})^3$, and analytic confluent divided-difference JVPs. | [**Launch Interactive Slide Deck ↗**](../talks/eft-fli-40min/index.html){target="_blank"}<br>[Jump to Full Plan ↓](#sec-eft-fli-40min-plan) |
+| **Track 2: Survey & Cosmic Web Executive Summary**<br>(`talks/conference-15min/`) | **15-Minute Contributed Conference Talk**<br>(12 slides + 2 React panels) | Concise executive summary for general cosmology conferences: why particle assignment (`NGP`/`CIC`) shatters voids into artificial empty cells ($\rho=0$) before shell crossing, how the tetrahedral sheet restores $0\%$ empty cells and zero shot noise ($P_{\mathrm{shot}} \equiv 0$), and why 4LPT preserves BAO peaks to $0.12\%$ in 3D. | [Audience Summary ↓](#sec-summary-survey) |
+| **Track 3: Differentiable Inference Workshop (HMC & SBI)**<br>(`talks/sbi-hmc-workshop/`) | **30-Minute Workshop Deep-Dive**<br>(18 slides + JVP & BAO React panel) | Focused on Bayesian sampling & SBI: how shot-noise-free likelihood surfaces stabilize HMC leapfrog trajectories, space–time factorization of the 13 spatial 4LPT basis tensors $\mathbf{S}^\tau(\mathbf{q})$ on lightcones (`lpt_lightcone`, `QuaiaICs`), and exact forward/reverse-mode differentiation{{< src tangent::LptJvp >}}. | [Audience Summary ↓](#sec-summary-inference) |
+| **Track 4: Computational Methods & WebGPU Architecture**<br>(`talks/computational-methods/`) | **45-Minute Methods Seminar**<br>(24 slides + Simplex & Estimator React panels) | Mathematical and algorithmic deep-dive: Kuhn $d!$ simplex decomposition{{< src sheet::sheet_density_2d_exact >}}, Powell–Abel `R3D` convex clipping{{< src r3d::voxelize >}}, Taylor-stabilized Hermite–Genocchi divided differences{{< src direct::exp_divided_difference >}}, and the shared Rust/Wasm/WebGPU kernel. | [Audience Summary ↓](#sec-summary-methods) |
+
+---
+
+## Live Embedded Deck: 40-Minute Seminar for PT / EFTofLSS & Field-Level Inference Cosmologists {#sec-live-deck}
+
+Use the arrow keys inside the frame below to navigate through the 22 slides, interact directly with the **4 embedded React.js + Rust/Wasm laboratory panels** (Slides 8, 10, 13, and 20), or [**open the slide show in full-screen mode ↗**](../talks/eft-fli-40min/index.html){target="_blank"}.
+
+```{=html}
+<div style="margin: 16px 0 24px 0; border: 2px solid #0f766e; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12); background: #0f172a;">
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #0f172a; color: #f8fafc; font-size: 0.88rem;">
+    <span><strong>Interactive Reveal.js + React.js Slide Deck</strong> — <em>The Pre-Crossed Phase-Space Sheet (40-Min Seminar)</em></span>
+    <div style="display: flex; gap: 10px;">
+      <a href="../talks/eft-fli-40min/index.html" target="_blank" rel="noopener" style="color: #5eead4; font-weight: 600; text-decoration: none;">Open Fullscreen Presentation ↗</a>
+      <a href="../app/index.html" target="_blank" rel="noopener" style="color: #bae6fd; font-weight: 600; text-decoration: none;">Open Full Wasm/WebGPU Lab ↗</a>
+    </div>
+  </div>
+  <iframe
+    src="../talks/eft-fli-40min/index.html"
+    title="The Pre-Crossed Phase-Space Sheet — 40-Minute Interactive Reveal.js + React Presentation"
+    style="width: 100%; height: 620px; border: 0; display: block; background: #f8fafc;"
+    allowfullscreen
+  ></iframe>
+</div>
+```
+
+### Built-In React.js Interactive Panels in the Slide Deck
+
+All presentations in `talks/` share the modular React 18 + `hcc_core` WebAssembly component library in `talks/shared/react-lab-panels.js`, which provides four specialized interactive slide panels:
+
+1. **Panel 1 (`estimator-density`, Slide 8):**
+   - Exposes the persistent **`{1LPT, 2LPT, 3LPT, 4LPT, PM}` $\times$ `{P₀, P₁, NGP, CIC, TSC}`** selector matrix alongside live sliders for Lagrangian resolution $N$, mesh ratio $M/N$, scale factor $a$, and post-deposition smoothing $R_{\mathrm{obs}}$.
+   - Renders side-by-side **Coolwarm $\log_{10}(\rho/\bar\rho) \in [-1, +1]$ (`[0.1, 10]`, $\rho/\bar\rho = 1$ neutral white)** density maps{{< src sheet::ngp_density >}}{{< src sheet::cic_density >}}{{< src sheet::sheet_density_2d_exact >}} and mid-plane 1D cross-sections, reporting exact empty-cell percentages and minimum vertex Jacobians ({{< lab "v=3&dim=2&n=64&force=64&mesh=128&view=density" "Open Estimator Density Lab" >}}).
+2. **Panel 2 (`simplex-spectra`, Slide 10):**
+   - Compares **16-ray first-Brillouin-zone shell-averaged mesh-free Hermite–Genocchi simplex Fourier modes**{{< src direct::exp_divided_difference >}} against gridded isotropic FFT power spectra, cosmic-variance-free nonlinear transfer ratios $P(k)/[D(a)^2|\delta_0(\mathbf{k})|^2]$, and relative estimator ratios ({{< lab "v=3&dim=2&n=64&force=64&mesh=128&view=spectra" "Open Simplex Spectra Lab" >}}).
+3. **Panel 3 (`lpt-convergence-variance-pdf`, Slide 13):**
+   - Uses the `{1LPT, 2LPT, 3LPT, 4LPT, PM}` $\times$ `{P₀, P₁, NGP, CIC, TSC}` matrix to isolate dynamical convergence (`1LPT` $\to$ `4LPT` vs. `PM` on the exact same `P₀` sheet) from estimator artifacts (`CIC`/`NGP`) across **scale-dependent variance $\sigma^2(R)$** (real-space Top-Hat and Gaussian windows) and **one-point volume/mass PDFs** ($dP_V/d\log_{10}\rho$ and $dP_M/d\log_{10}\rho${{< src observables::density_pdf >}}, {{< lab "v=3&dim=2&n=64&force=64&mesh=128&view=variance" "Open Variance & PDF Lab" >}}).
+4. **Panel 4 (`bao-jvp-inference`, Slide 20):**
+   - Computes phase-matched realizations with and without Eisenstein & Hu (1998) BAO wiggles{{< src cosmological::transfer_bao >}} to display the acoustic modulation ratio $P_{\mathrm{BAO}}(k)/P_{\mathrm{nw}}(k)$, and verifies the exact **confluent divided-difference Jacobian-Vector Product (JVP)** $\partial P_0(k)/\partial A${{< src tangent::simplex_mass_transform_jvp >}}{{< test simplex_jvp_mass_degeneracies_translation_and_p1_finite_difference "simplex mode JVP" >}} against central finite differences ({{< lab "v=3&dim=2&n=256&force=256&mesh=256&ic=gaussian&transfer=bao&cutoff=31&L=1000&Rini=14&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=spectra" "Open BAO & JVP Lab" >}}).
+
+---
+
+## Summaries of Results by Audience {#sec-audience-summaries}
+
+### 1. For Perturbation Theory (PT) & EFTofLSS Cosmologists {#sec-summary-eft}
+
+- **Why Lagrangian Geometry Complements EFTofLSS:** Eulerian perturbation theory expands in $\delta(\mathbf{x})$, which breaks down as $|\delta| \to 1$ in cosmic voids and requires infrared resummation to handle large bulk displacements $\boldsymbol{\Psi}_{\mathrm{IR}}$. Lagrangian perturbation theory expands the trajectory $\mathbf{x}(\mathbf{q}, a) = \mathbf{q} + \boldsymbol{\Psi}(\mathbf{q}, a)$ while keeping mass conservation **exact**: $1 + \delta(\mathbf{q}, a) = 1/J(\mathbf{q}, a)$.
+- **The Pre-Crossed Regime Matches Standard EFT Cutoffs:** A Gaussian initial filter $R_f = 14\text{–}18\,h^{-1}\mathrm{Mpc}$ corresponds to a sharp-$k$ EFT cutoff $\Lambda_{\mathrm{eff}} \simeq \sqrt{5}/R_f \approx 0.12\text{–}0.16\,h\,\mathrm{Mpc}^{-1}$ (the exact regime used in `LEFTfield`). At these scales, **$>99.5\%$ of the universe is still in the single-stream pre-crossed regime ($J > 0$) at $z=0$**.
+- **An Exact Parameter-Free Law on the Sheet (`studies/mass_cdf`):** Because traceless tidal shear $T_{ij}T^{ij}$ focuses fluid elements even when $\delta_L = 0$ ($\left.-\ln J\right|_{\delta_L=0} \simeq \frac{2}{7}T_{ij}T^{ij} > 0$), the Eulerian mass fraction above the mean density obeys an exact parameter-free odd-power expansion:
+  $$F_M(>\bar\rho) = P(J < 1) = \frac{1}{2} + A_1\sigma + A_3\sigma^3 + \mathcal{O}(\sigma^5), \qquad A_1^{\mathrm{EdS}} = \frac{4}{21\sqrt{2\pi}} \approx 0.075989$$
+  Confirmed across $1100\,(h^{-1}\mathrm{Gpc})^3$ to $0.07\%$ precision ($A_1 = 0.075984 \pm 0.000054$), with $>15\sigma$ detection of the exact $\Lambda$CDM growth shift $A_1^{\Lambda\mathrm{CDM}}(z=0) = 0.075509$, and complete convergence of $A_3$ at **4LPT**.
+
+### 2. For Survey & Cosmic Web Cosmologists (`talks/conference-15min/`) {#sec-summary-survey}
+
+- **Eliminating Empty Void Cells Without Adding Particles:** When a $64^3$ particle grid is deposited onto a $128^3$ mesh with CIC, $66.3\%$ of Eulerian cells in voids are artificially empty ($\rho=0$). Depositing the **exact same $64^3$ 4LPT vertices** as a continuous Kuhn tetrahedral sheet (`R3D`) yields **$0.0\%$ empty cells** and matches the $256^3$ reference density distribution to $1.6\%$.
+- **Sub-Percent One-Point PDFs & Copulas (`studies/lpt_pdf`):** At $R_s \ge R_f = 14\,h^{-1}\mathrm{Mpc}$, 4LPT matches full $N$-body volume and mass PDFs to $\lesssim 1\%$ and removes $75\%\text{–}95\%$ of 2LPT's two-point rank-Gaussianized copula error.
+- **Acoustic Scale Fidelity:** Phase-matched BAO vs. no-wiggle evolutions show that 4LPT + $P_0$ sheet deposition preserves the four BAO peaks with a mean modulation error of **$0.47\%$ in 2D and $0.12\%$ in 3D**{{< test bao_transfer_oscillates_about_the_smooth_fit_and_shares_its_limits "BAO fit" >}}.
+
+### 3. For Field-Level Inference, HMC & SBI Researchers (`talks/sbi-hmc-workshop/`) {#sec-summary-inference}
+
+- **Smooth Likelihoods & Zero Shot Noise:** Replacing CIC particle assignment with the continuous sheet removes the $L^3/N_p$ shot-noise floor ($P_{\mathrm{shot}} \equiv 0$) and guarantees $\rho > 0$ everywhere before crossing, preventing $\ln(1+\delta)$ singularities during HMC exploration.
+- **Instant Lightcone Re-Evaluation:** The 13 spatial basis fields $\mathbf{S}^\tau(\mathbf{q})$ of 4LPT{{< src lpt::Lpt >}} depend only on the initial modes $\delta_0(\mathbf{q})$. Varying cosmological parameters or redshift $z(\chi)$ along a lightcone is a fast pointwise contraction with the coupled $\Lambda$CDM growth functions $g_\tau(a)${{< src growth::Growth::new_lcdm >}}.
+- **Closed-Form Forward & Adjoint Gradients:** Differentiating the Hermite–Genocchi simplex Fourier mode $I_T(\mathbf{k}) = m_T d!\,\exp[s_0,\dots,s_d]$ via the confluent divided-difference identity $\partial_{s_i}\exp[s_0,\dots,s_d] = \exp[s_0,\dots,s_d,s_i]$ provides exact analytic JVPs without grid interpolation artifacts.
+
+### 4. For Computational Physicists & GPU Engineers (`talks/computational-methods/`) {#sec-summary-methods}
+
+- **Exact Geometric Primitives:** Combines parity-matched Kuhn Freudenthal triangulations ($d!$ simplices per cell) with Sutherland–Hodgman / Powell–Abel `R3D` convex polyhedron clipping{{< src sheet::sheet_density_3d_exact >}} and Taylor-stabilized Hermite–Genocchi divided differences{{< src direct::exp_divided_difference >}}.
+- **Unified Rust + WebAssembly + WebGPU Architecture:** A single zero-dependency Rust crate (`hcc_core`) compiles both to native multi-threaded CPU binaries and to browser-native WebAssembly + WebGPU compute shaders, powering the book's interactive figures, the full browser laboratory, and the embedded React slide panels.
+
+---
+
+## Complete 40-Minute Seminar Plan (`talks/eft-fli-40min/plan.md`) {#sec-eft-fli-40min-plan}
+
+Below is the complete slide-by-slide speaker plan and Q&A guide for the 40-minute seminar [**The Pre-Crossed Phase-Space Sheet**](../talks/eft-fli-40min/index.html){target="_blank"}:
+
+{{< include ../talks/eft-fli-40min/plan.md >}}

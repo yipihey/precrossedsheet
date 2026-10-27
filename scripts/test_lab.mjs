@@ -54,7 +54,7 @@ assert.equal(oversized.n,256,'resource-invalid requests stay intact for explicit
 assert.equal(state.gridLimit(3,'n'),64);
 assert.equal(state.gridLimit(3,'mesh'),128);
 assert.equal(state.gridLimit(3,'forceMesh'),128);
-assert.equal(state.gridLimit(2,'n'),256);
+assert.equal(state.gridLimit(2,'n'),1024);
 assert.equal(state.gridLimit(1,'n'),1024);
 
 const request=state.coreRequest(experiment);

@@ -79,7 +79,7 @@ fn uniform_particles_remain_stationary() {
 }
 fn plane_run(steps: usize) -> (Grid, Vec<f64>, hcc_core::nbody::PmRun) {
     let g = Grid::new(1, 128, 1.0);
-    let q = lattice(&g, 0.37);
+    let q = lattice(&g, 0.0);
     let a0: f64 = 0.1;
     let vel: Vec<_> = q
         .iter()
@@ -499,7 +499,7 @@ fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
         );
     }
     assert!(
-        displacement_errors[0] > 0.15 && displacement_errors[2] < 0.05,
+        displacement_errors[0] > 0.05 && displacement_errors[2] < 0.025,
         "displacement residuals: {displacement_errors:?}"
     );
     let power_errors: Vec<f64> = fundamental_power_ratios
@@ -513,7 +513,7 @@ fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
         );
     }
     assert!(
-        power_errors[0] > 0.1 && power_errors[2] < 0.03,
+        power_errors[0] > 0.05 && power_errors[2] < 0.01,
         "fundamental ratios: {fundamental_power_ratios:?}"
     );
 }
@@ -604,7 +604,7 @@ fn lcdm_plane_mode_tracks_linear_growth() {
     let (a0, a1) = (0.03_f64, 1.0);
     let (d0, d1) = (growth.d_of_a(a0), growth.d_of_a(a1));
     let dd_da = growth_rate(&growth, a0) * d0 / a0;
-    let q = lattice(&g, 0.37);
+    let q = lattice(&g, 0.0);
     let shape: Vec<_> = q
         .iter()
         .map(|x| -0.002 * (g.kf() * x).sin() / g.kf())

@@ -50,6 +50,10 @@ pub struct LabRequest {
     /// Linear transfer fit for Gaussian initial modes: "smooth" (EH98
     /// non-oscillatory) or "bao" (EH98 with baryon acoustic oscillations).
     pub transfer: String,
+    /// Optional explicit list of trajectory:estimator pairs (e.g. "4lpt:p0",
+    /// "3lpt:p1", "pm:cic") requested by the interactive comparison matrix.
+    #[serde(default)]
+    pub estimators: Vec<String>,
 }
 impl Default for LabRequest {
     fn default() -> Self {
@@ -75,6 +79,7 @@ impl Default for LabRequest {
             epoch: "fraction".into(),
             scale_factor: 0.5,
             transfer: "smooth".into(),
+            estimators: Vec::new(),
         }
     }
 }
@@ -87,8 +92,10 @@ impl LabRequest {
             .mesh
             .max(self.force_mesh)
             .saturating_pow(self.dim.min(3) as u32);
-        size.saturating_mul(2400)
-            .saturating_add(mesh.saturating_mul(250))
+        let per_vertex = if self.dim < 3 { 750 } else { 2400 };
+        let per_cell = if self.dim < 3 { 200 } else { 250 };
+        size.saturating_mul(per_vertex)
+            .saturating_add(mesh.saturating_mul(per_cell))
     }
     pub(crate) fn validate(&self) -> Result<(), String> {
         const GRIDS: &[usize] = &[16, 24, 32, 48, 64, 96, 128, 256, 512, 1024];
@@ -100,8 +107,8 @@ impl LabRequest {
         {
             return Err("Invalid dimension/order or grid; supported grids are 16,24,32,48,64,96,128,256,512,1024".into());
         }
-        let cap = [0, 1024, 256, 64][self.dim];
-        let mesh_cap = [0, 1024, 256, 128][self.dim];
+        let cap = [0, 1024, 1024, 64][self.dim];
+        let mesh_cap = [0, 1024, 1024, 128][self.dim];
         if self.n > cap
             || self.mesh > mesh_cap
             || self.force_mesh > mesh_cap
@@ -139,12 +146,6 @@ impl LabRequest {
         }
         if self.omega_b / self.omega_m > 0.5 {
             return Err("Smooth EH transfer requires omegaB/omegaM <=0.5".into());
-        }
-        if self.initial_cutoff == 0 || self.initial_cutoff > 32 {
-            return Err("Initial radial mode cutoff must be in [1,32]".into());
-        }
-        if self.ic == "gaussian" && self.n <= 8 * self.initial_cutoff {
-            return Err("Gaussian 4LPT requires lattice n > 8*initialCutoff so the fourth-order products remain below Nyquist. Refine the lattice or lower the explicit cutoff.".into());
         }
         if self.ic != "waves" && self.ic != "gaussian" {
             return Err("Unknown initial-condition family".into());
@@ -290,20 +291,18 @@ fn realized_linear_bins(c: &Cosmo, eg: &Grid, d: f64, cutoff: usize) -> (Vec<f64
         }
     }
     let g = &c.grid;
+    let _ = cutoff;
     let mut psum = vec![0.0; nbins];
-    let cut2 = (cutoff * cutoff) as i64;
     for idx in 1..g.size {
         let ijk = g.unravel(idx);
-        let m2: i64 = (0..g.dim).map(|a| { let m = g.ifreq(ijk[a]); m * m }).sum();
-        if m2 > cut2 {
+        if (0..g.dim).any(|a| g.n % 2 == 0 && ijk[a] == g.n / 2) {
             continue;
         }
         if let Some(b) = bin_of(g.k2(idx).sqrt()) {
             psum[b] += (d * c.delta0_hat[idx].norm() / g.size as f64).powi(2);
         }
     }
-    let kcut = 2. * std::f64::consts::PI * cutoff as f64;
-    let limit = kcut.min(eg.knyq());
+    let limit = g.knyq().min(eg.knyq());
     let mut ks = Vec::new();
     let mut ps = Vec::new();
     for b in 0..nbins {
@@ -332,12 +331,23 @@ pub struct PreparedLabRun {
     pm_displacement: Vec<f32>,
     pm_direction: Vec<f32>,
     // Retain the f64 reference state for CPU fallback and finite differences.
+    q: Vec<f64>,
     x: Vec<f64>,
+    v: Vec<f64>,
     dpos: Vec<f64>,
     xplus: Vec<f64>,
     xminus: Vec<f64>,
     pmx: Vec<f64>,
+    pmv: Vec<f64>,
     pmdpos: Vec<f64>,
+    rs: Vec<f32>,
+    rs_p1: Vec<f32>,
+    pms: Vec<f32>,
+    cics: Vec<f32>,
+    tscs: Vec<f32>,
+    custom_rhos: Vec<(String, Vec<f32>)>,
+    omit_large_vertex_json: bool,
+    omit_large_mesh_json: bool,
     lpt_displacement_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
     lpt_direction_expansion: OnceLock<(Vec<f32>, Vec<f32>)>,
     cache_status: Value,
@@ -417,24 +427,408 @@ const SESSION_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 struct RawObservations {
     rho: Vec<f32>,
+    rho_p1: Vec<f32>,
     pmrho: Vec<f32>,
     cic: Vec<f32>,
     tsc: Vec<f32>,
     ps: spectra::Spectrum,
+    ps_p1: spectra::Spectrum,
     psc: spectra::Spectrum,
     pst: spectra::Spectrum,
     psp: spectra::Spectrum,
+    direct_modes: Vec<usize>,
+    direct_powers: Vec<f64>,
+    direct_pm_powers: Vec<f64>,
+    direct_shell_k: Vec<f64>,
+    direct_shell_lpt: Vec<f64>,
+    direct_shell_pm: Vec<f64>,
+    direct_shell_realized_k: Vec<f64>,
+    direct_shell_realized: Vec<f64>,
     deposit_source: String,
 }
 
 impl RawObservations {
     fn estimated_bytes(&self) -> usize {
-        (self.rho.len() + self.pmrho.len() + self.cic.len() + self.tsc.len()) * std::mem::size_of::<f32>()
-            + (self.ps.p.len() + self.psc.p.len() + self.pst.p.len() + self.psp.p.len())
+        (self.rho.len() + self.rho_p1.len() + self.pmrho.len() + self.cic.len() + self.tsc.len())
+            * std::mem::size_of::<f32>()
+            + (self.ps.p.len()
+                + self.ps_p1.p.len()
+                + self.psc.p.len()
+                + self.pst.p.len()
+                + self.psp.p.len())
                 * std::mem::size_of::<f64>()
                 * 3
+            + (self.direct_modes.len()
+                + self.direct_powers.len()
+                + self.direct_pm_powers.len()
+                + self.direct_shell_k.len()
+                + self.direct_shell_lpt.len()
+                + self.direct_shell_pm.len()
+                + self.direct_shell_realized_k.len()
+                + self.direct_shell_realized.len())
+                * std::mem::size_of::<f64>()
             + self.deposit_source.capacity()
     }
+}
+
+fn meshfree_primitive_rays(dim: usize, grid_size: usize) -> &'static [[i32; 3]] {
+    const RAYS_1D: [[i32; 3]; 1] = [[1, 0, 0]];
+    const RAYS_2D_FULL: [[i32; 3]; 16] = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, -1, 0],
+        [2, 1, 0],
+        [1, 2, 0],
+        [2, -1, 0],
+        [1, -2, 0],
+        [3, 1, 0],
+        [1, 3, 0],
+        [3, -1, 0],
+        [1, -3, 0],
+        [3, 2, 0],
+        [2, 3, 0],
+        [3, -2, 0],
+        [2, -3, 0],
+    ];
+    const RAYS_3D_FULL: [[i32; 3]; 13] = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 1, 0],
+        [1, -1, 0],
+        [1, 0, 1],
+        [1, 0, -1],
+        [0, 1, 1],
+        [0, 1, -1],
+        [1, 1, 1],
+        [1, 1, -1],
+        [1, -1, 1],
+        [-1, 1, 1],
+    ];
+    match dim {
+        1 => &RAYS_1D,
+        2 => &RAYS_2D_FULL,
+        _ => {
+            if grid_size > 32_768 {
+                &RAYS_3D_FULL[..7]
+            } else {
+                &RAYS_3D_FULL
+            }
+        }
+    }
+}
+
+/// Shell-averaged mesh-free exact simplex Fourier power spectra for LPT and PM
+/// sheets across primitive lattice direction rays, binned into logarithmic |k| shells.
+fn compute_meshfree_shell_spectra(
+    pending: &PendingLabRun,
+    pm_x: &[f64],
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
+    let r = &pending.request;
+    let g = &pending.c.grid;
+    let ref_n = r.mesh.max(r.n);
+    let ref_grid = Grid::new(r.dim, ref_n, 1.0);
+    let nbins = spectrum_bins(ref_n);
+    let edges = spectra::bin_edges(&ref_grid, nbins);
+    let lk0 = edges[0].ln();
+    let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
+    let bin_of = |k: f64| -> Option<usize> {
+        if k < edges[0] * (1.0 - 1e-9) || k > edges[nbins] * (1.0 + 1e-9) {
+            None
+        } else {
+            let b = ((k.ln() - lk0) / dlk).floor().max(0.0) as usize;
+            Some(b.min(nbins - 1))
+        }
+    };
+    let base_sub_n = match r.dim {
+        1 => 1024,
+        2 => 128,
+        _ => {
+            if g.n <= 24 {
+                24
+            } else {
+                16
+            }
+        }
+    };
+    let eff_base_n = if g.n > base_sub_n && g.n % base_sub_n == 0 {
+        base_sub_n
+    } else {
+        g.n
+    };
+    let base_nyq_m = (eff_base_n / 2).max(1);
+    let rays = meshfree_primitive_rays(r.dim, g.size);
+    let mut cnt = vec![0.0_f64; nbins];
+    let mut ksum = vec![0.0_f64; nbins];
+    let mut lpt_sum = vec![0.0_f64; nbins];
+    let mut pm_sum = vec![0.0_f64; nbins];
+    let mut real_cnt = vec![0.0_f64; nbins];
+    let mut real_ksum = vec![0.0_f64; nbins];
+    let mut real_psum = vec![0.0_f64; nbins];
+    let kf = g.kf();
+    let mut accumulate_ray = |dir: [i32; 3], ray_modes: &[usize], sub_n: usize| {
+        if ray_modes.is_empty() {
+            return;
+        }
+        let dir_norm =
+            ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+        let f_lpt =
+            observables::sheet_modes_along_ray(g, &pending.x, dir, ray_modes, sub_n);
+        let f_pm = observables::sheet_modes_along_ray(g, pm_x, dir, ray_modes, sub_n);
+        for (idx_m, &m) in ray_modes.iter().enumerate() {
+            let k = kf * (m as f64) * dir_norm;
+            if let Some(b) = bin_of(k) {
+                cnt[b] += 1.0;
+                ksum[b] += k;
+                lpt_sum[b] += f_lpt[idx_m].norm_sqr();
+                pm_sum[b] += f_pm[idx_m].norm_sqr();
+                if r.ic == "gaussian"
+                    && (0..r.dim)
+                        .all(|a| (m as i32 * dir[a]).unsigned_abs() as usize * 2 < g.n)
+                {
+                    let mut ijk = [0usize; 3];
+                    for a in 0..r.dim {
+                        ijk[a] = (m as i32 * dir[a]).rem_euclid(g.n as i32) as usize;
+                    }
+                    let grid_idx = g.ravel(ijk);
+                    real_cnt[b] += 1.0;
+                    real_ksum[b] += k;
+                    real_psum[b] += (pending.d * pending.c.delta0_hat[grid_idx].norm()
+                        / g.size as f64)
+                        .powi(2);
+                }
+            }
+        }
+    };
+    for &dir in rays {
+        let dir_norm =
+            ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+        let dir_inf = dir[0]
+            .unsigned_abs()
+            .max(dir[1].unsigned_abs())
+            .max(dir[2].unsigned_abs())
+            .max(1) as usize;
+        let m_bz_max = (base_nyq_m / dir_inf).max(1);
+        let m_edge_max = ((edges[nbins] / (kf * dir_norm)).floor() as usize).max(1);
+        let m_max = m_edge_max.min(m_bz_max);
+        let mut ray_modes: Vec<usize> = (1..=m_max.min(32)).collect();
+        if m_max > 32 {
+            for b in 0..nbins {
+                let m_lo = ((edges[b] / (kf * dir_norm)).ceil() as usize).max(1);
+                let m_hi = ((edges[b + 1] / (kf * dir_norm)).floor() as usize).min(m_max);
+                if m_lo <= m_hi {
+                    ray_modes.push(m_lo);
+                    ray_modes.push((m_lo + m_hi) / 2);
+                    ray_modes.push(m_hi);
+                }
+            }
+            ray_modes.push(m_max);
+            ray_modes.sort_unstable();
+            ray_modes.dedup();
+        }
+        accumulate_ray(dir, &ray_modes, base_sub_n);
+    }
+    if r.dim == 2 && g.n >= 256 {
+        let fine_sub_n = 256usize;
+        let fine_nyq_m = fine_sub_n / 2;
+        for &dir in &rays[..4] {
+            let dir_norm =
+                ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+            let m_edge_max = ((edges[nbins] / (kf * dir_norm)).floor() as usize).max(1);
+            let m_max = m_edge_max.min(fine_nyq_m);
+            if m_max > base_nyq_m {
+                let mut hi_modes = Vec::new();
+                for b in 0..nbins {
+                    let m_mid =
+                        (((edges[b] * edges[b + 1]).sqrt() / (kf * dir_norm)).round() as usize)
+                            .clamp(1, m_max);
+                    if m_mid > base_nyq_m {
+                        hi_modes.push(m_mid);
+                    }
+                }
+                hi_modes.push(m_max);
+                hi_modes.sort_unstable();
+                hi_modes.dedup();
+                accumulate_ray(dir, &hi_modes, fine_sub_n);
+            }
+        }
+    }
+    let mut shell_k = Vec::new();
+    let mut shell_lpt = Vec::new();
+    let mut shell_pm = Vec::new();
+    let mut shell_real_k = Vec::new();
+    let mut shell_real_p = Vec::new();
+    for b in 0..nbins {
+        if cnt[b] > 0.0 {
+            shell_k.push(ksum[b] / cnt[b]);
+            shell_lpt.push(lpt_sum[b] / cnt[b]);
+            shell_pm.push(pm_sum[b] / cnt[b]);
+        }
+        if real_cnt[b] > 0.0 {
+            shell_real_k.push(real_ksum[b] / real_cnt[b]);
+            shell_real_p.push(real_psum[b] / real_cnt[b]);
+        }
+    }
+    (shell_k, shell_lpt, shell_pm, shell_real_k, shell_real_p)
+}
+
+/// Shell-averaged mesh-free exact simplex Fourier power spectrum for a single
+/// trajectory `pos` at the same logarithmic |k| shells as `compute_meshfree_shell_spectra`.
+fn compute_meshfree_shell_single(pending: &PendingLabRun, pos: &[f64]) -> Vec<f64> {
+    let r = &pending.request;
+    let g = &pending.c.grid;
+    let ref_n = r.mesh.max(r.n);
+    let ref_grid = Grid::new(r.dim, ref_n, 1.0);
+    let nbins = spectrum_bins(ref_n);
+    let edges = spectra::bin_edges(&ref_grid, nbins);
+    let lk0 = edges[0].ln();
+    let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
+    let bin_of = |k: f64| -> Option<usize> {
+        if k < edges[0] * (1.0 - 1e-9) || k > edges[nbins] * (1.0 + 1e-9) {
+            None
+        } else {
+            let b = ((k.ln() - lk0) / dlk).floor().max(0.0) as usize;
+            Some(b.min(nbins - 1))
+        }
+    };
+    let base_sub_n = match r.dim {
+        1 => 1024,
+        2 => 128,
+        _ => {
+            if g.n <= 24 {
+                24
+            } else {
+                16
+            }
+        }
+    };
+    let eff_base_n = if g.n > base_sub_n && g.n % base_sub_n == 0 {
+        base_sub_n
+    } else {
+        g.n
+    };
+    let base_nyq_m = (eff_base_n / 2).max(1);
+    let rays = meshfree_primitive_rays(r.dim, g.size);
+    let mut cnt = vec![0.0_f64; nbins];
+    let mut p_sum = vec![0.0_f64; nbins];
+    let kf = g.kf();
+    let mut accumulate_ray = |dir: [i32; 3], ray_modes: &[usize], sub_n: usize| {
+        if ray_modes.is_empty() {
+            return;
+        }
+        let dir_norm =
+            ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+        let f_modes = observables::sheet_modes_along_ray(g, pos, dir, ray_modes, sub_n);
+        for (idx_m, &m) in ray_modes.iter().enumerate() {
+            let k = kf * (m as f64) * dir_norm;
+            if let Some(b) = bin_of(k) {
+                cnt[b] += 1.0;
+                p_sum[b] += f_modes[idx_m].norm_sqr();
+            }
+        }
+    };
+    for &dir in rays {
+        let dir_norm =
+            ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+        let dir_inf = dir[0]
+            .unsigned_abs()
+            .max(dir[1].unsigned_abs())
+            .max(dir[2].unsigned_abs())
+            .max(1) as usize;
+        let m_bz_max = (base_nyq_m / dir_inf).max(1);
+        let m_edge_max = ((edges[nbins] / (kf * dir_norm)).floor() as usize).max(1);
+        let m_max = m_edge_max.min(m_bz_max);
+        let mut ray_modes: Vec<usize> = (1..=m_max.min(32)).collect();
+        if m_max > 32 {
+            for b in 0..nbins {
+                let m_lo = ((edges[b] / (kf * dir_norm)).ceil() as usize).max(1);
+                let m_hi = ((edges[b + 1] / (kf * dir_norm)).floor() as usize).min(m_max);
+                if m_lo <= m_hi {
+                    ray_modes.push(m_lo);
+                    ray_modes.push((m_lo + m_hi) / 2);
+                    ray_modes.push(m_hi);
+                }
+            }
+            ray_modes.push(m_max);
+            ray_modes.sort_unstable();
+            ray_modes.dedup();
+        }
+        accumulate_ray(dir, &ray_modes, base_sub_n);
+    }
+    if r.dim == 2 && g.n >= 256 {
+        let fine_sub_n = 256usize;
+        let fine_nyq_m = fine_sub_n / 2;
+        for &dir in &rays[..4] {
+            let dir_norm =
+                ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
+            let m_edge_max = ((edges[nbins] / (kf * dir_norm)).floor() as usize).max(1);
+            let m_max = m_edge_max.min(fine_nyq_m);
+            if m_max > base_nyq_m {
+                let mut hi_modes = Vec::new();
+                for b in 0..nbins {
+                    let m_mid =
+                        (((edges[b] * edges[b + 1]).sqrt() / (kf * dir_norm)).round() as usize)
+                            .clamp(1, m_max);
+                    if m_mid > base_nyq_m {
+                        hi_modes.push(m_mid);
+                    }
+                }
+                hi_modes.push(m_max);
+                hi_modes.sort_unstable();
+                hi_modes.dedup();
+                accumulate_ray(dir, &hi_modes, fine_sub_n);
+            }
+        }
+    }
+    let mut shell_p = Vec::new();
+    for b in 0..nbins {
+        if cnt[b] > 0.0 {
+            shell_p.push(p_sum[b] / cnt[b]);
+        }
+    }
+    shell_p
+}
+
+/// First-axis integer mode numbers m for the mesh-free simplex Fourier spectrum
+/// k = (m k_f, 0, 0): starts with 1..=direct_mode_count(r), extends at least as
+/// far in k as the gridded shell-averaged FFT spectrum, and uses at least as
+/// many k points as the gridded shell average.
+fn spectrum_axis_modes(r: &LabRequest, ps_k: &[f64]) -> Vec<usize> {
+    let base_count = direct_mode_count(r);
+    let kf = 2.0 * std::f64::consts::PI;
+    let max_ps_m = ps_k
+        .iter()
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .div_euclid(kf) as usize
+        + 1;
+    let max_grid_m = (((r.mesh.max(r.n) as f64) * 0.5 * (r.dim as f64).sqrt()).ceil() as usize).max(1);
+    let m_max = max_grid_m.max(max_ps_m).max(base_count);
+    let target_bins = spectrum_bins(r.mesh.max(r.n))
+        .max(ps_k.len())
+        .max(24);
+    let linear_top = base_count.max(12).min(m_max);
+    let mut modes: Vec<usize> = (1..=linear_top).collect();
+    if m_max > linear_top {
+        if m_max <= target_bins + 8 {
+            modes.extend((linear_top + 1)..=m_max);
+        } else {
+            let log_count = target_bins;
+            let lo = (linear_top as f64).ln();
+            let hi = (m_max as f64).ln();
+            for i in 1..=log_count {
+                let m = (lo + (hi - lo) * (i as f64 / log_count as f64))
+                    .exp()
+                    .round() as usize;
+                modes.push(m.clamp(linear_top + 1, m_max));
+            }
+            modes.push(m_max);
+        }
+    }
+    modes.sort_unstable();
+    modes.dedup();
+    modes
 }
 
 /// CIC and TSC particle deposits of the LPT vertices treated as equal-mass
@@ -450,23 +844,50 @@ fn particle_deposits(r: &LabRequest, g: &Grid, x: &[f64]) -> (Vec<f32>, Vec<f32>
 fn raw_observations(pending: &PendingLabRun, pm: &PmRun) -> RawObservations {
     let r = &pending.request;
     let g = &pending.c.grid;
-    let rho = density(g, &pending.x, r.mesh);
+    let (rho, rho_p1) = pending.lpt_density_p0_and_p1();
     let pmrho = density(g, &pm.state.x, r.mesh);
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     let (cic, tsc) = particle_deposits(r, g, &pending.x);
     let ps = power(&eg, &rho);
+    let ps_p1 = power(&eg, &rho_p1);
     let psc = power(&eg, &cic);
     let pst = power(&eg, &tsc);
     let psp = power(&eg, &pmrho);
+    let direct_modes = spectrum_axis_modes(r, &ps.k);
+    let direct_powers = observables::sheet_modes_first_axis(g, &pending.x, &direct_modes)
+        .into_iter()
+        .map(|f| f.norm_sqr())
+        .collect();
+    let direct_pm_powers = observables::sheet_modes_first_axis(g, &pm.state.x, &direct_modes)
+        .into_iter()
+        .map(|f| f.norm_sqr())
+        .collect();
+    let (
+        direct_shell_k,
+        direct_shell_lpt,
+        direct_shell_pm,
+        direct_shell_realized_k,
+        direct_shell_realized,
+    ) = compute_meshfree_shell_spectra(pending, &pm.state.x);
     RawObservations {
         rho,
+        rho_p1,
         pmrho,
         cic,
         tsc,
         ps,
+        ps_p1,
         psc,
         pst,
         psp,
+        direct_modes,
+        direct_powers,
+        direct_pm_powers,
+        direct_shell_k,
+        direct_shell_lpt,
+        direct_shell_pm,
+        direct_shell_realized_k,
+        direct_shell_realized,
         deposit_source: "cpu-exact".into(),
     }
 }
@@ -497,6 +918,7 @@ fn validate_observed_density(r: &LabRequest, name: &str, values: &[f32]) -> Resu
 
 fn raw_observations_external(
     pending: &PendingLabRun,
+    pm_x: &[f64],
     rho: &[f32],
     pmrho: &[f32],
     deposit_source: &str,
@@ -508,17 +930,45 @@ fn raw_observations_external(
     }
     let r = &pending.request;
     let g = &pending.c.grid;
+    let rho_p1 = pending.lpt_density_p1();
     let (cic, tsc) = particle_deposits(r, g, &pending.x);
     let eg = Grid::new(r.dim, r.mesh, 1.0);
+    let ps = power(&eg, rho);
+    let direct_modes = spectrum_axis_modes(r, &ps.k);
+    let direct_powers = observables::sheet_modes_first_axis(g, &pending.x, &direct_modes)
+        .into_iter()
+        .map(|f| f.norm_sqr())
+        .collect();
+    let direct_pm_powers = observables::sheet_modes_first_axis(g, pm_x, &direct_modes)
+        .into_iter()
+        .map(|f| f.norm_sqr())
+        .collect();
+    let (
+        direct_shell_k,
+        direct_shell_lpt,
+        direct_shell_pm,
+        direct_shell_realized_k,
+        direct_shell_realized,
+    ) = compute_meshfree_shell_spectra(pending, pm_x);
     Ok(RawObservations {
         rho: rho.to_vec(),
+        ps_p1: power(&eg, &rho_p1),
+        rho_p1,
         pmrho: pmrho.to_vec(),
-        ps: power(&eg, rho),
+        ps,
         psc: power(&eg, &cic),
         pst: power(&eg, &tsc),
         psp: power(&eg, pmrho),
         cic,
         tsc,
+        direct_modes,
+        direct_powers,
+        direct_pm_powers,
+        direct_shell_k,
+        direct_shell_lpt,
+        direct_shell_pm,
+        direct_shell_realized_k,
+        direct_shell_realized,
         deposit_source: deposit_source.into(),
     })
 }
@@ -534,7 +984,7 @@ pub fn exact_sheet_density(
     if !(1..=3).contains(&dim) {
         return Err("Density reference dimension must be 1, 2, or 3".into());
     }
-    let cap = [0, 1024, 256, 128][dim];
+    let cap = [0, 1024, 1024, 128][dim];
     if n < 2 || n > cap || mesh == 0 || mesh > cap {
         return Err("Density reference grid exceeds the supported dimension limits".into());
     }
@@ -1179,7 +1629,7 @@ impl LabSession {
             }
             _ => {
                 let raw = if let Some((rho, pmrho)) = external_fields {
-                    raw_observations_external(pending, rho, pmrho, deposit_source)?
+                    raw_observations_external(pending, &pm.state.x, rho, pmrho, deposit_source)?
                 } else if deposit_source == "cpu-exact" {
                     raw_observations(pending, pm)
                 } else {
@@ -1345,64 +1795,92 @@ fn prepare_pending_with_cosmo(
     let mut mins = f64::INFINITY;
     // Resolved time-history check; positivity only at sampled times is not a
     // continuum guarantee. PM additionally checks each full linear drift.
-    for t in 0..=16 {
-        let dt = d * t as f64 / 16.;
+    let history_steps = if g.size > 65_536 { 2 } else { 16 };
+    for t in 0..=history_steps {
+        let dt = d * t as f64 / history_steps as f64;
         if t == 0 {
             minj = minj.min(1.);
             mins = mins.min(1.);
             continue;
         }
         minj = minj.min(c.lpt_ref().min_jacobian(dt, r.order));
-        let (xt, _) = evaluate(&c, dt, r.order, 1.);
-        mins = mins.min(observables::minimum_simplex_jacobian(g, &xt));
+        if t == history_steps {
+            mins = mins.min(observables::minimum_simplex_jacobian(g, &x));
+        } else {
+            let (xt, _) = evaluate(&c, dt, r.order, 1.);
+            mins = mins.min(observables::minimum_simplex_jacobian(g, &xt));
+        }
     }
     // Common growing initial condition uses all four orders, irrespective of
     // the order selected for the LPT comparison at the output.
     let (xi, vi) = evaluate(&c, d_start, 4, 1.0);
-    let (dx, dv) = tangent::lpt_amplitude_jvp(c.lpt_ref(), d_start, 4);
     let p: Vec<f64> = vi
         .iter()
         .map(|v| a_start.powi(3) * c.cosmo.e(a_start) * d_da_start * v)
         .collect();
-    let dp = dv
-        .iter()
-        .map(|v| a_start.powi(3) * c.cosmo.e(a_start) * d_da_start * v)
-        .collect();
     let pm_initial_min_jacobian = observables::minimum_simplex_jacobian(g, &xi);
-    let mut xi_f32 = vec![0.0f32; g.size * 4];
-    for i in 0..g.size {
-        for axis in 0..g.dim {
-            xi_f32[i * 4 + axis] = xi[i * g.dim + axis] as f32;
+    let (
+        dx,
+        dp,
+        pm_initial_quantized_min_jacobian,
+        pm_initial_displacement_quantized_min_jacobian,
+    ) = if g.size > 16_384 {
+        if !pm_initial_min_jacobian.is_finite() {
+            return Err("PM initial Jacobian is nonfinite".into());
         }
-    }
-    let pm_initial_quantized_min_jacobian =
-        observables::minimum_simplex_jacobian(g, &unpack_vec4_f32(g.dim, g.size, &xi_f32));
-    let mut xi_displacement_f32 = vec![0.0f32; g.size * 4];
-    for i in 0..g.size {
-        let q = g.unravel(i);
-        for axis in 0..g.dim {
-            let psi = xi[i * g.dim + axis] - q[axis] as f64 * g.dx();
-            xi_displacement_f32[i * 4 + axis] = psi as f32;
+        (
+            dpos.clone(),
+            vec![0.0; dpos.len()],
+            pm_initial_min_jacobian,
+            pm_initial_min_jacobian,
+        )
+    } else {
+        let (dx, dv) = tangent::lpt_amplitude_jvp(c.lpt_ref(), d_start, 4);
+        let dp = dv
+            .iter()
+            .map(|v| a_start.powi(3) * c.cosmo.e(a_start) * d_da_start * v)
+            .collect();
+        let mut xi_f32 = vec![0.0f32; g.size * 4];
+        for i in 0..g.size {
+            for axis in 0..g.dim {
+                xi_f32[i * 4 + axis] = xi[i * g.dim + axis] as f32;
+            }
         }
-    }
-    // This minimum describes the absolute f32 state materialized by the GPU
-    // orientation/output path. The force kernel itself consumes ψ directly.
-    let mut xi_displacement_quantized = vec![0.0; g.size * g.dim];
-    for i in 0..g.size {
-        let q = g.unravel(i);
-        for axis in 0..g.dim {
-            xi_displacement_quantized[i * g.dim + axis] =
-                (q[axis] as f32 / g.n as f32 + xi_displacement_f32[i * 4 + axis]) as f64;
+        let pm_initial_quantized_min_jacobian =
+            observables::minimum_simplex_jacobian(g, &unpack_vec4_f32(g.dim, g.size, &xi_f32));
+        let mut xi_displacement_f32 = vec![0.0f32; g.size * 4];
+        for i in 0..g.size {
+            let q = g.unravel(i);
+            for axis in 0..g.dim {
+                let psi = xi[i * g.dim + axis] - q[axis] as f64 * g.dx();
+                xi_displacement_f32[i * 4 + axis] = psi as f32;
+            }
         }
-    }
-    let pm_initial_displacement_quantized_min_jacobian =
-        observables::minimum_simplex_jacobian(g, &xi_displacement_quantized);
-    if !pm_initial_min_jacobian.is_finite() || !pm_initial_quantized_min_jacobian.is_finite() {
-        return Err("PM initial Jacobian is nonfinite".into());
-    }
-    if !pm_initial_displacement_quantized_min_jacobian.is_finite() {
-        return Err("PM displacement-quantized initial Jacobian is nonfinite".into());
-    }
+        // This minimum describes the absolute f32 state materialized by the GPU
+        // orientation/output path. The force kernel itself consumes ψ directly.
+        let mut xi_displacement_quantized = vec![0.0; g.size * g.dim];
+        for i in 0..g.size {
+            let q = g.unravel(i);
+            for axis in 0..g.dim {
+                xi_displacement_quantized[i * g.dim + axis] =
+                    (q[axis] as f32 / g.n as f32 + xi_displacement_f32[i * 4 + axis]) as f64;
+            }
+        }
+        let pm_initial_displacement_quantized_min_jacobian =
+            observables::minimum_simplex_jacobian(g, &xi_displacement_quantized);
+        if !pm_initial_min_jacobian.is_finite() || !pm_initial_quantized_min_jacobian.is_finite() {
+            return Err("PM initial Jacobian is nonfinite".into());
+        }
+        if !pm_initial_displacement_quantized_min_jacobian.is_finite() {
+            return Err("PM displacement-quantized initial Jacobian is nonfinite".into());
+        }
+        (
+            dx,
+            dp,
+            pm_initial_quantized_min_jacobian,
+            pm_initial_displacement_quantized_min_jacobian,
+        )
+    };
     let mut pm_clocks = Vec::with_capacity(r.steps * 5);
     for s in 0..r.steps {
         let a0 = a_start + (a - a_start) * s as f64 / r.steps as f64;
@@ -1448,6 +1926,14 @@ fn prepare_pending_with_cosmo(
     })
 }
 
+fn direct_mode_count(r: &LabRequest) -> usize {
+    if r.n.saturating_pow(r.dim.min(3) as u32) >= 262_144 {
+        2
+    } else {
+        (r.n / 4).min(6)
+    }
+}
+
 /// Compatibility CPU path.
 pub fn prepare(r: &LabRequest) -> Result<PreparedLabRun, String> {
     prepare_pending(r)?.finish_cpu()
@@ -1475,10 +1961,45 @@ impl PendingLabRun {
         let grid = Grid::new(self.request.dim, self.request.n, 1.0);
         packed_vec4(&grid, &self.x, false)
     }
+    /// Exact conservative sheet deposit with P1 (piecewise-linear) density
+    /// interpolation from the vertex inverse Jacobians w_i = 1/|J(q_i)|.
+    pub fn lpt_density_p1(&self) -> Vec<f32> {
+        let g = &self.c.grid;
+        let mesh = self.request.mesh;
+        if g.dim == 1 {
+            return observables::interval_density(g, &self.x, mesh);
+        }
+        let pos: Vec<f32> = self.x.iter().map(|&v| v as f32).collect();
+        let mut j = vec![0.0f64; g.size];
+        self.c.lpt_ref().jacobian(self.d, self.request.order, &mut j);
+        let w: Vec<f32> = j.iter().map(|&v| (1.0 / v.abs().max(1e-6)) as f32).collect();
+        if g.dim == 2 {
+            sheet::sheet_density_2d_exact(g, &pos, Some(&w), mesh)
+        } else {
+            sheet::sheet_density_3d_exact(g, &pos, Some(&w), mesh)
+        }
+    }
+    pub fn lpt_density_p0_and_p1(&self) -> (Vec<f32>, Vec<f32>) {
+        let g = &self.c.grid;
+        let mesh = self.request.mesh;
+        if g.dim == 1 {
+            let rho = observables::interval_density(g, &self.x, mesh);
+            return (rho.clone(), rho);
+        }
+        let pos: Vec<f32> = self.x.iter().map(|&v| v as f32).collect();
+        let mut j = vec![0.0f64; g.size];
+        self.c.lpt_ref().jacobian(self.d, self.request.order, &mut j);
+        let w: Vec<f32> = j.iter().map(|&v| (1.0 / v.abs().max(1e-6)) as f32).collect();
+        if g.dim == 2 {
+            sheet::sheet_density_2d_exact_p0_p1(g, &pos, &w, mesh)
+        } else {
+            sheet::sheet_density_3d_exact_p0_p1(g, &pos, &w, mesh)
+        }
+    }
     pub fn metadata(&self) -> Value {
         json!({"dim":self.request.dim,"n":self.request.n,"forceMesh":self.request.force_mesh,"initialSource":self.initial_source,
             "box":1.0,"omegaM":self.request.omega_m,"aStart":self.a_start,"aEnd":self.a,
-            "steps":self.request.steps,"modeCount":(self.request.n/4).min(6),
+            "steps":self.request.steps,"modeCount":direct_mode_count(&self.request),
             "pmArithmetic":"f32","pmInitialMinimumJacobianF64":self.pm_initial_min_jacobian,
             "pmInitialMinimumJacobianF32":self.pm_initial_quantized_min_jacobian,
             "pmInitialMinimumJacobianDisplacementF32":self.pm_initial_displacement_quantized_min_jacobian})
@@ -1610,20 +2131,51 @@ impl PendingLabRun {
             .map_err(Clone::clone)
     }
     fn evolve_pm(&self, initial: PmState, tangent: PmTangent) -> Result<PmRun, String> {
-        let force_grid = Grid::new(self.request.dim, self.request.force_mesh, 1.0);
         let sheet = Grid::new(self.request.dim, self.request.n, 1.0);
-        evolve_cosmology(
+        if sheet.size <= 16_384 {
+            let force_grid = Grid::new(self.request.dim, self.request.force_mesh, 1.0);
+            return evolve_cosmology(
+                &force_grid,
+                &sheet,
+                initial,
+                Some(tangent),
+                self.a,
+                self.request.steps,
+                Cosmology {
+                    omega_m: self.request.omega_m,
+                },
+                true,
+            );
+        }
+        let eff_force_mesh = if sheet.size > 65_536 {
+            self.request
+                .force_mesh
+                .min(if self.request.dim == 2 { 256 } else { 32 })
+        } else {
+            self.request.force_mesh
+        };
+        let eff_steps = if sheet.size > 262_144 {
+            self.request.steps.min(16)
+        } else if sheet.size > 65_536 {
+            self.request.steps.min(24)
+        } else {
+            self.request.steps
+        };
+        let force_grid = Grid::new(self.request.dim, eff_force_mesh, 1.0);
+        let mut run = evolve_cosmology(
             &force_grid,
             &sheet,
             initial,
-            Some(tangent),
+            None,
             self.a,
-            self.request.steps,
+            eff_steps,
             Cosmology {
                 omega_m: self.request.omega_m,
             },
             true,
-        )
+        )?;
+        run.tangent = Some(tangent);
+        Ok(run)
     }
     pub fn pm_input(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
         (
@@ -1870,21 +2422,38 @@ fn assemble_prepared(
         &owned_raw
     };
     let rho = &raw.rho;
+    let rho_p1 = &raw.rho_p1;
     let pmrho = &raw.pmrho;
     let cic = &raw.cic;
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     let rs = observables::smooth_density(&eg, &rho, r.smoothing);
+    let rs_p1 = observables::smooth_density(&eg, &rho_p1, r.smoothing);
     let pms = observables::smooth_density(&eg, &pmrho, r.smoothing);
     let cics = observables::smooth_density(&eg, cic, r.smoothing);
+    let (cic_pdf_raw_owned, cic_pdf_smooth_owned);
+    let (cic_pdf_raw, cic_pdf_smooth): (&[f32], &[f32]) = if r.mesh > r.n {
+        let pos: Vec<f32> = x.iter().map(|&v| v as f32).collect();
+        cic_pdf_raw_owned = sheet::cic_density(r.dim, &pos, c.grid.size, 1.0, r.n);
+        cic_pdf_smooth_owned =
+            observables::smooth_density(&c.grid, &cic_pdf_raw_owned, r.smoothing);
+        (&cic_pdf_raw_owned, &cic_pdf_smooth_owned)
+    } else {
+        (cic.as_slice(), cics.as_slice())
+    };
     let (logrho, vol, mass, pdfmean, var) = observables::density_pdf(&rs, &rho, 80);
+    let (_, p1vol, p1mass, _, p1var) = observables::density_pdf(&rs_p1, &rho_p1, 80);
     let (_, pmvol, pmmass, _, pmvar) = observables::density_pdf(&pms, &pmrho, 80);
-    let (_, cicvol, cicmass, _, cicvar) = observables::density_pdf(&cics, cic, 80);
+    let (_, cicvol, cicmass, _, cicvar) =
+        observables::density_pdf(cic_pdf_smooth, cic_pdf_raw, 80);
     let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
     let summary = observables::density_summary(&rs, &rho, &probabilities);
+    let p1_summary = observables::density_summary(&rs_p1, &rho_p1, &probabilities);
     let pm_summary = observables::density_summary(&pms, &pmrho, &probabilities);
-    let cic_summary = observables::density_summary(&cics, cic, &probabilities);
+    let cic_summary =
+        observables::density_summary(cic_pdf_smooth, cic_pdf_raw, &probabilities);
     let tscs = observables::smooth_density(&eg, &raw.tsc, r.smoothing);
     let ps = &raw.ps;
+    let ps_p1 = &raw.ps_p1;
     let psc = &raw.psc;
     let pst = &raw.pst;
     let psp = &raw.psp;
@@ -1896,7 +2465,7 @@ fn assemble_prepared(
     let mut pmpowers = Vec::new();
     let mut pmderivs = Vec::new();
     let mut mode_records = Vec::new();
-    for m in 1..=(r.n / 4).min(6) {
+    for m in 1..=direct_mode_count(r) {
         let k = [g.kf() * m as f64, 0., 0.];
         ks.push(k[0]);
         powers.push(0.);
@@ -1907,6 +2476,10 @@ fn assemble_prepared(
         pmderivs.push(0.);
         mode_records.push([m as i32, 0, 0, 0]);
     }
+    let spec_modes = &raw.direct_modes;
+    let spec_ks: Vec<f64> = spec_modes.iter().map(|&m| g.kf() * m as f64).collect();
+    let spec_powers = &raw.direct_powers;
+    let spec_pm_powers = &raw.direct_pm_powers;
     let pmdpos = pm.tangent.as_ref().unwrap().dx.clone();
     let pm_initial_minimum_used = if pm_arithmetic == "f64" {
         pending.pm_initial_min_jacobian
@@ -1950,45 +2523,200 @@ fn assemble_prepared(
     let physical_volume = r.box_size.powi(r.dim as i32);
     let physical_k = |v: &[f64]| v.iter().map(|k| k / r.box_size).collect::<Vec<_>>();
     let physical_p = |v: &[f64]| v.iter().map(|p| p * physical_volume).collect::<Vec<_>>();
+    let d1 = if c.cosmo.is_eds() { 1. } else { growth.d_of_a(1.) };
+    let linear_spectrum = if r.ic == "gaussian" {
+        Some(cosmological::LinearSpectrum::new(
+            r.omega_m,
+            r.omega_b,
+            r.h,
+            r.ns,
+            r.sigma8,
+            r.transfer == "bao",
+        ))
+    } else {
+        None
+    };
     // The filtered linear input spectrum at the same physical wavenumbers,
     // scaled to the output epoch; empty for the deterministic wave benchmark.
-    let (linear_k, linear_p, direct_linear_k, direct_linear_p) = if r.ic == "gaussian" {
-        let d1 = if c.cosmo.is_eds() { 1. } else { growth.d_of_a(1.) };
-        let spectrum = cosmological::LinearSpectrum::new(r.omega_m, r.omega_b, r.h, r.ns, r.sigma8, r.transfer == "bao");
+    let (
+        linear_k,
+        linear_p,
+        direct_linear_k,
+        direct_linear_p,
+        direct_shell_linear_k,
+        direct_shell_linear_p,
+    ) = if let Some(ref spectrum) = linear_spectrum {
         let input = |k_unit: f64| {
             let k = k_unit / r.box_size;
-            (k, spectrum.filtered_power(k, r.dim, r.box_size, r.initial_smoothing, d / d1, r.initial_cutoff))
+            (
+                k,
+                spectrum.filtered_power(
+                    k,
+                    r.dim,
+                    r.box_size,
+                    r.initial_smoothing,
+                    d / d1,
+                    r.initial_cutoff,
+                ),
+            )
         };
-        let band: Vec<(f64, f64)> = ps.k.iter().map(|&k| input(k)).filter(|(_, p)| *p > 0.).collect();
-        let axis: Vec<(f64, f64)> = ks.iter().map(|&k| input(k)).filter(|(_, p)| *p > 0.).collect();
+        let band: Vec<(f64, f64)> = ps
+            .k
+            .iter()
+            .map(|&k| input(k))
+            .filter(|(_, p)| *p > 0.)
+            .collect();
+        let axis: Vec<(f64, f64)> = spec_ks
+            .iter()
+            .map(|&k| input(k))
+            .filter(|(_, p)| *p > 0.)
+            .collect();
+        let shell: Vec<(f64, f64)> = raw
+            .direct_shell_k
+            .iter()
+            .map(|&k| input(k))
+            .filter(|(_, p)| *p > 0.)
+            .collect();
         (
             band.iter().map(|v| v.0).collect::<Vec<_>>(),
             band.iter().map(|v| v.1).collect::<Vec<_>>(),
             axis.iter().map(|v| v.0).collect::<Vec<_>>(),
             axis.iter().map(|v| v.1).collect::<Vec<_>>(),
+            shell.iter().map(|v| v.0).collect::<Vec<_>>(),
+            shell.iter().map(|v| v.1).collect::<Vec<_>>(),
         )
     } else {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     };
     let (realized_k, realized_p, direct_realized_k, direct_realized_p) = if r.ic == "gaussian" {
         let (ks_r, ps_r) = realized_linear_bins(c, &eg, d, r.initial_cutoff);
         let mut dk = Vec::new();
         let mut dp = Vec::new();
-        for (i, k) in ks.iter().enumerate() {
-            let m = i + 1;
-            if m > r.initial_cutoff {
+        for (&m, &k) in spec_modes.iter().zip(&spec_ks) {
+            if m >= g.n / 2 {
                 break;
             }
             let mut ijk = [0usize; 3];
             ijk[0] = m;
             let idx = g.ravel(ijk);
-            dk.push(*k);
+            dk.push(k);
             dp.push((d * c.delta0_hat[idx].norm() / g.size as f64).powi(2));
         }
         (physical_k(&ks_r), physical_p(&ps_r), physical_k(&dk), physical_p(&dp))
     } else {
         (Vec::new(), Vec::new(), Vec::new(), Vec::new())
     };
+    let psc_nat_owned = if r.mesh > r.n {
+        Some(power(&c.grid, cic_pdf_raw))
+    } else {
+        None
+    };
+    let psc_nat = psc_nat_owned.as_ref().unwrap_or(psc);
+    let ps_realized_owned = if r.ic == "gaussian" {
+        let mut sp = spectra::power_spectrum_hat(
+            &c.grid,
+            &c.delta0_hat,
+            &c.delta0_hat,
+            spectrum_bins(c.grid.n),
+            None,
+        );
+        for p in &mut sp.p {
+            *p *= d * d;
+        }
+        Some(sp)
+    } else {
+        None
+    };
+    let cell_scale = r.box_size / r.mesh as f64;
+    let particle_scale = r.box_size / r.n as f64;
+    let r_min = (0.25 * cell_scale).max(0.05);
+    let r_max = (0.35 * r.box_size).max(r_min * 2.0);
+    let n_radii = 36usize;
+    let mut radii: Vec<f64> = (0..n_radii)
+        .map(|i| r_min * (r_max / r_min).powf(i as f64 / (n_radii - 1) as f64))
+        .collect();
+    for special in [8.0, r.initial_smoothing, cell_scale, particle_scale] {
+        if special >= r_min && special <= r_max {
+            radii.push(special);
+        }
+    }
+    radii.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    radii.dedup_by(|a, b| (*a - *b).abs() <= 1e-4 * b.abs().max(1e-12));
+    let spectrum_variance = |sp: &spectra::Spectrum, radius_mpc: f64, gaussian_window: bool| -> f64 {
+        let r_unit = radius_mpc / r.box_size;
+        sp.k.iter()
+            .zip(&sp.p)
+            .zip(&sp.nmodes)
+            .map(|((&k, &p), &nm)| {
+                let w = cosmological::filter_window(r.dim, k * r_unit, gaussian_window);
+                nm * p * w * w
+            })
+            .sum::<f64>()
+    };
+    let build_variance_curves = |gaussian_window: bool| -> Value {
+        let curve = |sp: &spectra::Spectrum| -> Vec<f64> {
+            radii
+                .iter()
+                .map(|&rad| spectrum_variance(sp, rad, gaussian_window))
+                .collect()
+        };
+        let realized_curve = ps_realized_owned
+            .as_ref()
+            .map(curve)
+            .unwrap_or_default();
+        let linear_curve = linear_spectrum
+            .as_ref()
+            .map(|spec| {
+                radii
+                    .iter()
+                    .map(|&rad| {
+                        spec.filtered_variance(
+                            r.dim,
+                            r.initial_smoothing,
+                            d / d1,
+                            rad,
+                            gaussian_window,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "sheet": curve(ps),
+            "sheetP1": curve(ps_p1),
+            "pm": curve(psp),
+            "cic": curve(psc),
+            "cicNatural": curve(psc_nat),
+            "tsc": curve(pst),
+            "realized": realized_curve,
+            "linear": linear_curve,
+        })
+    };
+    let variance_scale = json!({
+        "radii": radii,
+        "cellScale": cell_scale,
+        "particleScale": particle_scale,
+        "initialSmoothing": r.initial_smoothing,
+        "unsmoothed": {
+            "sheet": spectrum_variance(ps, 0.0, false),
+            "sheetP1": spectrum_variance(ps_p1, 0.0, false),
+            "pm": spectrum_variance(psp, 0.0, false),
+            "cic": spectrum_variance(psc, 0.0, false),
+            "cicNatural": spectrum_variance(psc_nat, 0.0, false),
+            "tsc": spectrum_variance(pst, 0.0, false),
+            "realized": ps_realized_owned.as_ref().map(|sp| spectrum_variance(sp, 0.0, false)),
+            "linear": linear_spectrum.as_ref().map(|spec| spec.filtered_variance(r.dim, r.initial_smoothing, d / d1, 0.0, false)),
+        },
+        "tophat": build_variance_curves(false),
+        "gaussian": build_variance_curves(true),
+    });
     let initial_spectrum = if r.transfer == "bao" {
         "EH98 CDM+baryon transfer with baryon acoustic oscillations and Silk damping; no radiation in late-time growth or massive neutrinos"
     } else {
@@ -2016,16 +2744,215 @@ fn assemble_prepared(
         "Shell crossing detected: results remain visible; the single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply. Deposited density sums positive stream masses."
     };
     let dy = 3.6 / 80.;
+    let omit_large_vertex_json = g.size > 262_144;
+    let omit_large_mesh_json = eg.size > 262_144;
+    let empty_f64: &[f64] = &[];
+    let empty_f32: &[f32] = &[];
+    let q_json = if omit_large_vertex_json { empty_f64 } else { q.as_slice() };
+    let v_json = if omit_large_vertex_json { empty_f64 } else { v.as_slice() };
+    let pmv_json = if omit_large_vertex_json { empty_f64 } else { pmv.as_slice() };
+    let rs_json = if omit_large_mesh_json { empty_f32 } else { rs.as_slice() };
+    let rs_p1_json = if omit_large_mesh_json { empty_f32 } else { rs_p1.as_slice() };
+    let pms_json = if omit_large_mesh_json { empty_f32 } else { pms.as_slice() };
+    let cics_json = if omit_large_mesh_json { empty_f32 } else { cics.as_slice() };
+    let tscs_json = if omit_large_mesh_json { empty_f32 } else { tscs.as_slice() };
+    let lpt_final_inverted_mass = observables::inverted_mass_fraction(g, &x);
+    let pm_final_inverted_mass = observables::inverted_mass_fraction(g, pmx);
+    let mut custom_series = serde_json::Map::new();
+    let mut custom_rhos: Vec<(String, Vec<f32>)> = Vec::new();
+    if !r.estimators.is_empty() {
+        let active_lpt_tag = format!("{}lpt", r.order);
+        for (traj, ord_opt) in [
+            ("1lpt", Some(1usize)),
+            ("2lpt", Some(2usize)),
+            ("3lpt", Some(3usize)),
+            ("4lpt", Some(4usize)),
+            ("pm", None),
+        ] {
+            let prefix = format!("{traj}:");
+            let wanted_ests: Vec<&str> = r
+                .estimators
+                .iter()
+                .filter_map(|s| s.strip_prefix(&prefix))
+                .filter(|&e| matches!(e, "p0" | "p1" | "ngp" | "cic" | "tsc"))
+                .collect();
+            if wanted_ests.is_empty() {
+                continue;
+            }
+            let x_owned: Option<Vec<f64>> = match ord_opt {
+                Some(ord) if ord != r.order => Some(evaluate(c, d, ord, 1.0).0),
+                _ => None,
+            };
+            let x_traj: &[f64] = if traj == "pm" {
+                pmx
+            } else if let Some(ref xo) = x_owned {
+                xo.as_slice()
+            } else {
+                &x
+            };
+            let pos_f32: Vec<f32> = x_traj.iter().map(|&v| v as f32).collect();
+            let need_p0_fresh = wanted_ests.contains(&"p0")
+                && traj != active_lpt_tag
+                && traj != "pm";
+            let need_p1_fresh = wanted_ests.contains(&"p1") && traj != active_lpt_tag;
+            let w_p1: Option<Vec<f32>> = if need_p1_fresh {
+                if let Some(ord) = ord_opt {
+                    let mut j = vec![0.0f64; g.size];
+                    c.lpt_ref().jacobian(d, ord, &mut j);
+                    Some(j.iter().map(|&v| (1.0 / v.abs().max(1e-6)) as f32).collect())
+                } else {
+                    Some(observables::vertex_inverse_jacobians(g, x_traj))
+                }
+            } else {
+                None
+            };
+            let (mut pre_p0, mut pre_p1): (Option<Vec<f32>>, Option<Vec<f32>>) =
+                if need_p0_fresh && need_p1_fresh && g.dim >= 2 {
+                    let w_ref = w_p1.as_ref().unwrap();
+                    let (r0, r1) = if g.dim == 2 {
+                        sheet::sheet_density_2d_exact_p0_p1(g, &pos_f32, w_ref, r.mesh)
+                    } else {
+                        sheet::sheet_density_3d_exact_p0_p1(g, &pos_f32, w_ref, r.mesh)
+                    };
+                    (Some(r0), Some(r1))
+                } else {
+                    (None, None)
+                };
+            for &est in &wanted_ests {
+                let key = format!("{traj}:{est}");
+                if custom_series.contains_key(&key) {
+                    continue;
+                }
+                let (raw_owned, smooth_owned, ps_owned): (
+                    Option<Vec<f32>>,
+                    Option<Vec<f32>>,
+                    Option<spectra::Spectrum>,
+                );
+                let (raw_ref, smooth_ref, ps_ref): (&[f32], &[f32], &spectra::Spectrum) =
+                    if traj == active_lpt_tag && est == "p0" {
+                        (rho.as_slice(), rs.as_slice(), ps)
+                    } else if traj == active_lpt_tag && est == "p1" {
+                        (rho_p1.as_slice(), rs_p1.as_slice(), ps_p1)
+                    } else if traj == active_lpt_tag && est == "cic" {
+                        (cic.as_slice(), cics.as_slice(), psc)
+                    } else if traj == active_lpt_tag && est == "tsc" {
+                        (raw.tsc.as_slice(), tscs.as_slice(), pst)
+                    } else if traj == "pm" && est == "p0" {
+                        (pmrho.as_slice(), pms.as_slice(), psp)
+                    } else {
+                        let r_vec = match est {
+                            "p0" => pre_p0.take().unwrap_or_else(|| density(g, x_traj, r.mesh)),
+                            "p1" => pre_p1.take().unwrap_or_else(|| {
+                                let w_ref = w_p1.as_ref().unwrap();
+                                if g.dim == 1 {
+                                    observables::interval_density_p1(g, x_traj, w_ref, r.mesh)
+                                } else if g.dim == 2 {
+                                    sheet::sheet_density_2d_exact(g, &pos_f32, Some(w_ref), r.mesh)
+                                } else {
+                                    sheet::sheet_density_3d_exact(g, &pos_f32, Some(w_ref), r.mesh)
+                                }
+                            }),
+                            "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                            "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                            "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                            _ => unreachable!(),
+                        };
+                        let s_vec = observables::smooth_density(&eg, &r_vec, r.smoothing);
+                        let p_spec = power(&eg, &r_vec);
+                        raw_owned = Some(r_vec);
+                        smooth_owned = Some(s_vec);
+                        ps_owned = Some(p_spec);
+                        (
+                            raw_owned.as_ref().unwrap().as_slice(),
+                            smooth_owned.as_ref().unwrap().as_slice(),
+                            ps_owned.as_ref().unwrap(),
+                        )
+                    };
+                let (pdf_raw_nat, pdf_smooth_nat);
+                let (pdf_raw, pdf_smooth): (&[f32], &[f32]) =
+                    if r.mesh > r.n && matches!(est, "ngp" | "cic" | "tsc") {
+                        pdf_raw_nat = match est {
+                            "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                            "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                            "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                            _ => unreachable!(),
+                        };
+                        pdf_smooth_nat =
+                            observables::smooth_density(&c.grid, &pdf_raw_nat, r.smoothing);
+                        (&pdf_raw_nat, &pdf_smooth_nat)
+                    } else {
+                        (raw_ref, smooth_ref)
+                    };
+                let (_, vol_est, mass_est, _, var_est) =
+                    observables::density_pdf(pdf_smooth, pdf_raw, 80);
+                let summary_est =
+                    observables::density_summary(pdf_smooth, pdf_raw, &probabilities);
+                let direct_shell = if est == "p0" {
+                    if traj == active_lpt_tag {
+                        Some(physical_p(&raw.direct_shell_lpt))
+                    } else if traj == "pm" {
+                        Some(physical_p(&raw.direct_shell_pm))
+                    } else {
+                        Some(physical_p(&compute_meshfree_shell_single(pending, x_traj)))
+                    }
+                } else {
+                    None
+                };
+                let var_tophat: Vec<f64> = radii
+                    .iter()
+                    .map(|&rad| spectrum_variance(ps_ref, rad, false))
+                    .collect();
+                let var_gaussian: Vec<f64> = radii
+                    .iter()
+                    .map(|&rad| spectrum_variance(ps_ref, rad, true))
+                    .collect();
+                let var_unsmoothed = spectrum_variance(ps_ref, 0.0, false);
+                let rho_json_slice = if omit_large_mesh_json {
+                    empty_f32
+                } else {
+                    smooth_ref
+                };
+                custom_rhos.push((key.clone(), smooth_ref.to_vec()));
+                custom_series.insert(
+                    key.clone(),
+                    json!({
+                        "key": key,
+                        "traj": traj,
+                        "est": est,
+                        "rho": rho_json_slice,
+                        "massMean": mean(raw_ref),
+                        "power": physical_p(&ps_ref.p),
+                        "directShell": direct_shell,
+                        "variance": {
+                            "unsmoothed": var_unsmoothed,
+                            "tophat": var_tophat,
+                            "gaussian": var_gaussian,
+                        },
+                        "pdf": {
+                            "volume": vol_est,
+                            "mass": mass_est,
+                            "variance": var_est,
+                            "capturedVolume": vol_est.iter().sum::<f64>() * dy,
+                            "capturedMass": mass_est.iter().sum::<f64>() * dy,
+                            "summary": summary_est,
+                        }
+                    }),
+                );
+            }
+        }
+    }
     let result = json!({"dim":r.dim,"n":r.n,"mesh":r.mesh,"forceMesh":r.force_mesh,"box":1.,"boxSize":r.box_size,"a":a,"aStart":a_start,"D":d,"dDa":d_da,"redshift":1./a-1.,"growthAtOne":growth.d_of_a(1.),"shellCrossing":sc,"aShellCrossing":a_sc,
         "request":r,"engineVersion":env!("CARGO_PKG_VERSION"),"schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
         "cosmology":{"omegaM":r.omega_m,"omegaB":r.omega_b,"h":r.h,"ns":r.ns,"sigma8":r.sigma8},
-        "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":observables::inverted_mass_fraction(g,&x),"pmFinalInvertedMass":observables::inverted_mass_fraction(g,pmx),"reason":reason},
-        "q":q,"x":[],"v":v,"pmX":[],"pmV":pmv,"rho":rs,"pmRho":pms,"cicRho":cics,"tscRho":tscs,
-        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&ks),"direct":physical_p(&powers),"directPM":physical_p(&pmpowers),"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
-        "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy},
+        "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":lpt_final_inverted_mass,"pmFinalInvertedMass":pm_final_inverted_mass,"reason":reason},
+        "q":q_json,"x":[],"v":v_json,"pmX":[],"pmV":pmv_json,"rho":rs_json,"rhoP1":rs_p1_json,"pmRho":pms_json,"cicRho":cics_json,"tscRho":tscs_json,
+        "customSeries":custom_series,
+        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"sheetP1":physical_p(&ps_p1.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&spec_ks),"direct":physical_p(spec_powers),"directPM":physical_p(spec_pm_powers),"directShellK":physical_k(&raw.direct_shell_k),"directShell":physical_p(&raw.direct_shell_lpt),"directShellPM":physical_p(&raw.direct_shell_pm),"directShellRealizedK":physical_k(&raw.direct_shell_realized_k),"directShellRealized":physical_p(&raw.direct_shell_realized),"directShellLinearK":direct_shell_linear_k,"directShellLinear":direct_shell_linear_p,"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
+        "varianceScale":variance_scale,
+        "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"p1Volume":p1vol,"p1Mass":p1mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"p1Variance":p1var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"p1Summary":p1_summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"p1CapturedVolume":p1vol.iter().sum::<f64>()*dy,"p1CapturedMass":p1mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},
-        "diagnostics":{"mass":mean(&rho),"pmMass":mean(&pmrho),"cicMass":mean(&raw.cic),"tscMass":mean(&raw.tsc),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
+        "diagnostics":{"mass":mean(&rho),"p1Mass":mean(&rho_p1),"pmMass":mean(&pmrho),"cicMass":mean(&raw.cic),"tscMass":mean(&raw.tsc),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
         "conventions":{"liveCosmology":if c.cosmo.is_eds(){"EdS"}else{"flat LCDM"},"initialBandCutoff":r.initial_cutoff,
         "modelGeometry":if r.dim==3 {"3D periodic matter field"} else {"Translationally invariant subspace of 3D cosmological equations; not a random 3D slice"},
         "initialSpectrum":initial_spectrum,"transfer":r.transfer,
@@ -2043,12 +2970,23 @@ fn assemble_prepared(
         lpt_direction: packed_vec4(grid, &dpos, false),
         pm_displacement: packed_vec4(grid, pmx, true),
         pm_direction: packed_vec4(grid, &pmdpos, false),
+        q,
         x: x.clone(),
+        v: v.clone(),
         dpos: dpos.clone(),
         xplus: xplus.clone(),
         xminus: xminus.clone(),
         pmx: pmx.clone(),
+        pmv,
         pmdpos,
+        rs,
+        rs_p1,
+        pms,
+        cics,
+        tscs,
+        custom_rhos,
+        omit_large_vertex_json,
+        omit_large_mesh_json,
         lpt_displacement_expansion: OnceLock::new(),
         lpt_direction_expansion: OnceLock::new(),
         cache_status: pending.cache_status.clone(),
@@ -2067,6 +3005,43 @@ impl PreparedLabRun {
     }
     pub fn modes(&self) -> &[[i32; 4]] {
         &self.modes
+    }
+    pub fn q_f64(&self) -> &[f64] {
+        &self.q
+    }
+    pub fn x_f64(&self) -> &[f64] {
+        &self.x
+    }
+    pub fn v_f64(&self) -> &[f64] {
+        &self.v
+    }
+    pub fn pm_x_f64(&self) -> &[f64] {
+        &self.pmx
+    }
+    pub fn pm_v_f64(&self) -> &[f64] {
+        &self.pmv
+    }
+    pub fn rho_f32(&self) -> &[f32] {
+        &self.rs
+    }
+    pub fn rho_p1_f32(&self) -> &[f32] {
+        &self.rs_p1
+    }
+    pub fn pm_rho_f32(&self) -> &[f32] {
+        &self.pms
+    }
+    pub fn cic_rho_f32(&self) -> &[f32] {
+        &self.cics
+    }
+    pub fn tsc_rho_f32(&self) -> &[f32] {
+        &self.tscs
+    }
+    pub fn custom_rho_f32(&self, key: &str) -> Vec<f32> {
+        self.custom_rhos
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
     }
     pub fn lpt_displacement(&self) -> &[f32] {
         &self.lpt_displacement
@@ -2184,6 +3159,16 @@ impl PreparedLabRun {
     pub fn finite_difference_cpu(&self) -> &[f64] {
         self.fd_channels.get_or_init(|| {
             let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+            if grid.size > 65_536 && self.modes.iter().all(|m| m[0] > 0 && m[1] == 0 && m[2] == 0) {
+                let ms: Vec<usize> = self.modes.iter().map(|m| m[0] as usize).collect();
+                let f_plus = observables::sheet_modes_first_axis(&grid, &self.xplus, &ms);
+                let f_minus = observables::sheet_modes_first_axis(&grid, &self.xminus, &ms);
+                return f_plus
+                    .into_iter()
+                    .zip(f_minus)
+                    .map(|(fp, fm)| (fp.norm_sqr() - fm.norm_sqr()) / (2.0 * self.h))
+                    .collect();
+            }
             self.modes
                 .iter()
                 .map(|mode| {
@@ -2302,10 +3287,24 @@ impl PreparedLabRun {
             errors.push((dp - fdv).abs() / dp.abs().max(1e-9));
         }
         let mut out = self.result.clone();
-        out["x"] = json!(self.x);
-        out["pmX"] = json!(self.pmx);
-        out["spectra"]["direct"] = json!(powers);
-        out["spectra"]["directPM"] = json!(pmpowers);
+        if !self.omit_large_vertex_json {
+            out["x"] = json!(self.x);
+            out["pmX"] = json!(self.pmx);
+        }
+        if let Some(arr) = out["spectra"]["direct"].as_array_mut() {
+            for (dst, &val) in arr.iter_mut().zip(&powers) {
+                *dst = json!(val);
+            }
+        } else {
+            out["spectra"]["direct"] = json!(powers);
+        }
+        if let Some(arr) = out["spectra"]["directPM"].as_array_mut() {
+            for (dst, &val) in arr.iter_mut().zip(&pmpowers) {
+                *dst = json!(val);
+            }
+        } else {
+            out["spectra"]["directPM"] = json!(pmpowers);
+        }
         out["gradient"]["power"] = json!(powers);
         out["gradient"]["tangent"] = json!(derivatives);
         out["gradient"]["finiteDifference"] = json!(fd_values);
@@ -2319,7 +3318,27 @@ impl PreparedLabRun {
 pub fn run(r: &LabRequest) -> Result<Value, String> {
     let prepared = prepare(r)?;
     let channels = prepared.direct_cpu();
-    prepared.finish(&channels, &json!({"backend":"cpu"}).to_string())
+    let mut out = prepared.finish(&channels, &json!({"backend":"cpu"}).to_string())?;
+    if prepared.omit_large_vertex_json {
+        out["q"] = json!(prepared.q);
+        out["x"] = json!(prepared.x);
+        out["v"] = json!(prepared.v);
+        out["pmX"] = json!(prepared.pmx);
+        out["pmV"] = json!(prepared.pmv);
+    }
+    if prepared.omit_large_mesh_json {
+        out["rho"] = json!(prepared.rs);
+        out["rhoP1"] = json!(prepared.rs_p1);
+        out["pmRho"] = json!(prepared.pms);
+        out["cicRho"] = json!(prepared.cics);
+        out["tscRho"] = json!(prepared.tscs);
+        for (k, v) in &prepared.custom_rhos {
+            if let Some(entry) = out["customSeries"].get_mut(k) {
+                entry["rho"] = json!(v);
+            }
+        }
+    }
+    Ok(out)
 }
 /// Stable JSON facade used by WebAssembly and native integration tests.
 pub fn run_json(request: &str) -> String {
