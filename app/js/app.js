@@ -24,6 +24,7 @@ let S = decodeHashWithPreset(location.hash), worker = null, timer = 0, requestId
 const densityViewOpts = { cmap: 'coolwarm', scale: 'log', vmin: 0.1, vmax: 10, interp: 'smooth' };
 const pdfViewOpts = { ordinate: 'linear' };
 const spectraViewOpts = { companion: 'ratio_sheet', filter: 'tophat', varianceOrdinate: 'sigma2' };
+const rsdViewOpts = { sheetMode: 'rsd_crossing', specMode: 'ratio', showSamples: true };
 const TRAJECTORIES = [
   { id: '1lpt', label: '1LPT', color: '#56B4E9' },
   { id: '2lpt', label: '2LPT', color: '#E69F00' },
@@ -53,9 +54,9 @@ function saveSelectedEstimators() {
 const root = document.querySelector('#lab'), status = document.querySelector('#run-state');
 const VIEWS = [
   ['sheet', 'Phase-space sheet'], ['density', 'Density'], ['spectra', 'Power spectra'],
-  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['gradient', 'Differentiability'], ['published', 'Published replay'],
+  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['rsd', 'Redshift space (RSD)'], ['gradient', 'Differentiability'], ['published', 'Published replay'],
 ];
-const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', gradient: '../chapters/06-inference.html#sec-inference', published: '../chapters/07-lab.html#sec-lab' };
+const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', rsd: '../chapters/05-rsd.html#sec-rsd', gradient: '../chapters/06-inference.html#sec-inference', published: '../chapters/07-lab.html#sec-lab' };
 const $ = (tag, cls, parent, value) => { const e = document.createElement(tag); if (cls) e.className = cls; if (value != null) e.textContent = value; parent.append(e); return e; };
 const row = (parent, cls = '') => $('div', `lab-control ${cls}`, parent);
 
@@ -311,6 +312,7 @@ function explain() {
     spectra: `Compare Fourier estimates in physical units: k is h/Mpc and P(k) is (Mpc/h)^${S.dim}. The y-axis minimum is anchored to the measured sheet spectra so the initial Gaussian filter does not compress the dynamic range. Below the spectra, a separate panel analyzes the variance σ²(R) as a function of smoothing scale R across all density fields.`,
     variance: `Compare the variance σ²(R) (or RMS fluctuation σ(R)) of the continuous sheet (P₀ and P₁) and CIC/TSC particle density fields as a function of physical smoothing radius R in Mpc/h for both real-space Top-Hat and Gaussian filters.`,
     pdf: 'Volume weighting samples space uniformly. Mass weighting uses unsmoothed raw cell mass. Observation smoothing is separate from the initial-condition filter; smoothed density values with raw mass weights are not related by a simple ρ pV transform.',
+    rsd: 'Map the phase-space sheet into redshift space s = x + (v_∥ / aH) n̂ along the line of sight. Compare the exact redshifted simplicial sheet (which shell-crosses in redshift space wherever ∂_∥ v_∥ < −aH) with a simplex velocity-gradient Gaussian packet construction that fits a d-dimensional Gaussian to each simplex using the exact velocity divergence and velocity-gradient tensor across the simplex.',
     gradient: 'Compare the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch against a finite difference. This does not differentiate clipped or deposited density.',
     published: 'This panel replays packaged reference data. These curves retain the original simulation conditions and estimator conventions; the live laboratory runs the independently specified cosmology and resolution.',
   };
@@ -342,6 +344,7 @@ function render() {
   else if (S.view === 'spectra') renderSpectra(current);
   else if (S.view === 'variance') renderVarianceScale(current);
   else if (S.view === 'pdf') renderPdfs(current);
+  else if (S.view === 'rsd') renderRsd(current);
   else if (S.view === 'gradient') renderGradient(current);
   showDiagnostics(current);
   renderTheory();
@@ -903,6 +906,359 @@ function renderPdfSummaries(parent,pdf,activeSeries){
     const tr=$('tr','',body);
     $('th','',tr,statLabel);
     for(const v of vals)$('td','',tr,num(v,5));
+  }
+}
+function renderRsd(d) {
+  const rsd=d.rsd;
+  if(!rsd){
+    panel('Redshift-space distortions (RSD)','Redshift-space analysis was not returned for this run.');
+    return;
+  }
+  const dim=Number(d.dim||S.dim),losAxis=Number(rsd.losAxis??(dim-1));
+  const losName=dim===1?'x₀':dim===2?'x₁ (vertical)':'x₂ (z-axis)';
+  const sum=rsd.summary||{};
+  const percent=v=>Number.isFinite(Number(v))?`${num(100*Number(v),3)}%`:'—';
+
+  // Panel 1: Redshifted Sheet Geometry, Velocity-Induced Shell Crossing, and Sampled Simplex Gaussian Packets
+  const pSheet=panel(
+    'Redshifted phase-space sheet & velocity-induced shell crossing',
+    `Each Lagrangian vertex q maps to redshift space s = x + (v_∥ / aH) n̂ = x + a (dx_∥/da) n̂ along line-of-sight axis ${losName}. By the matrix determinant lemma, the redshift-space simplex Jacobian is J_{s,T} = J_T (1 + a ∂_∥ v_∥)_T. Consequently, the sheet shell-crosses in redshift space (J_{s,T} ≤ 0) wherever the line-of-sight velocity convergence exceeds the Hubble flow (a ∂_∥ v_∥ ≤ −1), even when the real-space sheet is still completely single-stream (J_T > 0). Fitting a ${dim}D Gaussian packet to each simplex with width set by the velocity gradient tensor across the simplex captures both large-scale Kaiser infall and small-scale Fingers-of-God radial dispersion.`
+  );
+
+  const strip=$('div','metric-strip',pSheet);
+  for(const [label,val] of [
+    ['Growth rate f(a) = d ln D / d ln a',num(sum.growthRateF,4)],
+    ['Kaiser LOS boost (1 + f)²',num(sum.kaiserLosFactor,4)],
+    ['Kaiser monopole factor',num(sum.kaiserMonopoleFactor,4)],
+    ['Real-space min J_T',num(sum.minRealSimplexJacobian,4)],
+    ['Redshift-space min J_{s,T}',num(sum.minRsdSimplexJacobian,4)],
+    ['Real-space inverted mass',percent(sum.realInvertedMassFraction)],
+    ['Redshift-space inverted mass',percent(sum.rsdInvertedMassFraction)],
+    ['Pre-crossing RSD folded mass (J_T>0, J_{s,T}≤0)',percent(sum.rsdPreCrossingInvertedMass)],
+    ['LOS RMS velocity σ_{v,∥}',`${num(sum.rmsVelocityLosKmS,4)} km/s`],
+    ['Simplex velocity-gradient width RMS / max',`${num(sum.rmsSimplexVelocityWidthKmS,3)} / ${num(sum.maxSimplexVelocityWidthKmS,4)} km/s`],
+  ]){
+    const item=$('div','metric',strip);
+    $('span','metric-label',item,label);$('strong','metric-value',item,val);
+  }
+
+  const sheetBar=$('div','published-controls',pSheet);
+  const modeWrap=$('label','published-select',sheetBar);$('span','',modeWrap,'Sheet view');
+  const modeSel=$('select','lab-select',modeWrap);
+  for(const [v,t] of [
+    ['rsd_crossing','Redshifted sheet s(q) · highlight RSD shell-crossed simplices (J_{s,T} ≤ 0 in crimson)'],
+    ['overlay','Overlay: Real-space sheet x(q) (blue) vs Redshifted sheet s(q) (orange) + Gaussian samples'],
+    ['real_vs_rsd_j','Simplex volume compression ratio J_{s,T} / J_T across the sheet'],
+  ]){const o=$('option','',modeSel,t);o.value=v;}
+  modeSel.value=rsdViewOpts.sheetMode;
+  modeSel.addEventListener('change',()=>{rsdViewOpts.sheetMode=modeSel.value;render();});
+
+  const sampWrap=$('label','published-select',sheetBar);$('span','',sampWrap,'Gaussian packet samples');
+  const sampSel=$('select','lab-select',sampWrap);
+  for(const [v,t] of [['1','Show sampled points from simplex Gaussians'],['0','Hide sampled points']]){const o=$('option','',sampSel,t);o.value=v;}
+  sampSel.value=rsdViewOpts.showSamples?'1':'0';
+  sampSel.addEventListener('change',()=>{rsdViewOpts.showSamples=sampSel.value==='1';render();});
+
+  const wf=rsd.wireframe||{};
+  const cSheet=canvasFor(pSheet,'Redshifted phase-space sheet and velocity-gradient Gaussian samples',true);
+  const drawRsdSheet=()=>paintCanvas(cSheet,(ctx,W,H)=>{
+    const nw=Number(wf.n||0),xr=arr(wf.xReal),xs=arr(wf.xRsd),uLos=arr(wf.uLos),jr=arr(wf.jReal),js=arr(wf.jRsd),samps=arr(wf.gaussSamples);
+    const ink=getComputedStyle(cSheet).color;
+    if(!nw||!xs.length){ctx.fillStyle=ink;ctx.fillText('Redshifted wireframe was not returned.',32,40);return;}
+    const idx=(i,j=0,k=0)=>dim===1?i:dim===2?i*nw+j:(i*nw+j)*nw+k;
+    const get=(a,id,axis)=>Number(a[id*dim+axis]??0);
+    const pad=56,plotW=W-2*pad,plotH=H-2*pad;
+
+    if(dim===1){
+      let miny=Infinity,maxy=-Infinity;
+      for(let i=0;i<nw;i++){
+        const u=Number(uLos[i]||0);
+        miny=Math.min(miny,u);maxy=Math.max(maxy,u);
+      }
+      if(!(maxy>miny)){miny-=0.05;maxy+=0.05;}
+      const mapXY=(xVal,uVal)=>[pad+((xVal%1+1)%1)*plotW,H-pad-(uVal-miny)*plotH/(maxy-miny)];
+      // Real-space curve (x, u_los) vs Redshifted curve (s, u_los)
+      ctx.lineWidth=1.8;
+      ctx.strokeStyle='#0072B2';
+      ctx.beginPath();
+      for(let i=0;i<nw;i++){
+        const [px,py]=mapXY(get(xr,i,0),Number(uLos[i]||0));
+        if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xr,i,0)-get(xr,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
+      }
+      ctx.stroke();
+      ctx.strokeStyle='#D55E00';
+      ctx.beginPath();
+      for(let i=0;i<nw;i++){
+        const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
+        if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xs,i,0)-get(xs,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
+      }
+      ctx.stroke();
+      for(let i=0;i<nw;i++){
+        const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
+        const crossed=Number(js[i])<=0;
+        ctx.fillStyle=crossed?'#c0392b':'#D55E00';
+        ctx.beginPath();ctx.arc(px,py,crossed?3.2:2.1,0,Math.PI*2);ctx.fill();
+      }
+      ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
+      ctx.fillText('position x/L (blue) and redshift coordinate s/L = x/L + u_∥ (orange; crimson where J_{s,T} ≤ 0)',W/2,H-14);
+      ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);ctx.fillText('LOS velocity displacement u_∥ = v_∥ / (a H L)',0,0);ctx.restore();ctx.textAlign='start';
+      return;
+    }
+
+    const side=Math.min(plotW,plotH),cx=W/2,cy=H/2;
+    const proj=(arrPos,id)=>{
+      if(dim===2)return [cx+(get(arrPos,id,0)-0.5)*side,cy-(get(arrPos,id,1)-0.5)*side];
+      return project3(get(arrPos,id,0)-0.5,get(arrPos,id,1)-0.5,get(arrPos,id,2)-0.5,S.rotate,S.tilt,side*0.82,cx,cy);
+    };
+    const drawEdge=(arrPos,a,b)=>{
+      let d2=0;for(let k=0;k<dim;k++){const df=get(arrPos,a,k)-get(arrPos,b,k);d2+=df*df;}
+      if(d2>0.2)return;
+      const [x1,y1]=proj(arrPos,a),[x2,y2]=proj(arrPos,b);
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    };
+
+    if(rsdViewOpts.showSamples&&samps.length>=dim){
+      ctx.fillStyle='rgba(0, 158, 115, 0.36)';
+      const nPts=Math.floor(samps.length/dim);
+      for(let p=0;p<nPts;p++){
+        let px,py;
+        if(dim===2){px=cx+(Number(samps[p*2])-0.5)*side;py=cy-(Number(samps[p*2+1])-0.5)*side;}
+        else{[px,py]=project3(Number(samps[p*3])-0.5,Number(samps[p*3+1])-0.5,Number(samps[p*3+2])-0.5,S.rotate,S.tilt,side*0.82,cx,cy);}
+        ctx.beginPath();ctx.arc(px,py,1.6,0,Math.PI*2);ctx.fill();
+      }
+    }
+
+    if(rsdViewOpts.sheetMode==='overlay'){
+      ctx.strokeStyle='rgba(0, 114, 178, 0.38)';ctx.lineWidth=0.9;
+      if(dim===2){
+        for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++){
+          const a=idx(i,j),b=idx(i+1,j),c=idx(i,j+1),e=idx(i+1,j+1);
+          drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,e);
+        }
+      }else{
+        for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++)for(let k=0;k+1<nw;k++){
+          const a=idx(i,j,k),b=idx(i+1,j,k),c=idx(i,j+1,k),dd=idx(i,j,k+1);
+          drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,dd);
+        }
+      }
+    }
+
+    // Draw Redshifted Sheet edges
+    if(dim===2){
+      for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++){
+        const a=idx(i,j),b=idx(i+1,j),c=idx(i,j+1),e=idx(i+1,j+1);
+        const minJ=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[e]));
+        if(rsdViewOpts.sheetMode==='real_vs_rsd_j'){
+          const ratio=Number(js[a])/Math.max(1e-3,Math.abs(Number(jr[a])));
+          ctx.strokeStyle=ratio<=0?'#c0392b':ratio<0.6?'#d55e00':ratio<1.1?'#0072b2':'#56b4e9';
+          ctx.lineWidth=ratio<=0?1.5:1.0;
+        }else if(rsdViewOpts.sheetMode==='overlay'){
+          ctx.strokeStyle=minJ<=0?'rgba(192, 57, 43, 0.85)':'rgba(213, 94, 0, 0.72)';
+          ctx.lineWidth=minJ<=0?1.4:1.0;
+        }else{
+          ctx.strokeStyle=minJ<=0?'rgba(204, 37, 41, 0.9)':'rgba(0, 114, 178, 0.62)';
+          ctx.lineWidth=minJ<=0?1.55:0.95;
+        }
+        drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,e);drawEdge(xs,b,e);drawEdge(xs,c,e);
+      }
+    }else{
+      for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++)for(let k=0;k+1<nw;k++){
+        const a=idx(i,j,k),b=idx(i+1,j,k),c=idx(i,j+1,k),dd=idx(i,j,k+1);
+        const crossed=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[dd]))<=0;
+        ctx.strokeStyle=crossed?'rgba(204, 37, 41, 0.78)':'rgba(0, 114, 178, 0.32)';
+        ctx.lineWidth=crossed?1.2:0.65;
+        drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,dd);
+      }
+    }
+
+    ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
+    ctx.fillText(dim===2?'transverse x₀/L  (blue = single-stream J_{s,T}>0, crimson = RSD shell-crossed J_{s,T}≤0, green dots = simplex Gaussian samples)':'orthographic horizontal / L  (crimson = RSD shell-crossed simplices J_{s,T}≤0)',W/2,H-14);
+    ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);
+    ctx.fillText(dim===2?'line-of-sight redshift coordinate s₁/L = x₁/L + v₁/(aHL)':'line-of-sight projection s/L',0,0);
+    ctx.restore();ctx.textAlign='start';
+  });
+  drawRsdSheet();
+  addPngButton(cSheet,'redshifted-phase-space-sheet');
+
+  // Panel 2: Spatial Maps (Real Space, Exact Redshifted Sheet, Simplex Velocity-Gradient Gaussian Field, Sampled Field)
+  const pMaps=panel(
+    'Real-space vs Redshift-space density maps (Exact Sheet, Velocity-Gradient Gaussians, and Sampled Realization)',
+    `All four density maps use the shared Coolwarm color scale ([${num(densityViewOpts.vmin??0.1,3)}, ${num(densityViewOpts.vmax??10,3)}]) with line-of-sight axis ${losName}. (1) Real-space P₀ sheet density ρ(x)/ρ̄; (2) Exact R3D-clipped redshifted sheet ρ_s(s)/ρ̄, showing sharp Kaiser pancakes and redshift-space caustics; (3) Simplex velocity-gradient Gaussian field ρ_{s,Gauss}(s)/ρ̄, where each simplex is fitted with a ${dim}D Gaussian whose line-of-sight dispersion is set by the velocity gradient tensor across the simplex; (4) Monte Carlo sampled realization drawn from the fitted simplex Gaussians, exhibiting realistic Fingers-of-God radial streaks.`
+  );
+  const meshRsd=Number(rsd.mesh||S.mesh);
+  const maps=rsd.maps||{};
+  const effMin=Number.isFinite(densityViewOpts.vmin)?densityViewOpts.vmin:0.1;
+  const effMax=Number.isFinite(densityViewOpts.vmax)&&densityViewOpts.vmax>effMin?densityViewOpts.vmax:10;
+  const mapGrid=$('div','density-pair',pMaps);
+  drawDensityMap(mapGrid,'1 · Real-space P₀ sheet ρ(x)/ρ̄',maps.realRho,'Real-space P0 sheet density',dim,meshRsd,'rsd-real-sheet',effMin,effMax,1);
+  drawDensityMap(mapGrid,'2 · Exact redshifted sheet ρ_s(s)/ρ̄ (R3D simplices)',maps.rsdSheetRho,'Exact redshifted sheet density',dim,meshRsd,'rsd-exact-sheet',effMin,effMax,1);
+  drawDensityMap(mapGrid,`3 · Simplex velocity-gradient ${dim}D Gaussian field`,maps.rsdGaussRho,'Simplex velocity-gradient Gaussian RSD density',dim,meshRsd,'rsd-gaussian-packets',effMin,effMax,1);
+  drawDensityMap(mapGrid,'4 · Sampled realization from simplex Gaussians',maps.rsdSampledRho,'Sampled simplex Gaussian RSD density',dim,meshRsd,'rsd-sampled-gaussians',effMin,effMax,1);
+
+  // Panel 3: Anisotropic Power Spectra & Multipoles (Kaiser Boost vs Fingers-of-God Damping)
+  const pSpec=panel(
+    'Anisotropic redshift-space power spectra: Kaiser enhancement & Fingers-of-God damping',
+    `In the linear Kaiser regime, coherent infall along the line of sight boosts Fourier modes by (1 + f μ²)², amplifying the angle-averaged monopole P₀(k) by ${num(sum.kaiserMonopoleFactor,4)}× and the line-of-sight modes (μ → 1) by (1 + f)² = ${num(sum.kaiserLosFactor,4)}×. At higher wavenumbers k, redshift-space shell crossing and the velocity-gradient dispersion across collapsing simplices damp line-of-sight power (the Fingers-of-God effect).`
+  );
+  const sp=rsd.spectra||{};
+  const ks=arr(sp.k);
+  const specBounds=sheetPositiveRange([sp.realMonopole,sp.rsdSheetMonopole,sp.rsdGaussMonopole,sp.kaiserMonopole,sp.rsdSheetLos]);
+  const specYlim=specBounds?[specBounds[0]*0.45,specBounds[1]*2.2]:undefined;
+  addPlot(
+    pSpec,
+    'Monopole P₀(k) & line-of-sight wedge P_∥(k) vs real-space P_r(k)',
+    ks,
+    [
+      {key:'realMonopole',label:'Real-space monopole P_r(k)',color:'#34495e',dash:'5 3',width:1.8},
+      {key:'kaiserMonopole',label:`Exact linear Kaiser monopole ⟨(1+fμ²)² P_r⟩ (${num(sum.kaiserMonopoleFactor,3)}×)`,color:'#7f8c8d',dash:'2 3',width:1.7},
+      {key:'rsdSheetMonopole',label:'Redshifted P₀ sheet monopole P_{0,s}(k)',color:'#0072B2',width:2.2},
+      {key:'rsdGaussMonopole',label:'Simplex velocity-gradient Gaussian P_{0,Gauss}(k)',color:'#009E73',dash:'7 3',width:2.1},
+      {key:'rsdSheetLos',label:'Redshifted sheet LOS wedge P_∥(k) (μ² ≥ 0.5)',color:'#D55E00',width:1.9},
+      {key:'rsdGaussLos',label:'Simplex Gaussian LOS wedge P_∥,Gauss(k) (FoG damped)',color:'#CC79A7',dash:'4 2.5',width:1.9},
+    ],
+    {xlabel:'k [h/Mpc]',ylabel:`P(k) [(Mpc/h)^${dim}]`,xlog:true,ylog:true,ylim:specYlim},
+    sp
+  );
+
+  const specBar=$('div','published-controls',pSpec);
+  const specWrap=$('label','published-select',specBar);$('span','',specWrap,'Anisotropy diagnostic');
+  const specSel=$('select','lab-select',specWrap);
+  for(const [v,t] of [
+    ['ratio','Redshift-to-real power ratio P_s(k) / P_r(k) vs Kaiser plateau & FoG damping'],
+    ['quadrupole','Quadrupole-to-monopole anisotropy ratio P₂(k) / P₀(k)'],
+    ['wedges','Line-of-sight P_∥(k) vs Transverse P_⊥(k) ratio P_∥(k) / P_⊥(k)'],
+  ]){const o=$('option','',specSel,t);o.value=v;}
+  specSel.value=rsdViewOpts.specMode;
+  specSel.addEventListener('change',()=>{rsdViewOpts.specMode=specSel.value;render();});
+
+  const safeDiv=(a,b)=>arr(a).map((v,i)=>{const d0=Number(arr(b)[i]);return d0>1e-30?Number(v)/d0:NaN;});
+  if(rsdViewOpts.specMode==='ratio'){
+    const ratioData={
+      k:ks,
+      unity:ks.map(()=>1),
+      kaiserMonoRatio:safeDiv(sp.kaiserMonopole,sp.realMonopole),
+      kaiserLosRatio:safeDiv(sp.kaiserLos,sp.realMonopole),
+      sheetMonoRatio:safeDiv(sp.rsdSheetMonopole,sp.realMonopole),
+      gaussMonoRatio:safeDiv(sp.rsdGaussMonopole,sp.realMonopole),
+      sheetLosRatio:safeDiv(sp.rsdSheetLos,sp.realMonopole),
+      gaussLosRatio:safeDiv(sp.rsdGaussLos,sp.realMonopole),
+    };
+    addPlot(
+      pSpec,
+      'Redshift-to-real power ratio P(k) / P_r(k): Kaiser boost at low k vs Fingers-of-God suppression at high k',
+      ks,
+      [
+        {key:'unity',label:'Real-space baseline (1.0)',color:'#7f8c8d',dash:'2 3',width:1.3},
+        {key:'kaiserMonoRatio',label:'Exact linear Kaiser monopole ratio',color:'#34495e',dash:'5 3',width:1.6},
+        {key:'kaiserLosRatio',label:'Exact linear Kaiser LOS wedge ratio',color:'#e69f00',dash:'2 2',width:1.5},
+        {key:'sheetMonoRatio',label:'Redshifted sheet P_{0,s}(k) / P_r(k)',color:'#0072B2',width:2.1},
+        {key:'gaussMonoRatio',label:'Simplex Gaussian P_{0,Gauss}(k) / P_r(k)',color:'#009E73',dash:'7 3',width:2.0},
+        {key:'sheetLosRatio',label:'Redshifted sheet LOS P_∥(k) / P_r(k)',color:'#D55E00',width:1.9},
+        {key:'gaussLosRatio',label:'Simplex Gaussian LOS P_∥,Gauss(k) / P_r(k) (FoG turnover)',color:'#CC79A7',dash:'4 2.5',width:1.9},
+      ],
+      {xlabel:'k [h/Mpc]',ylabel:'P(k) / P_r(k)',xlog:true,ylog:false},
+      ratioData
+    );
+  }else if(rsdViewOpts.specMode==='quadrupole'){
+    const quadData={
+      k:ks,
+      zero:ks.map(()=>0),
+      kaiserQ2P0:safeDiv(sp.kaiserQuadrupole,sp.kaiserMonopole),
+      sheetQ2P0:safeDiv(sp.rsdSheetQuadrupole,sp.rsdSheetMonopole),
+      gaussQ2P0:safeDiv(sp.rsdGaussQuadrupole,sp.rsdGaussMonopole),
+    };
+    addPlot(
+      pSpec,
+      'Quadrupole-to-monopole anisotropy ratio P₂(k) / P₀(k)',
+      ks,
+      [
+        {key:'zero',label:'Isotropic (P₂ / P₀ = 0)',color:'#7f8c8d',dash:'2 3',width:1.3},
+        {key:'kaiserQ2P0',label:'Linear Kaiser quadrupole ratio P_{2,Kaiser} / P_{0,Kaiser}',color:'#34495e',dash:'5 3',width:1.7},
+        {key:'sheetQ2P0',label:'Redshifted sheet P_{2,s}(k) / P_{0,s}(k)',color:'#0072B2',width:2.1},
+        {key:'gaussQ2P0',label:'Simplex velocity-gradient Gaussian P_{2,Gauss}(k) / P_{0,Gauss}(k)',color:'#009E73',dash:'7 3',width:2.1},
+      ],
+      {xlabel:'k [h/Mpc]',ylabel:'P₂(k) / P₀(k)',xlog:true,ylog:false},
+      quadData
+    );
+  }else{
+    const wedgeData={
+      k:ks,
+      unity:ks.map(()=>1),
+      kaiserWedge:safeDiv(sp.kaiserLos,sp.realTransverse),
+      sheetWedge:safeDiv(sp.rsdSheetLos,sp.rsdSheetTransverse),
+      gaussWedge:safeDiv(sp.rsdGaussLos,sp.rsdGaussTransverse),
+    };
+    addPlot(
+      pSpec,
+      'Line-of-sight to transverse power ratio P_∥(k) / P_⊥(k)',
+      ks,
+      [
+        {key:'unity',label:'Isotropic real-space baseline (1.0)',color:'#7f8c8d',dash:'2 3',width:1.3},
+        {key:'kaiserWedge',label:'Linear Kaiser P_∥ / P_⊥ expectation',color:'#34495e',dash:'5 3',width:1.7},
+        {key:'sheetWedge',label:'Redshifted sheet P_∥,s(k) / P_⊥,s(k)',color:'#0072B2',width:2.1},
+        {key:'gaussWedge',label:'Simplex Gaussian P_∥,Gauss(k) / P_⊥,Gauss(k)',color:'#009E73',dash:'7 3',width:2.1},
+      ],
+      {xlabel:'k [h/Mpc]',ylabel:'P_∥(k) / P_⊥(k)',xlog:true,ylog:false},
+      wedgeData
+    );
+  }
+
+  // Panel 4: Direct Simplex Density PDFs & Signed Simplex Jacobian Volume Distribution
+  const pPdf=panel(
+    'Direct simplex redshift-space density PDFs & signed simplex volume distribution',
+    `Evaluating 1/|J_{s,T}| directly on the redshifted simplices without grid deposition captures the full caustic density tail induced by redshift-space shell crossing (J_{s,T} → 0) as well as the expanded void tail (1 + a ∂_∥ v_∥ > 1). The companion chart shows the Lagrangian mass distribution of signed simplex volumes J_T (real space) vs J_{s,T} (redshift space), where the tail at J_{s,T} ≤ 0 measures velocity-induced shell crossing.`
+  );
+  const rpdf=rsd.pdf||{};
+  const pdfPlotData={};
+  const pdfDefs=[];
+  const weightKey=S.weight==='mass'?'mass':'volume';
+  for(const [k,label,color,dash] of [
+    ['real','Real-space P₀ simplices (1/|J_T|)','#34495e','5 3'],
+    ['rsdSheet','Redshifted P₀ simplices (1/|J_{s,T}|)','#D55E00',undefined],
+    ['rsdGauss','Simplex velocity-gradient Gaussian field','#009E73','7 3'],
+  ]){
+    const obj=rpdf[k];
+    if(!obj)continue;
+    const lr=arr(obj.logrho);
+    const rhoAx=lr.map(y=>Math.pow(10,Number(y)));
+    const sDy=Number(obj.dy)>0?Number(obj.dy):3.6/80;
+    const sFactor=Math.pow(10,sDy/2)-Math.pow(10,-sDy/2);
+    const vals=arr(obj[weightKey]).map((v,i)=>{
+      const r=rhoAx[i]||1;
+      return pdfViewOpts.ordinate==='log10'?Number(v):(Number(v)*sDy)/Math.max(1e-30,r*sFactor);
+    });
+    pdfPlotData[`${k}_x`]=rhoAx;
+    pdfPlotData[`${k}_y`]=vals;
+    pdfDefs.push({key:`${k}_y`,xkey:`${k}_x`,label,color,dash,width:2.0});
+  }
+  const yLabelSuffix=pdfViewOpts.ordinate==='log10'?'dP / d log₁₀(ρ/ρ̄)':'dP / d(ρ/ρ̄)';
+  addPlot(
+    pPdf,
+    `${S.weight==='mass'?'Mass':'Volume'}-weighted density PDF: Real-space simplices vs Redshifted simplices vs Velocity-gradient Gaussians`,
+    pdfPlotData.rsdSheet_x||[],
+    pdfDefs,
+    {xlabel:'ρ / ρ̄',ylabel:`${S.weight}-weighted ${yLabelSuffix}`,xlog:true,ylog:true},
+    pdfPlotData
+  );
+
+  const jac=rpdf.jacobian||{};
+  if(arr(jac.j).length){
+    const box=$('section','plot-panel',pPdf);
+    $('h4','',box,'Signed simplex volume ratio distribution p_M(J): Real space J_T vs Redshift space J_{s,T}');
+    const host=plotHost(box),plot=new LinePlot(host,{width:720,height:370,interactive:true});
+    plot.setAxes({
+      title:'Signed simplex volume ratio distribution p_M(J): Real space J_T vs Redshift space J_{s,T}',
+      xlabel:'Signed simplex volume ratio J = det(∂x/∂q) or det(∂s/∂q)  (J ≤ 0 is shell-crossed)',
+      ylabel:'Mass probability density dP_M / dJ',
+      xlog:false,
+      ylog:false,
+    });
+    plot.setSeries([
+      {x:arr(jac.j),y:arr(jac.realMassPdf),label:'Real-space simplex Jacobian J_T',color:'#0072B2',width:2.1},
+      {x:arr(jac.j),y:arr(jac.rsdMassPdf),label:'Redshift-space simplex Jacobian J_{s,T} = J_T(1 + a ∂_∥ v_∥)',color:'#D55E00',width:2.1},
+    ]);
+    plot.setMarkers([{x:0,label:'Shell-crossing threshold J = 0',color:'#c0392b'}]);
+    plot.draw();
   }
 }
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the exact sheet-LPT tangent.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM-sheet tangent'}],{xlabel:'k [h/Mpc]',ylabel:`P₀ and ∂P₀/∂A [(Mpc/h)^${S.dim}]`,xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}

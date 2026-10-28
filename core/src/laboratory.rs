@@ -3042,6 +3042,19 @@ fn assemble_prepared(
             }
         }
     }
+    let f_growth = growth_rate(growth, a);
+    let e_hubble = c.cosmo.e(a);
+    let rsd = observables::redshift_space_analysis(
+        g,
+        &x,
+        &v,
+        a,
+        f_growth,
+        e_hubble,
+        r.box_size,
+        r.mesh,
+        r.smoothing,
+    );
     let result = json!({"dim":r.dim,"n":r.n,"mesh":r.mesh,"forceMesh":r.force_mesh,"box":1.,"boxSize":r.box_size,"a":a,"aStart":a_start,"D":d,"dDa":d_da,"redshift":1./a-1.,"growthAtOne":growth.d_of_a(1.),"shellCrossing":sc,"aShellCrossing":a_sc,
         "request":r,"engineVersion":env!("CARGO_PKG_VERSION"),"schemaVersion":2,"estimatedPeakBytes":r.estimated_peak_bytes(),
         "crossingReference":"Minimum ZA growth threshold and reachable sampled-vertex 2--4LPT crossing estimates; not a guarantee for the affine mesh or PM trajectory",
@@ -3049,6 +3062,7 @@ fn assemble_prepared(
         "guard":{"ok":safe,"crossed":!safe,"pmCrossed":pm.crossed,"firstPmCrossing":first_pm_crossing,"minimumJacobian":minj,"minimumSimplexJacobian":mins.min(pm.min_jacobian),"pmMinimumSimplexJacobian":pm.min_jacobian,"pmInitialMinimumJacobianF64":pending.pm_initial_min_jacobian,"pmInitialMinimumJacobianF32":pending.pm_initial_quantized_min_jacobian,"pmInitialMinimumJacobianDisplacementF32":pending.pm_initial_displacement_quantized_min_jacobian,"pmInitialMinimumJacobianUsed":pm_initial_minimum_used,"pmInitialMinimumJacobianRepresentation":pm_initial_minimum_representation,"lptFinalInvertedMass":lpt_final_inverted_mass,"pmFinalInvertedMass":pm_final_inverted_mass,"reason":reason},
         "q":q_json,"x":[],"v":v_json,"pmX":[],"pmV":pmv_json,"rho":rs_json,"rhoP1":rs_p1_json,"pmRho":pms_json,"cicRho":cics_json,"tscRho":tscs_json,
         "customSeries":custom_series,
+        "rsd":rsd,
         "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"sheetP1":physical_p(&ps_p1.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&spec_ks),"direct":physical_p(spec_powers),"directPM":physical_p(spec_pm_powers),"directShellK":physical_k(&raw.direct_shell_k),"directShell":physical_p(&raw.direct_shell_lpt),"directShellPM":physical_p(&raw.direct_shell_pm),"directShellRealizedK":physical_k(&raw.direct_shell_realized_k),"directShellRealized":physical_p(&raw.direct_shell_realized),"directShellLinearK":direct_shell_linear_k,"directShellLinear":direct_shell_linear_p,"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
         "varianceScale":variance_scale,
         "pdf":{"logrho":logrho,"p1Logrho":p1_logrho,"pmLogrho":pm_logrho,"cicLogrho":cic_logrho,"dy":dy_p0,"p1Dy":dy_p1,"pmDy":dy_pm,"cicDy":dy_cic,"volume":vol,"mass":mass,"p1Volume":p1vol,"p1Mass":p1mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"p1Variance":p1var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"p1Summary":p1_summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy_p0,"capturedMass":mass.iter().sum::<f64>()*dy_p0,"p1CapturedVolume":p1vol.iter().sum::<f64>()*dy_p1,"p1CapturedMass":p1mass.iter().sum::<f64>()*dy_p1,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy_pm,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy_pm,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy_cic,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy_cic},

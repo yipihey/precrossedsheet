@@ -1,0 +1,159 @@
+---
+title: "Redshift-Space Distortions on the Phase-Space Sheet"
+---
+
+## Mapping the Simplicial Sheet into Redshift Space {#sec-rsd}
+
+In galaxy redshift surveys, the radial distance to a tracer is inferred from its observed redshift rather than its true comoving position. Along a fixed line-of-sight unit vector $\hat{\mathbf{n}}$ in the distant-observer (plane-parallel) approximation, the peculiar velocity $\mathbf{v}_{\rm pec} = a\,d\mathbf{x}/dt$ shifts each comoving position $\mathbf{x}$ to the redshift-space coordinate [@jackson1972; @kaiser1987; @scoccimarro2004]:
+
+$$
+\mathbf{s}(\mathbf{q}, a) = \mathbf{x}(\mathbf{q}, a) + \frac{\mathbf{v}_{\rm pec}(\mathbf{q}, a) \cdot \hat{\mathbf{n}}}{a H(a)}\,\hat{\mathbf{n}}.
+$$ {#eq-rsd-map}
+
+Because the scale factor evolves as $da/dt = a H(a)$, the chain rule $\mathbf{v}_{\rm pec} = a^2 H(a)\,d\mathbf{x}/da$ reduces the Hubble-normalized peculiar velocity displacement $\mathbf{u}(\mathbf{q}, a)$ in dimensionless box units ($\mathbf{x}/L \in [0, 1)^d$) to the exact identity:
+
+$$
+\mathbf{u}(\mathbf{q}, a) \equiv \frac{\mathbf{v}_{\rm pec}(\mathbf{q}, a)}{a H(a) L} = a\,\frac{d(\mathbf{x}/L)}{da} = a\,\mathbf{v}(\mathbf{q}, a).
+$$ {#eq-rsd-u-identity}
+
+On the discretized simplicial phase-space sheet{{< src observables::redshift_space_analysis >}}, each Lagrangian vertex $\mathbf{q}_i$ carries both its deformed position $\mathbf{x}_i$ and its exact velocity $\mathbf{v}_i = d\mathbf{x}_i/da$. Displacing every vertex along the line of sight $\hat{\mathbf{n}}$ yields the **redshifted simplicial sheet** with vertices:
+
+$$
+\mathbf{s}_a = \mathbf{x}_a + u_{a,\parallel}\,\hat{\mathbf{n}}, \qquad u_{a,\parallel} = a\,(\mathbf{v}_a \cdot \hat{\mathbf{n}}), \qquad a = 0, \dots, d.
+$$ {#eq-rsd-simplex-vertices}
+
+### The Redshift-Space Simplex Jacobian and Early Shell Crossing
+
+Consider a single $d$-simplex $T$ (an interval in 1D, a triangle in 2D, or a Kuhn tetrahedron in 3D) with Lagrangian edge matrix $\mathbf{E}_q = [\mathbf{q}_1 - \mathbf{q}_0, \dots, \mathbf{q}_d - \mathbf{q}_0]$, real-space edge matrix $\mathbf{E}_x = [\mathbf{x}_1 - \mathbf{x}_0, \dots, \mathbf{x}_d - \mathbf{x}_0]$, and dimensionless velocity edge matrix $\mathbf{E}_u = [\mathbf{u}_1 - \mathbf{u}_0, \dots, \mathbf{u}_d - \mathbf{u}_0]$.
+
+In redshift space, the edge matrix is a rank-1 update of $\mathbf{E}_x$ along the line-of-sight direction $\hat{\mathbf{n}}$:
+
+$$
+\mathbf{E}_s = \mathbf{E}_x + \hat{\mathbf{n}}\big(\hat{\mathbf{n}}^{\!\top} \mathbf{E}_u\big).
+$$ {#eq-rsd-edge-rank1}
+
+By the matrix determinant lemma, the determinant of a rank-1 update is **strictly linear** in the line-of-sight velocity gradient. Dividing by $\det(\mathbf{E}_q)$ gives the exact redshift-space simplex volume ratio $J_{s,T}$:
+
+$$
+J_{s,T} \equiv \frac{\det(\mathbf{E}_s)}{\det(\mathbf{E}_q)} = J_T \left(1 + \frac{\partial u_\parallel}{\partial x_\parallel}\Big|_T\right) = J_T \left(1 + \frac{1}{a H(a)}\frac{\partial v_{\rm pec,\parallel}}{\partial x_\parallel}\Big|_T\right).
+$$ {#eq-rsd-simplex-jacobian}
+
+Equation (@eq-rsd-simplex-jacobian) has two immediate physical consequences:
+
+1. **Pre-Crossing Redshift-Space Caustics ($J_T > 0$ but $J_{s,T} \le 0$):**
+   Even when the real-space sheet is completely single-stream and uncrossed ($J_T > 0$ everywhere), any simplex whose line-of-sight peculiar velocity gradient exceeds the Hubble expansion rate,
+   $$
+   \frac{\partial u_\parallel}{\partial x_\parallel}\Big|_T \le -1 \quad \Longleftrightarrow \quad \frac{\partial v_{\rm pec,\parallel}}{\partial x_\parallel}\Big|_T \le -a H(a),
+   $$ {#eq-rsd-crossing-condition}
+   undergoes **orientation reversal ($J_{s,T} \le 0$) in redshift space**. Thus **redshift-space shell crossing always precedes real-space shell crossing**.
+2. **Exact R3D Redshifted Sheet Deposition:**
+   Applying the exact polyhedral clipping algorithm (`sheet_density_2d_exact` / `sheet_density_3d_exact`) to the redshifted simplices $\{\mathbf{s}_0, \dots, \mathbf{s}_d\}$ deposits positive stream masses $\rho_{s,T} = 1/|J_{s,T}|$, resolving sharp redshift-space caustics and multi-stream regions without particle shot noise.
+
+::: {.callout-tip title="Inspect redshift-space shell crossing in the Laboratory"}
+Open the Redshift Space (RSD) panel in the interactive laboratory to inspect the redshifted sheet $\mathbf{s}(\mathbf{q})$, where simplices that have inverted in redshift space ($J_{s,T} \le 0$) while remaining uncrossed in real space ($J_T > 0$) are highlighted in crimson.
+
+{{< lab "v=3&dim=2&n=64&mesh=128&force=64&ic=gaussian&transfer=bao&cutoff=12&L=500&Rini=8&smoothing=0&epoch=scaleFactor&a=1&order=4&steps=64&view=rsd" "Open the Redshift-Space Distortions Laboratory" >}}
+:::
+
+---
+
+## Coherent Infall and the Simplicial Kaiser Effect {#sec-rsd-kaiser}
+
+In the linear and quasi-linear regime ($|\partial_\parallel u_\parallel| \ll 1$), the m-th order LPT displacement grows as $D(a)^m$, so its time derivative satisfies $a\,\mathbf{v}^{(m)} = m\,f(a)\,\boldsymbol{\psi}^{(m)}$, where
+
+$$
+f(a) \equiv \frac{d\ln D(a)}{d\ln a} \approx \Omega_m(a)^{0.55}
+$$ {#eq-growth-rate}
+
+is the linear logarithmic growth rate. At first order ($m = 1$), $\mathbf{u}^{(1)} = f(a)\,\boldsymbol{\psi}^{(1)}$ and $\nabla_{\mathbf{q}} \cdot \boldsymbol{\psi}^{(1)} = -\delta_1(\mathbf{q})$. Substituting into (@eq-rsd-simplex-jacobian) gives:
+
+$$
+J_s(\mathbf{q}) \approx 1 + \nabla_{\mathbf{q}} \cdot \boldsymbol{\psi}^{(1)} + f(a)\,\frac{\partial \psi_\parallel^{(1)}}{\partial q_\parallel} \quad \Longrightarrow \quad \delta_s(\mathbf{k}) = \big(1 + f(a)\mu_{\mathbf{k}}^2\big)\,\delta_r(\mathbf{k}),
+$$ {#eq-kaiser-linear-amplitude}
+
+where $\mu_{\mathbf{k}} = (\mathbf{k} \cdot \hat{\mathbf{n}})/|\mathbf{k}|$ is the cosine of the wavevector with respect to the line of sight. Squaring the Fourier amplitude yields Kaiser's anisotropic redshift-space power spectrum [@kaiser1987]:
+
+$$
+P_s(k, \mu) = \big(1 + f(a)\mu^2\big)^2 P_r(k) = \big(1 + 2 f \mu^2 + f^2 \mu^4\big) P_r(k).
+$$ {#eq-kaiser-power}
+
+Because our laboratory supports 1D, 2D, and 3D periodic geometries, the angular averages over the $(d-1)$-sphere give the exact dimensional Kaiser enhancement factors:
+
+| Dimension $d$ | Line-of-Sight ($\mu = 1$) $P_\parallel / P_r$ | Angle-Averaged Monopole $P_0 / P_r$ | Quadrupole Factor $P_2 / P_r$ |
+|---|---|---|---|
+| **1D ($d = 1$)** | $(1 + f)^2$ | $(1 + f)^2$ | $0$ |
+| **2D ($d = 2$)** | $(1 + f)^2$ | $1 + f + \frac{3}{8}f^2$ | $f + \frac{1}{2}f^2$ |
+| **3D ($d = 3$)** | $(1 + f)^2$ | $1 + \frac{2}{3}f + \frac{1}{5}f^2$ | $\frac{4}{3}f + \frac{4}{7}f^2$ |
+
+In addition to these continuum formulas, the laboratory evaluates the **exact discrete-lattice Kaiser expectation** in each radial $k$-bin by averaging $(1 + f\mu_{\mathbf{k}}^2)^2 |\hat{\delta}_r(\mathbf{k})|^2$ over the exact lattice wavevectors $\mathbf{k}$ in that shell{{< src observables::redshift_space_analysis >}}. This cancels sample variance and discrete angular binning effects identically, verifying sub-percent agreement with Kaiser theory at low $k$ on a single realization{{< test redshift_space_sheet_and_gaussian_packets_capture_kaiser_and_crossing >}}.
+
+---
+
+## Fitting $d$-Dimensional Gaussian Packets via the Simplex Velocity-Gradient Tensor {#sec-rsd-gaussian-packets}
+
+While the exact redshifted sheet $\mathbf{s}(\mathbf{q})$ captures coherent Kaiser infall and sharp redshift-space caustics, collapsed virialized structures in the universe exhibit **Fingers of God (FoG)** [@jackson1972; @scoccimarro2004]: radial elongations in redshift space driven by internal velocity dispersion that damp high-$k_\parallel$ power.
+
+Remarkably, because the simplicial phase-space sheet gives us the exact velocity vector $\mathbf{u}_a = a\mathbf{v}_a$ at every vertex $a = 0, \dots, d$ of each simplex $T$, we have direct access to the **complete velocity gradient tensor** $\nabla \mathbf{u}_T$ and **exact velocity divergence** $(\nabla_{\mathbf{x}} \cdot \mathbf{u})_T$ across every tetrahedron or triangle!
+
+### Exact Cofactor Expansion of the Simplex Velocity Divergence
+
+Differentiating the deformed simplex determinant $\det(\mathbf{E}_x + \epsilon \mathbf{E}_u)$ with respect to $\epsilon$ at $\epsilon = 0$ via Jacobi's identity yields the exact volume-weighted Eulerian velocity divergence on simplex $T$ as a sum of $d$ determinants in which row $\alpha$ of $\mathbf{E}_x$ is replaced by row $\alpha$ of $\mathbf{E}_u$:
+
+$$
+J_T\,\big(\nabla_{\mathbf{x}} \cdot \mathbf{u}\big)_T = \frac{d}{d\epsilon}\Big|_{\epsilon=0} \frac{\det(\mathbf{E}_x + \epsilon \mathbf{E}_u)}{\det(\mathbf{E}_q)} = \sum_{\alpha=0}^{d-1} \frac{\det(\mathbf{E}_x \text{ with coordinate }\alpha \leftarrow \mathbf{E}_u)}{\det(\mathbf{E}_q)}.
+$$ {#eq-cofactor-velocity-divergence}
+
+Notice that the single term $\alpha = \text{los\_axis}$ in (@eq-cofactor-velocity-divergence) is identically $J_{s,T} - J_T = J_T (\partial_\parallel u_\parallel)_T$.
+
+### Simplex Spatial Inertia and Velocity-Gradient Covariance
+
+For a uniform $d$-simplex $T$ with real-space vertices $\{\mathbf{x}_0, \dots, \mathbf{x}_d\}$, redshifted centroid $\bar{\mathbf{s}}_T = \bar{\mathbf{x}}_T + \bar{u}_{T,\parallel}\hat{\mathbf{n}}$, and vertex velocities $\{\mathbf{u}_0, \dots, \mathbf{u}_d\}$, the spatial second-moment covariance matrix of the simplex is:
+
+$$
+\boldsymbol{\Sigma}_{xx,T} = \frac{1}{(d+1)(d+2)} \sum_{a=0}^d (\mathbf{x}_a - \bar{\mathbf{x}}_T)(\mathbf{x}_a - \bar{\mathbf{x}}_T)^{\!\top}.
+$$ {#eq-simplex-spatial-cov}
+
+Across the same simplex $T$, the linear variation of the velocity field $\mathbf{u}(\boldsymbol{\lambda}) = \sum_{a=0}^d \lambda_a \mathbf{u}_a$ induces a velocity-gradient covariance matrix:
+
+$$
+\boldsymbol{\Sigma}_{uu,T} = \frac{1}{d+1} \sum_{a=0}^d (\mathbf{u}_a - \bar{\mathbf{u}}_T)(\mathbf{u}_a - \bar{\mathbf{u}}_T)^{\!\top},
+$$ {#eq-simplex-velocity-cov}
+
+whose trace $\operatorname{tr}(\boldsymbol{\Sigma}_{uu,T}) \propto (\Delta q)^2 \|\nabla_{\mathbf{q}} \mathbf{u}_T\|_F^2$ measures the total velocity shear and convergence across the simplex. Combining the line-of-sight vertex velocity spread, the Frobenius norm of the velocity gradient tensor, and the compressive velocity convergence $\max(0, -\nabla_{\mathbf{x}} \cdot \mathbf{u}_T)$ defines the **simplex velocity-dispersion width** $\sigma_{u\parallel,T}$:
+
+$$
+\sigma_{u\parallel,T}^2 = \frac{1}{d+1}\sum_{a=0}^d \big(u_{a,\parallel} - \bar{u}_{T,\parallel}\big)^2 + \frac{1}{d(d+1)}\sum_{a=0}^d \|\mathbf{u}_a - \bar{\mathbf{u}}_T\|^2 + \big(c_\theta\,\Delta q\,\max[0, -(\nabla_{\mathbf{x}}\cdot\mathbf{u})_T]\big)^2.
+$$ {#eq-simplex-fog-width}
+
+We then represent each simplex $T$ in redshift space by a $d$-dimensional Gaussian packet of mass $m_T$ centered at $\bar{\mathbf{s}}_T$:
+
+$$
+\mathcal{G}_T(\mathbf{s}) = \frac{m_T}{(2\pi)^{d/2}\det(\boldsymbol{\Sigma}_{ss,T})^{1/2}} \exp\!\left[-\frac{1}{2}(\mathbf{s} - \bar{\mathbf{s}}_T)^{\!\top} \boldsymbol{\Sigma}_{ss,T}^{-1} (\mathbf{s} - \bar{\mathbf{s}}_T)\right],
+$$ {#eq-simplex-gaussian-packet}
+
+where the transverse variance is set by the simplex geometry $\Sigma_{xx,\perp}$ and the line-of-sight variance is broadened by the velocity gradient across the simplex: $\Sigma_{ss,\parallel} = \Sigma_{xx,\parallel} + \alpha_{\rm grad}^2 \sigma_{u\parallel,T}^2$.
+
+This construction automatically separates the two physical regimes of redshift-space distortions without any halo finder or ad-hoc free parameters:
+
+* **In Voids and Linear Filaments:** The velocity gradient across a single simplex is gentle ($\sigma_{u\parallel,T} \ll \Delta x$), so $\mathcal{G}_T(\mathbf{s})$ tracks the coherent displacement $\bar{\mathbf{s}}_T$ and reproduces the **Kaiser squashing effect**.
+* **In Collapsing Knots and Caustics:** The velocity convergence $-\nabla \cdot \mathbf{u}_T \gg 1$ and velocity shear across the simplex become large, stretching $\mathcal{G}_T(\mathbf{s})$ along the line of sight $\hat{\mathbf{n}}$ into **Fingers-of-God radial plumes** and damping small-scale line-of-sight power $P_\parallel(k)$ and the quadrupole $P_2(k)$.
+* **Sampled Realizations:** Drawing Monte Carlo samples $\mathbf{s}^{(k)} \sim \mathcal{G}_T(\mathbf{s})$ from each simplex's Gaussian packet produces a discrete tracer realization that exhibits both coherent large-scale Kaiser walls and radial Fingers-of-God streaks.
+
+---
+
+## Direct Simplex Redshift-Space PDFs and Signed Volume Distributions {#sec-rsd-pdfs}
+
+Evaluating the 1-point density PDF directly on the redshifted simplices{{< src observables::simplex_density_pdf_and_summary >}} via $\rho_{s,T}/\bar{\rho} = 1/|J_{s,T}|$ (without grid deposition) reveals how redshift-space distortions reshape the cosmic density distribution across all environments:
+
+1. **Void Expansion in Redshift Space (Low-Density Tail):**
+   In underdense voids, matter flows outward ($\partial_\parallel u_\parallel > 0$), so $J_{s,T} = J_T (1 + \partial_\parallel u_\parallel) > J_T > 1$. Consequently, voids appear **larger and even less dense in redshift space** than in real space, shifting the low-density tail of $p_V(\rho_s)$ and $p_M(\rho_s)$ toward smaller $\rho/\bar{\rho}$.
+2. **Caustic Amplification in Redshift Space (High-Density Tail):**
+   Because $J_{s,T}$ crosses zero earlier than $J_T$, the redshifted sheet develops fold caustics ($J_{s,T} \to 0$, $\rho_{s,T} = 1/|J_{s,T}| \gg 1$) while the real-space sheet is still smooth, extending the mass-weighted high-density tail $p_M(\rho_s)$ orders of magnitude further than in real space.
+3. **Signed Simplex Volume Distribution $p_M(J_{s,T})$:**
+   Plotting the Lagrangian mass distribution of the signed volume ratio $J_{s,T}$ against $J_T$ shows the distribution broadening on both sides of $J = 1$ and crossing the shell-crossing threshold $J = 0$ into negative (inverted-orientation) values.
+
+::: {.callout-note title="Compare Kaiser ratios, Quadrupoles, and Simplex PDFs"}
+Launch the RSD spectral and PDF comparison in the laboratory to switch between the redshift-to-real power ratio $P_s(k)/P_r(k)$, the quadrupole-to-monopole anisotropy ratio $P_2(k)/P_0(k)$, the direct simplex density PDFs, and the signed simplex Jacobian distribution $p_M(J)$.
+
+{{< lab "v=3&dim=2&n=64&mesh=128&force=64&ic=gaussian&transfer=bao&cutoff=12&L=500&Rini=8&smoothing=0&epoch=scaleFactor&a=1.15&order=4&steps=64&view=rsd&weight=mass" "Launch the RSD Spectra & Simplex PDF Comparison" >}}
+:::

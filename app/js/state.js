@@ -13,7 +13,7 @@ export const SCHEMA = Object.freeze({
   order: [1, 4], seed: [0, 9999], ic: ['waves', 'gaussian'], transfer: ['smooth', 'bao'], initialCutoff: [1, 32],
   omegaM: [.05, 1], omegaB: [0, .2], h: [.4, 1], ns: [.8, 1.2], sigma8: [.1, 1.5],
   boxSize: [50, 2000], initialSmoothing: [0, 200], smoothing: [0, .15], steps: STEPS,
-  mesh: GRIDS, forceMesh: GRIDS, view: ['sheet', 'density', 'spectra', 'variance', 'pdf', 'gradient', 'published'],
+  mesh: GRIDS, forceMesh: GRIDS, view: ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'published'],
   weight: ['volume', 'mass'], backend: ['cpu', 'gpu', 'auto'], rotate: [-180, 180], tilt: [-80, 80], schemaVersion: [STATE_VERSION, STATE_VERSION],
   pubmodel: ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody'], pubest: ['sheet', 'cic'], pubr: [7, 14, 28, 42], paired: [true, false],
 });
@@ -38,7 +38,7 @@ export const HASH_SCHEMA = Object.freeze([
   ['steps', 'steps', 'num', [32, 512]], ['mesh', 'mesh', 'num', [16, 1024]], ['forceMesh', 'force', 'num', [16, 1024]],
   ['schemaVersion', 'v', 'num', [STATE_VERSION, STATE_VERSION]],
   ['backend', 'backend', 'enum', ['cpu', 'gpu', 'auto']],
-  ['view', 'view', 'enum', ['sheet', 'density', 'spectra', 'variance', 'pdf', 'gradient', 'published']],
+  ['view', 'view', 'enum', ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'published']],
   ['weight', 'weight', 'enum', ['volume', 'mass']], ['rotate', 'rotate', 'num', [-180, 180]], ['tilt', 'tilt', 'num', [-80, 80]],
   ['pubmodel', 'pubmodel', 'enum', ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody']], ['pubest', 'pubest', 'enum', ['sheet', 'cic']],
   ['pubr', 'pubr', 'num', [7, 42]], ['paired', 'paired', 'bool'],

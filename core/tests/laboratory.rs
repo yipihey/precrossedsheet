@@ -1160,3 +1160,73 @@ fn unsmoothed_sheet_pdfs_evaluate_directly_on_simplices_beyond_grid_limits() {
     assert!((p1["capturedMass"].as_f64().unwrap() - 1.0).abs() < 1e-4);
     assert!((p1["capturedVolume"].as_f64().unwrap() - 1.0).abs() < 1e-4);
 }
+
+#[test]
+fn redshift_space_sheet_and_gaussian_packets_capture_kaiser_and_crossing() {
+    // 1. Linear regime: verify the redshifted sheet monopole matches the exact discrete Kaiser expectation.
+    let linear_req = LabRequest {
+        dim: 2,
+        n: 64,
+        mesh: 64,
+        force_mesh: 64,
+        order: 1,
+        epoch: "scaleFactor".into(),
+        scale_factor: 0.05,
+        ic: "gaussian".into(),
+        transfer: "smooth".into(),
+        initial_cutoff: 6,
+        box_size: 300.0,
+        initial_smoothing: 14.0,
+        smoothing: 0.0,
+        steps: 32,
+        seed: 7,
+        ..Default::default()
+    };
+    let d_lin = run(&linear_req).unwrap();
+    let rsd_lin = &d_lin["rsd"];
+    let p0_sheet = rsd_lin["spectra"]["rsdSheetMonopole"].as_array().unwrap();
+    let p0_kaiser = rsd_lin["spectra"]["kaiserMonopole"].as_array().unwrap();
+    let p0_real = rsd_lin["spectra"]["realMonopole"].as_array().unwrap();
+    let ratio_sheet = p0_sheet[0].as_f64().unwrap() / p0_real[0].as_f64().unwrap();
+    let ratio_kaiser = p0_kaiser[0].as_f64().unwrap() / p0_real[0].as_f64().unwrap();
+    assert!(
+        (ratio_sheet / ratio_kaiser - 1.0).abs() < 0.03,
+        "low-k redshift-space sheet monopole should match the exact discrete Kaiser expectation ({ratio_sheet} vs {ratio_kaiser})"
+    );
+
+    // 2. Pre-crossing real-space epoch where velocity gradients drive redshift-space shell crossing.
+    let pre_req = LabRequest {
+        dim: 2,
+        n: 64,
+        mesh: 64,
+        force_mesh: 64,
+        order: 4,
+        omega_m: 1.0,
+        omega_b: 0.0,
+        epoch: "fraction".into(),
+        fraction: 0.72,
+        ic: "waves".into(),
+        smoothing: 0.0,
+        steps: 32,
+        ..Default::default()
+    };
+    let d_pre = run(&pre_req).unwrap();
+    let sum_pre = &d_pre["rsd"]["summary"];
+    let min_j_real = sum_pre["minRealSimplexJacobian"].as_f64().unwrap();
+    let min_j_rsd = sum_pre["minRsdSimplexJacobian"].as_f64().unwrap();
+    assert!(
+        min_j_real > 0.0 && min_j_rsd < min_j_real,
+        "redshift-space minimum simplex Jacobian ({min_j_rsd}) must be smaller than real-space ({min_j_real}) and cross zero earlier"
+    );
+    let gauss_rho: Vec<f64> = d_pre["rsd"]["maps"]["rsdGaussRho"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    let gauss_mean = gauss_rho.iter().sum::<f64>() / gauss_rho.len() as f64;
+    assert!(
+        (gauss_mean - 1.0).abs() < 1e-4,
+        "simplex velocity-gradient Gaussian packet deposit must conserve mass (mean={gauss_mean})"
+    );
+}

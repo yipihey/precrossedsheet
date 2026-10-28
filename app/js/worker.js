@@ -1,7 +1,7 @@
 // A persistent worker owns the Wasm facade and (when requested) its GPU device.
 // Jobs are serialized. A newer request replaces the queued request and asks an
 // asynchronous GPU run to stop between submitted batches.
-import init, * as wasmApi from '../pkg/hcc_core.js?v=20261027g';
+import init, * as wasmApi from '../pkg/hcc_core.js?v=20261027h';
 
 let wasmReady;
 let gpuContext = null;
