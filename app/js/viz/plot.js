@@ -45,9 +45,10 @@ export class LinePlot {
       style: `display:block;width:100%;height:auto;max-width:${W}px;overflow:visible;color:inherit;font:12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif`,
     });
     container.appendChild(this.svg);
-    // interactive view (overrides the caller's axes until reset): wheel = zoom, drag = pan, double-click = reset,
-    // toolbar = lin/log toggles and editable ranges
+    // interactive view (overrides the caller's axes until reset): wheel = zoom, left-drag = pan (grab), middle-drag = box-zoom, double-click = reset,
+    // toolbar = lin/log toggles, pan/box toggle, and editable ranges
     this.view = { xlim: null, ylim: null, xlog: null, ylog: null };
+    this._dragMode = 'pan';
     this._lastDefaults = null;
     this.interactive = opts.interactive !== false;
     if (this.interactive) this._buildTools();
@@ -78,7 +79,7 @@ export class LinePlot {
     const bar = this.tools = doc.createElement('div');
     bar.className = 'qd-plot-tools';
     bar.style.maxWidth = `${this.opts.width}px`;
-    bar.title = 'Wheel over the plot: zoom (over an axis: that axis only). Drag: pan. Double-click: reset.';
+    bar.title = 'Left-drag: pan (grab). Middle-drag (or Shift+left-drag): open a box-zoom window. Wheel: zoom. Double-click: reset.';
     const mk = (tag, cls, parent, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; parent.appendChild(e); return e; };
     const axisTools = (key, label) => {
       const g = mk('span', 'qd-pt-axis', bar);
@@ -94,6 +95,11 @@ export class LinePlot {
     };
     this._tx = axisTools('x', 'x');
     this._ty = axisTools('y', 'y');
+    const mb = this._modeBtn = mk('button', 'qd-pt-btn', bar, 'pan'); mb.type = 'button'; mb.title = 'Left-drag mode: Pan (grab) vs Box zoom window (Middle-drag or Shift+drag opens box zoom)';
+    mb.addEventListener('click', () => {
+      this._dragMode = this._dragMode === 'pan' ? 'box' : 'pan';
+      mb.textContent = this._dragMode === 'pan' ? 'pan' : 'box zoom';
+    });
     const r = mk('button', 'qd-pt-btn qd-pt-reset', bar, 'reset'); r.type = 'button'; r.title = 'Reset zoom, ranges and scales';
     r.addEventListener('click', () => this.resetView());
     const ex = mk('span', 'qd-pt-export', bar);
@@ -195,30 +201,74 @@ export class LinePlot {
       this.draw();
     }, { passive: false });
     let drag = null;
+    svg.addEventListener('mousedown', (ev) => { if (ev.button === 1) ev.preventDefault(); });
+    svg.addEventListener('auxclick', (ev) => { if (ev.button === 1) ev.preventDefault(); });
     svg.addEventListener('pointerdown', (ev) => {
-      if (ev.button !== 0) return;
+      if (ev.button !== 0 && ev.button !== 1) return;
+      if (ev.button === 1) ev.preventDefault();
       const { px, py } = this._pos(ev);
       const reg = this._region(px, py);
-      if (!reg) return;
-      drag = { reg, px, py, moved: false };
+      if (!reg || !this._scales) return;
+      const isBox = ev.button === 1 || ((this._dragMode === 'box') !== !!ev.shiftKey);
+      drag = { reg, mode: isBox ? 'box' : 'pan', px0: px, py0: py, px, py, moved: false, boxEl: null };
       svg.setPointerCapture(ev.pointerId);
     });
     svg.addEventListener('pointermove', (ev) => {
       const { px, py } = this._pos(ev);
       if (drag) {
         const S = this._scales;
-        const dx = px - drag.px, dy = py - drag.py;
-        if (Math.abs(dx) + Math.abs(dy) < 1) return;
+        if (!S) return;
+        if (drag.mode === 'pan') {
+          const dx = px - drag.px, dy = py - drag.py;
+          if (Math.abs(dx) + Math.abs(dy) < 1) return;
+          drag.moved = true;
+          if (drag.reg === 'plot' || drag.reg === 'x') this._panAxis('x', -dx / S.pw);
+          if (drag.reg === 'plot' || drag.reg === 'y') this._panAxis('y', dy / S.ph);
+          drag.px = px; drag.py = py;
+          svg.style.cursor = 'grabbing';
+          this.draw();
+          return;
+        }
+        const dx = px - drag.px0, dy = py - drag.py0;
+        if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
         drag.moved = true;
-        if (drag.reg === 'plot' || drag.reg === 'x') this._panAxis('x', -dx / S.pw);
-        if (drag.reg === 'plot' || drag.reg === 'y') this._panAxis('y', dy / S.ph);
         drag.px = px; drag.py = py;
-        svg.style.cursor = 'grabbing';
-        this.draw();
+        const cx0 = Math.max(S.m.l, Math.min(S.m.l + S.pw, drag.px0));
+        const cy0 = Math.max(S.m.t, Math.min(S.m.t + S.ph, drag.py0));
+        const cx1 = Math.max(S.m.l, Math.min(S.m.l + S.pw, px));
+        const cy1 = Math.max(S.m.t, Math.min(S.m.t + S.ph, py));
+        const bx = drag.reg === 'y' ? S.m.l : Math.min(cx0, cx1);
+        const bw = drag.reg === 'y' ? S.pw : Math.abs(cx1 - cx0);
+        const by = drag.reg === 'x' ? S.m.t : Math.min(cy0, cy1);
+        const bh = drag.reg === 'x' ? S.ph : Math.abs(cy1 - cy0);
+        if (!drag.boxEl) {
+          drag.boxEl = el('rect', {
+            class: 'qd-zoom-box',
+            fill: 'rgba(0, 114, 178, 0.14)',
+            stroke: '#0072B2',
+            'stroke-width': 1.25,
+            'stroke-dasharray': '4 3',
+            'pointer-events': 'none',
+          }, svg);
+        }
+        drag.boxEl.setAttribute('x', fmt(bx));
+        drag.boxEl.setAttribute('y', fmt(by));
+        drag.boxEl.setAttribute('width', fmt(bw));
+        drag.boxEl.setAttribute('height', fmt(bh));
+        svg.style.cursor = 'crosshair';
+        if (this._readout) {
+          const [ax0, ax1] = this._lim('x'), [ay0, ay1] = this._lim('y');
+          const tx = this._t('x'), ty = this._t('y');
+          const xlo = tx.g(ax0 + (bx - S.m.l) / S.pw * (ax1 - ax0));
+          const xhi = tx.g(ax0 + (bx + bw - S.m.l) / S.pw * (ax1 - ax0));
+          const ylo = ty.g(ay0 + (S.m.t + S.ph - (by + bh)) / S.ph * (ay1 - ay0));
+          const yhi = ty.g(ay0 + (S.m.t + S.ph - by) / S.ph * (ay1 - ay0));
+          this._readout.textContent = `zoom: x ∈ [${+xlo.toPrecision(3)}, ${+xhi.toPrecision(3)}], y ∈ [${+ylo.toPrecision(3)}, ${+yhi.toPrecision(3)}]`;
+        }
         return;
       }
       const reg = this._region(px, py);
-      svg.style.cursor = reg === 'plot' ? 'crosshair' : reg ? 'ew-resize' : '';
+      svg.style.cursor = reg === 'plot' ? (this._dragMode === 'pan' ? 'grab' : 'crosshair') : reg ? 'ew-resize' : '';
       if (reg === 'y') svg.style.cursor = 'ns-resize';
       if (this._readout) {
         if (reg === 'plot') {
@@ -229,7 +279,41 @@ export class LinePlot {
         } else this._readout.textContent = '';
       }
     });
-    const end = (ev) => { if (!drag) return; drag = null; svg.style.cursor = ''; try { svg.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ } };
+    const end = (ev) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      if (d.boxEl) d.boxEl.remove();
+      svg.style.cursor = '';
+      try { svg.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      if (ev.type === 'pointerup' && d.mode === 'box' && d.moved && this._scales) {
+        const S = this._scales;
+        const cx0 = Math.max(S.m.l, Math.min(S.m.l + S.pw, d.px0));
+        const cy0 = Math.max(S.m.t, Math.min(S.m.t + S.ph, d.py0));
+        const cx1 = Math.max(S.m.l, Math.min(S.m.l + S.pw, d.px));
+        const cy1 = Math.max(S.m.t, Math.min(S.m.t + S.ph, d.py));
+        let zoomed = false;
+        if ((d.reg === 'plot' || d.reg === 'x') && Math.abs(cx1 - cx0) >= 4) {
+          const [ax0, ax1] = this._lim('x'), tx = this._t('x');
+          const xlo = tx.g(ax0 + (Math.min(cx0, cx1) - S.m.l) / S.pw * (ax1 - ax0));
+          const xhi = tx.g(ax0 + (Math.max(cx0, cx1) - S.m.l) / S.pw * (ax1 - ax0));
+          if (Number.isFinite(xlo) && Number.isFinite(xhi) && xhi > xlo) {
+            this.view.xlim = [xlo, xhi];
+            zoomed = true;
+          }
+        }
+        if ((d.reg === 'plot' || d.reg === 'y') && Math.abs(cy1 - cy0) >= 4) {
+          const [ay0, ay1] = this._lim('y'), ty = this._t('y');
+          const ylo = ty.g(ay0 + (S.m.t + S.ph - Math.max(cy0, cy1)) / S.ph * (ay1 - ay0));
+          const yhi = ty.g(ay0 + (S.m.t + S.ph - Math.min(cy0, cy1)) / S.ph * (ay1 - ay0));
+          if (Number.isFinite(ylo) && Number.isFinite(yhi) && yhi > ylo) {
+            this.view.ylim = [ylo, yhi];
+            zoomed = true;
+          }
+        }
+        if (zoomed) this.draw();
+      }
+    };
     svg.addEventListener('pointerup', end);
     svg.addEventListener('pointercancel', end);
     svg.addEventListener('pointerleave', () => { if (!drag && this._readout) this._readout.textContent = ''; });

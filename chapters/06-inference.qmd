@@ -89,9 +89,9 @@ Open the gradient panel in the laboratory. Inspect the analytic response $\parti
 ## Differentiable Particle-Mesh Dynamics {#sec-differentiable-pm}
 
 For trajectories evolved via the Particle-Mesh solver, our Rust engine implements forward-mode automatic differentiation through the complete cosmological PM integration cycle{{< src nbody::force_cosmology_jvp >}}:
-1. **CIC Assignment Tangent:** Propagates $\dot{\mathbf{x}}$ through trilinear interpolation weights to compute grid density perturbations $\dot{\rho}_C$.
-2. **Spectral Force Solve Tangent:** Evaluates $\dot{\mathbf{F}}_{\mathbf{k}} = \frac{3}{2}\Omega_{m0} i\mathbf{k}\dot{\delta}_{\mathbf{k}}/k^2$.
-3. **Kick–Drift–Kick Tangents:** Updates canonical momentum and position tangents through the exact cosmological clocks $\mathcal{D}(a)$ and $\mathcal{K}(a)$.
+1. **TSC Assignment & Gather Tangents:** Propagates $\dot{\mathbf{x}}$ through the $C^1$-continuous quadratic B-spline (TSC, $M_3$) weights $w_o(d)$ and their exact analytic derivatives $w'_o(d)$ across the $3^d$ nearest mesh nodes to compute grid density perturbations $\dot{\rho}_{\rm TSC}$ and force-gather directional derivatives.
+2. **Deconvolved Spectral Force Solve Tangent:** Evaluates $\dot{\mathbf{F}}_{\mathbf{k}} = -\frac{3}{2}\Omega_{m0}\,\frac{i\mathbf{k}}{k^2}\,W_{\rm TSC}(\mathbf{k})^{-2}\,\dot{\delta}_{\mathbf{k}}$ with the same double-exponent TSC deconvolution and Lagrangian Brillouin-zone filter as the primal force.
+3. **Kick–Drift–Kick Tangents:** Updates canonical momentum and position tangents through the exact $\sqrt{a}$-scheduled cosmological clocks $\mathcal{D}(a)$ and $\mathcal{K}(a)$.
 
 The PM trajectory tangents match independent numerical finite differences{{< test complete_force_and_kdk_jvp_match_finite_difference "PM JVP" >}}{{< test lcdm_force_and_kdk_jvp_match_fixed_cosmology_finite_difference "ΛCDM PM tangent" >}}, and remain robust even when elements cross{{< test lcdm_jvp_remains_valid_when_crossing_is_diagnostic_only "crossed-map tangent" >}}.
 

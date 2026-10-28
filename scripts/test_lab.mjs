@@ -56,6 +56,33 @@ assert.equal(state.gridLimit(3,'mesh'),128);
 assert.equal(state.gridLimit(3,'forceMesh'),128);
 assert.equal(state.gridLimit(2,'n'),1024);
 assert.equal(state.gridLimit(1,'n'),1024);
+assert.equal(state.gridLimit(3,'n',true),128);
+assert.equal(state.gridLimit(3,'mesh',true),256);
+assert.equal(state.gridLimit(3,'forceMesh',true),256);
+assert.equal(state.gridLimit(2,'n',true),2048);
+assert.equal(state.gridLimit(1,'n',true),2048);
+
+const replayModSource = await readFile(new URL('../app/js/replay.js', import.meta.url), 'utf8');
+const replayMod = await import(`data:text/javascript;base64,${Buffer.from(replayModSource).toString('base64')}`);
+const mock3dResult = {
+  dim: 3, n: 64, mesh: 64, forceMesh: 64, a: 0.5, D: 0.4,
+  q: new Float64Array(64**3 * 3),
+  x: new Float64Array(64**3 * 3),
+  v: new Float64Array(64**3 * 3),
+  rho: new Float32Array(64**3).fill(1.0),
+  pdf: {
+    logrho: [-1, 0, 1], dy: 1.0,
+    volume: [0.1, 0.8, 0.1], mass: [0.1, 0.8, 0.1],
+    variance: 0.25, capturedVolume: 1.0, capturedMass: 1.0,
+    summary: { probabilities: [0.5], volumeQuantiles: [1.0], massQuantiles: [1.0], variance: 0.25, S3: 3.1, S4: 18.2 },
+  },
+  spectra: { k: [0.1, 0.2], sheet: [100, 50], pm: [100, 50] },
+};
+const compactManifest = replayMod.buildCompactManifest({ state: { ...defaults, dim: 3, n: 64, mesh: 64, forceMesh: 64 }, request: {}, result: mock3dResult, execution: null, build: null, runMilliseconds: 1200 });
+assert.equal(Array.isArray(compactManifest.result.rho), true, 'TypedArray rho must be converted to a plain 2D slice array for JSON serialization');
+assert.equal(compactManifest.result.rho.length, 64 * 64, '3D 64^3 density field must serialize as a 64x64 central 2D slice');
+assert.equal(compactManifest.result.densitySliceStats.legacy_sheet_p0.totalCells, 64**3, 'Full 3D cell count must be retained in densitySliceStats');
+assert.equal(Boolean(compactManifest.result.publishedReplay?.runs?.length), true, 'Saved manifest must include a publishedReplay block for the Published Replay panel');
 
 const request=state.coreRequest(experiment);
 assert.equal(request.epoch,'scaleFactor');

@@ -1,12 +1,17 @@
 // Versioned, complete experiment state. URLs record defaults as well as edits so
 // a future default change cannot silently alter an old experiment link.
 export const STATE_VERSION = 3;
-export const GRIDS = Object.freeze([16, 24, 32, 48, 64, 96, 128, 256, 512, 1024]);
-export const STEPS = Object.freeze([32, 64, 128, 256, 512]);
+export const GRIDS = Object.freeze([16, 24, 32, 48, 64, 96, 128, 256, 512, 1024, 2048]);
+export const STEPS = Object.freeze([32, 64, 128, 256, 512, 1024]);
 export const LIMITS = Object.freeze({
   1: { n: 1024, mesh: 1024, forceMesh: 1024 },
   2: { n: 1024, mesh: 1024, forceMesh: 1024 },
   3: { n: 64, mesh: 128, forceMesh: 128 },
+});
+export const EXTENDED_LIMITS = Object.freeze({
+  1: { n: 2048, mesh: 2048, forceMesh: 2048 },
+  2: { n: 2048, mesh: 2048, forceMesh: 2048 },
+  3: { n: 128, mesh: 256, forceMesh: 256 },
 });
 export const SCHEMA = Object.freeze({
   dim: [1, 3], n: GRIDS, fraction: [.05, 1.5], epoch: ['fraction', 'scaleFactor'], scaleFactor: [.01, 2],
@@ -28,14 +33,14 @@ const DEFAULTS = Object.freeze({
 // The long state key and compact fragment key are both part of the checked
 // chapter-link schema. Keep this explicit so book links remain auditable.
 export const HASH_SCHEMA = Object.freeze([
-  ['dim', 'dim', 'num', [1, 3]], ['n', 'n', 'num', [16, 1024]], ['fraction', 'f', 'num', [.05, 1.5]],
+  ['dim', 'dim', 'num', [1, 3]], ['n', 'n', 'num', [16, 2048]], ['fraction', 'f', 'num', [.05, 1.5]],
   ['epoch', 'epoch', 'enum', ['fraction', 'scaleFactor']], ['scaleFactor', 'a', 'num', [.01, 2]],
   ['order', 'order', 'num', [1, 4]], ['seed', 'seed', 'num', [0, 9999]], ['ic', 'ic', 'enum', ['waves', 'gaussian']],
   ['transfer', 'transfer', 'enum', ['smooth', 'bao']],
   ['initialCutoff', 'cutoff', 'num', [1, 32]], ['omegaM', 'Om', 'num', [.05, 1]], ['omegaB', 'Ob', 'num', [0, .2]],
   ['h', 'h', 'num', [.4, 1]], ['ns', 'ns', 'num', [.8, 1.2]], ['sigma8', 's8', 'num', [.1, 1.5]],
   ['boxSize', 'L', 'num', [50, 2000]], ['initialSmoothing', 'Rini', 'num', [0, 200]], ['smoothing', 'smoothing', 'num', [0, .15]],
-  ['steps', 'steps', 'num', [32, 512]], ['mesh', 'mesh', 'num', [16, 1024]], ['forceMesh', 'force', 'num', [16, 1024]],
+  ['steps', 'steps', 'num', [32, 1024]], ['mesh', 'mesh', 'num', [16, 2048]], ['forceMesh', 'force', 'num', [16, 2048]],
   ['schemaVersion', 'v', 'num', [STATE_VERSION, STATE_VERSION]],
   ['backend', 'backend', 'enum', ['cpu', 'gpu', 'auto']],
   ['view', 'view', 'enum', ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'published']],
@@ -110,4 +115,7 @@ export function coreRequest(state) {
 // Backend selection is execution policy and never enters the physical core request.
 export function executionPolicy(state) { return { requested: normalizeState(state).backend }; }
 
-export function gridLimit(dim, key) { return LIMITS[Number(dim)]?.[key] ?? 16; }
+export function gridLimit(dim, key, extended = false) {
+  const table = extended ? EXTENDED_LIMITS : LIMITS;
+  return table[Number(dim)]?.[key] ?? 16;
+}

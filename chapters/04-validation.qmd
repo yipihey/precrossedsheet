@@ -63,7 +63,41 @@ $$
 \mathcal{K}(a_0, a_1) = \int_{a_0}^{a_1} \frac{da}{a^2 E(a)}.
 $$ {#eq-kdk-integrals}
 
-In Einstein–de Sitter, these integrate to the exact closed forms $\mathcal{D} = 2(a_0^{-1/2} - a_1^{-1/2})$ and $\mathcal{K} = 2(\sqrt{a_1} - \sqrt{a_0})$. The numerical clocks are verified against adaptive Romberg quadrature and analytic EdS limits{{< test lcdm_clocks_match_independent_quadrature_and_eds_closed_forms "cosmological clocks" >}}, while a linear plane mode verifies growing-mode tracking{{< test lcdm_plane_mode_tracks_linear_growth "ΛCDM growing mode" >}}.
+In Einstein–de Sitter, these integrate to the exact closed forms $\mathcal{D} = 2(a_0^{-1/2} - a_1^{-1/2})$ and $\mathcal{K} = 2(\sqrt{a_1} - \sqrt{a_0})$. Because the canonical kick clock scales as $\Delta\mathcal{K} \propto \Delta(\sqrt{a})$ while the early-time drift integrand scales as $(a^3 E(a))^{-1} \propto a^{-3/2}$, the solver partitions the interval $[a_{\rm start}, a_{\rm end}]$ into $N_{\rm steps}$ steps **uniform in $u = \sqrt{a}$**:
+
+$$
+u_s = \sqrt{a_{\rm start}} + \frac{s}{N_{\rm steps}}\left(\sqrt{a_{\rm end}} - \sqrt{a_{\rm start}}\right), \qquad a_s = u_s^2, \qquad a_{s+1/2} = \left(\frac{u_s + u_{s+1}}{2}\right)^2.
+$$ {#eq-sqrt-a-schedule}
+
+This $\sqrt{a}$ schedule equalizes the momentum kick weight across steps and resolves early-time drift four times more finely than uniform-$a$ stepping. The numerical clocks are verified against adaptive Romberg quadrature and analytic EdS limits{{< test lcdm_clocks_match_independent_quadrature_and_eds_closed_forms "cosmological clocks" >}}, while a linear plane mode verifies growing-mode tracking{{< test lcdm_plane_mode_tracks_linear_growth "ΛCDM growing mode" >}}.
+
+### High-Fidelity Force Calculation: Deconvolved TSC and Brillouin Filtering {#sec-pm-tsc-deconv}
+
+Matching the pre-shell-crossing accuracy of native `DiscoDJ.jl` requires three numerical choices in the PM Poisson force cycle{{< src nbody::force_cosmology_jvp >}}:
+
+1. **$C^1$-Continuous Triangular-Shaped Cloud (TSC, $M_3$) Interpolation:**
+   Rather than trilinear Cloud-In-Cell (CIC, $M_2$), which is only $C^0$ and suffers from step-function derivative jumps at cell walls and a position-dependent second moment $f(1-f)\Delta x_{\rm PM}^2$ (generating spurious $2\mathbf{k}$ harmonic creases in the sheet Jacobian), the PM force cycle uses the piecewise-quadratic **TSC ($M_3$) B-spline** across the $3^d$ nearest mesh nodes (`worder = 3` in `DiscoDJ.jl`). For fractional offset $d \in [-1/2, 1/2)$ from the nearest cell center, the 1D weights and exact analytic derivatives are:
+   $$
+   w_{-1}(d) = \tfrac{1}{2}\left(\tfrac{1}{2} - d\right)^2, \quad
+   w_0(d) = \tfrac{3}{4} - d^2, \quad
+   w_{+1}(d) = \tfrac{1}{2}\left(\tfrac{1}{2} + d\right)^2,
+   $$
+   $$
+   w'_{-1}(d) = d - \tfrac{1}{2}, \quad
+   w'_0(d) = -2d, \quad
+   w'_{+1}(d) = d + \tfrac{1}{2}.
+   $$ {#eq-pm-tsc-weights}
+   Because $\sum_{o\in\{-1,0,1\}} (o - d)^2 w_o(d) = \tfrac{1}{4}$ is independent of particle position $d$, TSC eliminates grid-phase dispersion errors at leading order.
+
+2. **Double-Exponent Window Deconvolution (`deconvolve = true`):**
+   Both the particle-to-mesh mass deposit and the mesh-to-particle force gather smooth the field by the TSC spectral window $W_{\rm TSC}(\mathbf{k}) = \prod_{j=1}^d \operatorname{sinc}^3(k_j \Delta x_{\rm PM} / 2)$. If left uncorrected, every kick attenuates mode $\mathbf{k}$ by $W_{\rm TSC}(\mathbf{k})^2 < 1$, reducing the effective gravitational coupling $\frac{3}{2}\Omega_{m0} W_{\rm TSC}(\mathbf{k})^2$ and altering the linear growth exponent $D(a)$ at finite $k$. Over $\ln(a_{\rm end}/a_{\rm start}) \approx 3.5$ e-foldings, even a few-percent per-step force attenuation compounds into a $10\text{--}40\%$ amplitude deficit. We therefore apply exact double-exponent TSC deconvolution in the spectral Poisson kernel{{< src nbody::force_jvp >}}:
+   $$
+   \widehat{F}_a(\mathbf{k}) = -\frac{3}{2}\Omega_{m0}\,\frac{i k_a}{k^2}\,W_{\rm TSC}(\mathbf{k})^{-2}\,\widehat{\delta}_{\rm TSC}(\mathbf{k}), \qquad
+   W_{\rm TSC}(\mathbf{k})^{-2} = \prod_{j=1}^d \operatorname{sinc}^{-6}\!\left(\frac{\pi m_j}{N_{\rm PM}}\right).
+   $$ {#eq-pm-tsc-deconv}
+
+3. **Lagrangian Brillouin-Zone Alias Filtering ($N_{\rm PM} > N_q$):**
+   When the Eulerian force mesh is finer than the Lagrangian vertex lattice ($N_{\rm PM} > N_q$) without $2^d\times$ particle resampling, the discrete $N_q^d$ lattice produces Brillouin alias images at $\mathbf{m}' = \mathbf{m} \pm N_q\mathbf{r}$ inside the $N_{\rm PM}$ Nyquist cube ($|m'_j| \ge N_q / 2$). Because $m'_a = m_a - N_q < 0$ has opposite sign to $m_a > 0$, the Poisson kernel $-i m'_a / |\mathbf{m}'|^2$ flips sign on these alias modes and produces an anti-gravitational lattice self-force. Filtering out modes outside the Lagrangian first Brillouin zone ($|m_j| \ge N_q / 2$ when $N_{\rm PM} > N_q$) completely eliminates particle-lattice aliasing without the $2^d\times$ memory and compute cost of particle resampling, allowing $N_{\rm PM} = 2 N_q$ to reach $\sim 0.1\%$ trajectory agreement with 4LPT.
 
 ### Isolating Trajectory Error from Estimator Error: The PM Sheet
 

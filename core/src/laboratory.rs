@@ -54,6 +54,10 @@ pub struct LabRequest {
     /// "3lpt:p1", "pm:cic") requested by the interactive comparison matrix.
     #[serde(default)]
     pub estimators: Vec<String>,
+    /// Optional extended-envelope flag unlocking larger 2D/3D browser runs
+    /// (up to 2048 in 1D/2D and n<=128, mesh/forceMesh<=256 in 3D, steps<=1024).
+    #[serde(default)]
+    pub extended: bool,
 }
 impl Default for LabRequest {
     fn default() -> Self {
@@ -80,10 +84,19 @@ impl Default for LabRequest {
             scale_factor: 0.5,
             transfer: "smooth".into(),
             estimators: Vec::new(),
+            extended: false,
         }
     }
 }
 impl LabRequest {
+    /// Whether any PM trajectory/estimator is requested. Empty `estimators`
+    /// (the default in standalone/test requests) keeps PM enabled; when the
+    /// interactive matrix explicitly supplies `estimators`, PM is only needed
+    /// if at least one `pm:*` entry is present.
+    pub fn needs_pm(&self) -> bool {
+        self.estimators.is_empty() || self.estimators.iter().any(|s| s.starts_with("pm:"))
+    }
+
     /// Conservative allocation estimate including LPT tensors, tangents, FFT
     /// workspaces, result arrays and JSON serialization. Not a measured peak.
     pub fn estimated_peak_bytes(&self) -> usize {
@@ -99,20 +112,31 @@ impl LabRequest {
     }
     pub(crate) fn validate(&self) -> Result<(), String> {
         const GRIDS: &[usize] = &[16, 24, 32, 48, 64, 96, 128, 256, 512, 1024];
+        const EXT_GRIDS: &[usize] = &[16, 24, 32, 48, 64, 96, 128, 256, 512, 1024, 2048];
+        let grids = if self.extended { EXT_GRIDS } else { GRIDS };
         if !(1..=3).contains(&self.dim)
-            || !GRIDS.contains(&self.n)
-            || !GRIDS.contains(&self.mesh)
-            || !GRIDS.contains(&self.force_mesh)
+            || !grids.contains(&self.n)
+            || !grids.contains(&self.mesh)
+            || !grids.contains(&self.force_mesh)
             || !(1..=4).contains(&self.order)
         {
             return Err("Invalid dimension/order or grid; supported grids are 16,24,32,48,64,96,128,256,512,1024".into());
         }
-        let cap = [0, 1024, 1024, 64][self.dim];
-        let mesh_cap = [0, 1024, 1024, 128][self.dim];
+        let cap = if self.extended {
+            [0, 2048, 2048, 128][self.dim]
+        } else {
+            [0, 1024, 1024, 64][self.dim]
+        };
+        let mesh_cap = if self.extended {
+            [0, 2048, 2048, 256][self.dim]
+        } else {
+            [0, 1024, 1024, 128][self.dim]
+        };
+        let over_budget = !self.extended && self.estimated_peak_bytes() > 1024 * 1024 * 1024;
         if self.n > cap
             || self.mesh > mesh_cap
             || self.force_mesh > mesh_cap
-            || self.estimated_peak_bytes() > 1024 * 1024 * 1024
+            || over_budget
         {
             return Err(format!("Requested {}D allocation exceeds the browser laboratory envelope (lattice <={}, meshes <={}, conservative estimate {:.0} MiB, budget 1024 MiB). Reduce a grid or use the Rust building blocks for a larger native calculation; requested grids were not changed.",self.dim,cap,mesh_cap,self.estimated_peak_bytes() as f64/1048576.));
         }
@@ -125,9 +149,14 @@ impl LabRequest {
         {
             return Err("Epoch must be fraction or scaleFactor, with a in [0.01,2]".into());
         }
+        let valid_steps = if self.extended {
+            [32, 64, 128, 256, 512, 1024].contains(&self.steps)
+        } else {
+            [32, 64, 128, 256, 512].contains(&self.steps)
+        };
         if !self.smoothing.is_finite()
             || !(0.0..=0.15).contains(&self.smoothing)
-            || ![32, 64, 128, 256, 512].contains(&self.steps)
+            || !valid_steps
         {
             return Err("Invalid observation smoothing or timesteps".into());
         }
@@ -423,7 +452,45 @@ impl Default for LabSession {
     }
 }
 
-const SESSION_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+const SESSION_CACHE_LIMIT_BYTES: usize = 1536 * 1024 * 1024;
+
+pub struct PreparedEstimatorUpdate {
+    json: String,
+    custom_rhos: Vec<(String, Vec<f32>)>,
+}
+
+impl PreparedEstimatorUpdate {
+    pub fn json(&self) -> &str {
+        &self.json
+    }
+    pub fn custom_rho_f32(&self, key: &str) -> Vec<f32> {
+        self.custom_rhos
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    }
+}
+
+fn skipped_pm_run(pending: &PendingLabRun) -> PmRun {
+    let a = pending.a;
+    let scale_p = a.powi(3) * pending.c.cosmo.e(a);
+    PmRun {
+        state: PmState {
+            x: pending.x.clone(),
+            p: pending.v.iter().map(|&v| v * scale_p).collect(),
+            a,
+        },
+        tangent: Some(PmTangent {
+            dx: pending.dpos.clone(),
+            dp: vec![0.0; pending.dpos.len()],
+        }),
+        min_jacobian: pending.mins,
+        completed_steps: 0,
+        crossed: false,
+        first_crossing: None,
+    }
+}
 
 struct RawObservations {
     rho: Vec<f32>,
@@ -552,8 +619,11 @@ fn compute_meshfree_shell_spectra(
             }
         }
     };
-    let eff_base_n = if g.n > base_sub_n && g.n % base_sub_n == 0 {
-        base_sub_n
+    let eff_base_n = if g.n > base_sub_n {
+        let s = (1..=g.n)
+            .find(|&s| g.n % s == 0 && g.n / s <= base_sub_n)
+            .unwrap_or(1);
+        g.n / s
     } else {
         g.n
     };
@@ -575,7 +645,11 @@ fn compute_meshfree_shell_spectra(
             ((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) as f64).sqrt();
         let f_lpt =
             observables::sheet_modes_along_ray(g, &pending.x, dir, ray_modes, sub_n);
-        let f_pm = observables::sheet_modes_along_ray(g, pm_x, dir, ray_modes, sub_n);
+        let f_pm = if r.needs_pm() {
+            observables::sheet_modes_along_ray(g, pm_x, dir, ray_modes, sub_n)
+        } else {
+            f_lpt.clone()
+        };
         for (idx_m, &m) in ray_modes.iter().enumerate() {
             let k = kf * (m as f64) * dir_norm;
             if let Some(b) = bin_of(k) {
@@ -703,8 +777,11 @@ fn compute_meshfree_shell_single(pending: &PendingLabRun, pos: &[f64]) -> Vec<f6
             }
         }
     };
-    let eff_base_n = if g.n > base_sub_n && g.n % base_sub_n == 0 {
-        base_sub_n
+    let eff_base_n = if g.n > base_sub_n {
+        let s = (1..=g.n)
+            .find(|&s| g.n % s == 0 && g.n / s <= base_sub_n)
+            .unwrap_or(1);
+        g.n / s
     } else {
         g.n
     };
@@ -844,24 +921,37 @@ fn particle_deposits(r: &LabRequest, g: &Grid, x: &[f64]) -> (Vec<f32>, Vec<f32>
 fn raw_observations(pending: &PendingLabRun, pm: &PmRun) -> RawObservations {
     let r = &pending.request;
     let g = &pending.c.grid;
+    let pm_active = pm.completed_steps > 0 && r.needs_pm();
     let (rho, rho_p1) = pending.lpt_density_p0_and_p1();
-    let pmrho = density(g, &pm.state.x, r.mesh);
+    let pmrho = if pm_active {
+        density(g, &pm.state.x, r.mesh)
+    } else {
+        rho.clone()
+    };
     let eg = Grid::new(r.dim, r.mesh, 1.0);
     let (cic, tsc) = particle_deposits(r, g, &pending.x);
     let ps = power(&eg, &rho);
     let ps_p1 = power(&eg, &rho_p1);
     let psc = power(&eg, &cic);
     let pst = power(&eg, &tsc);
-    let psp = power(&eg, &pmrho);
+    let psp = if pm_active {
+        power(&eg, &pmrho)
+    } else {
+        ps.clone()
+    };
     let direct_modes = spectrum_axis_modes(r, &ps.k);
-    let direct_powers = observables::sheet_modes_first_axis(g, &pending.x, &direct_modes)
+    let direct_powers: Vec<f64> = observables::sheet_modes_first_axis(g, &pending.x, &direct_modes)
         .into_iter()
         .map(|f| f.norm_sqr())
         .collect();
-    let direct_pm_powers = observables::sheet_modes_first_axis(g, &pm.state.x, &direct_modes)
-        .into_iter()
-        .map(|f| f.norm_sqr())
-        .collect();
+    let direct_pm_powers = if pm_active {
+        observables::sheet_modes_first_axis(g, &pm.state.x, &direct_modes)
+            .into_iter()
+            .map(|f| f.norm_sqr())
+            .collect()
+    } else {
+        direct_powers.clone()
+    };
     let (
         direct_shell_k,
         direct_shell_lpt,
@@ -984,7 +1074,7 @@ pub fn exact_sheet_density(
     if !(1..=3).contains(&dim) {
         return Err("Density reference dimension must be 1, 2, or 3".into());
     }
-    let cap = [0, 1024, 1024, 128][dim];
+    let cap = [0, 2048, 2048, 256][dim];
     if n < 2 || n > cap || mesh == 0 || mesh > cap {
         return Err("Density reference grid exceeds the supported dimension limits".into());
     }
@@ -1040,9 +1130,10 @@ fn observation_cache_key(
     pending: &PendingLabRun,
     arithmetic: &str,
     deposit_source: &str,
+    pm_computed: bool,
 ) -> String {
     json!({"trajectory":pm_cache_key(pending, arithmetic),"order":pending.request.order,
-        "mesh":pending.request.mesh,"depositSource":deposit_source})
+        "mesh":pending.request.mesh,"depositSource":deposit_source,"pmComputed":pm_computed})
     .to_string()
 }
 
@@ -1352,12 +1443,19 @@ impl LabSession {
                     .then(|| (Arc::clone(pm), *bytes))
             });
         if let Some((pm, bytes)) = cached {
+            let pm_computed = pm.completed_steps > 0 && r.needs_pm();
             if deposit_source != "cpu-exact"
                 && !self
                     .observations
                     .as_ref()
                     .is_some_and(|(cached_key, _, _)| {
-                        cached_key == &observation_cache_key(&pending, arithmetic, deposit_source)
+                        cached_key
+                            == &observation_cache_key(
+                                &pending,
+                                arithmetic,
+                                deposit_source,
+                                pm_computed,
+                            )
                     })
             {
                 self.last_status = json!({"initial":{"status":"hit"},"pending":{"status":"hit"},"pm":{"status":"hit","arithmetic":arithmetic,"bytes":bytes},"observations":{"status":"miss","reason":"requested external deposit is not cached","depositSource":deposit_source},"bytes":self.retained_bytes().min(SESSION_CACHE_LIMIT_BYTES),"limitBytes":SESSION_CACHE_LIMIT_BYTES});
@@ -1370,11 +1468,65 @@ impl LabSession {
                 .assemble_cached(&mut hit, Arc::as_ref(&pm), arithmetic, deposit_source, None)
                 .map(Some);
         }
+        if !r.needs_pm() && deposit_source == "cpu-exact" {
+            let pm = skipped_pm_run(&pending);
+            let mut hit = pending;
+            hit.cache_status["pm"] = json!({"status":"skipped","reason":"no PM trajectory selected","arithmetic":arithmetic,"bytes":0});
+            self.last_status = hit.cache_status.clone();
+            let mut prepared = self.assemble_cached(&mut hit, &pm, arithmetic, deposit_source, None)?;
+            self.refresh_status(&mut prepared);
+            return Ok(Some(prepared));
+        }
         let mut miss = pending;
         miss.cache_status["pm"] =
             json!({"status":"miss","reason":"trajectory key changed","arithmetic":arithmetic});
         self.last_status = miss.cache_status.clone();
         Ok(None)
+    }
+
+    /// Incrementally evaluate only the requested `r.estimators` (`1lpt..4lpt`, `pm`
+    /// × `p0`, `p1`, `ngp`, `cic`, `tsc`) using the already-retained `initial`
+    /// (which stores all 1–4LPT tensors) and `pm` (when `r.needs_pm()` is true),
+    /// without re-running LPT FFTs, PM evolution, RSD analysis, or direct/FD modes.
+    pub fn compute_estimators_cached(
+        &mut self,
+        r: &LabRequest,
+        arithmetic: &str,
+        initial_source: &str,
+    ) -> Result<Option<PreparedEstimatorUpdate>, String> {
+        if !["f64", "f32"].contains(&arithmetic) {
+            return Err("PM arithmetic must be f64 or f32".into());
+        }
+        r.validate()?;
+        validate_initial_source(initial_source)?;
+        if !self.initial.as_ref().is_some_and(|(key, source, _, _)| {
+            key == &initial_cache_key(r, initial_source) && source == initial_source
+        }) {
+            return Ok(None);
+        }
+        let pending = self.prepare_pending_source(r, initial_source)?;
+        let key = pm_cache_key(&pending, arithmetic);
+        let cached_pm = self
+            .pm
+            .as_ref()
+            .and_then(|(cached_key, cached_arithmetic, pm, _)| {
+                (cached_key == &key && cached_arithmetic == arithmetic).then(|| Arc::clone(pm))
+            });
+        if r.needs_pm() && cached_pm.is_none() {
+            return Ok(None);
+        }
+        let pm = cached_pm.unwrap_or_else(|| Arc::new(skipped_pm_run(&pending)));
+        let obs_key = observation_cache_key(&pending, arithmetic, "cpu-exact", pm.completed_steps > 0 && r.needs_pm());
+        let raw_opt = self
+            .observations
+            .as_ref()
+            .and_then(|(k, raw, _)| (k == &obs_key).then(|| Arc::clone(raw)));
+        let (custom_series, custom_rhos) =
+            compute_custom_series_standalone(&pending, Arc::as_ref(&pm), raw_opt.as_deref());
+        Ok(Some(PreparedEstimatorUpdate {
+            json: json!({ "customSeries": custom_series }).to_string(),
+            custom_rhos,
+        }))
     }
 
     /// Return the absolute PM positions for the pending trajectory when its
@@ -1462,19 +1614,22 @@ impl LabSession {
 
     pub fn finish_cpu(&mut self, pending: &mut PendingLabRun) -> Result<PreparedLabRun, String> {
         let key = pm_cache_key(pending, "f64");
-        let (pm, hit) = match self.pm.as_ref() {
+        let (pm, hit, skipped) = match self.pm.as_ref() {
             Some((cached_key, arithmetic, pm, _)) if cached_key == &key && arithmetic == "f64" => {
-                (Arc::clone(pm), true)
+                (Arc::clone(pm), true, false)
             }
-            _ => (pending.pm_reference_arc()?, false),
+            _ if !pending.request.needs_pm() => (Arc::new(skipped_pm_run(pending)), false, true),
+            _ => (pending.pm_reference_arc()?, false, false),
         };
-        let bytes = pm_cache_bytes(&pending.request);
+        let bytes = if skipped { 0 } else { pm_cache_bytes(&pending.request) };
         pending.cache_status["pm"] = if hit {
             json!({"status":"hit","arithmetic":"f64","bytes":bytes})
+        } else if skipped {
+            json!({"status":"skipped","reason":"no PM trajectory selected","arithmetic":"f64","bytes":0})
         } else {
             json!({"status":"miss","reason":"computed","arithmetic":"f64","bytes":bytes})
         };
-        if !hit {
+        if !hit && !skipped {
             // A stale trajectory must not consume budget while the replacement
             // raw observations and PM state are considered.
             self.pm = None;
@@ -1482,12 +1637,12 @@ impl LabSession {
         self.last_status = pending.cache_status.clone();
         let mut prepared =
             self.assemble_cached(pending, Arc::as_ref(&pm), "f64", "cpu-exact", None)?;
-        let retained = bytes.saturating_add(self.retained_bytes_without_pm())
-            <= SESSION_CACHE_LIMIT_BYTES
+        let retained = !skipped
+            && bytes.saturating_add(self.retained_bytes_without_pm()) <= SESSION_CACHE_LIMIT_BYTES
             && !hit;
         if retained {
             self.pm = Some((key, "f64".into(), Arc::clone(&pm), bytes));
-        } else if !hit {
+        } else if !hit && !skipped {
             self.last_status["pm"] = json!({"status":"skipped","reason":"session memory budget","arithmetic":"f64","bytes":bytes});
         }
         if self.last_status["pm"]["status"] == "skipped" {
@@ -1544,6 +1699,7 @@ impl LabSession {
             Some((cached_key, arithmetic, pm, _)) if cached_key == &key && arithmetic == "f64" => {
                 (Arc::clone(pm), true)
             }
+            _ if !pending.request.needs_pm() => (Arc::new(skipped_pm_run(pending)), false),
             _ => (pending.pm_reference_arc()?, false),
         };
         self.finish_with_observed_pm(pending, pm, hit, "f64", rho, pmrho, deposit_source)
@@ -1581,14 +1737,17 @@ impl LabSession {
         // Validate before any observation or PM entry is inserted.
         validate_observed_density(&pending.request, "rho", rho)?;
         validate_observed_density(&pending.request, "pmrho", pmrho)?;
+        let skipped = pm.completed_steps == 0;
         let key = pm_cache_key(pending, arithmetic);
-        let bytes = pm_cache_bytes(&pending.request);
+        let bytes = if skipped { 0 } else { pm_cache_bytes(&pending.request) };
         pending.cache_status["pm"] = if hit {
             json!({"status":"hit","arithmetic":arithmetic,"bytes":bytes})
+        } else if skipped {
+            json!({"status":"skipped","reason":"no PM trajectory selected","arithmetic":arithmetic,"bytes":0})
         } else {
             json!({"status":"miss","reason":"computed","arithmetic":arithmetic,"bytes":bytes})
         };
-        if !hit {
+        if !hit && !skipped {
             self.pm = None;
         }
         self.last_status = pending.cache_status.clone();
@@ -1599,12 +1758,12 @@ impl LabSession {
             deposit_source,
             Some((rho, pmrho)),
         )?;
-        let retained = bytes.saturating_add(self.retained_bytes_without_pm())
-            <= SESSION_CACHE_LIMIT_BYTES
+        let retained = !skipped
+            && bytes.saturating_add(self.retained_bytes_without_pm()) <= SESSION_CACHE_LIMIT_BYTES
             && !hit;
         if retained {
             self.pm = Some((key, arithmetic.into(), Arc::clone(&pm), bytes));
-        } else if !hit {
+        } else if !hit && !skipped {
             self.last_status["pm"] = json!({"status":"skipped","reason":"session memory budget","arithmetic":arithmetic,"bytes":bytes});
         }
         if self.last_status["pm"]["status"] == "skipped" {
@@ -1622,7 +1781,8 @@ impl LabSession {
         deposit_source: &str,
         external_fields: Option<(&[f32], &[f32])>,
     ) -> Result<PreparedLabRun, String> {
-        let key = observation_cache_key(pending, arithmetic, deposit_source);
+        let pm_computed = pm.completed_steps > 0 && pending.request.needs_pm();
+        let key = observation_cache_key(pending, arithmetic, deposit_source, pm_computed);
         let (raw, hit) = match self.observations.as_ref() {
             Some((cached_key, raw, _)) if external_fields.is_none() && cached_key == &key => {
                 (Arc::clone(raw), true)
@@ -1882,10 +2042,15 @@ fn prepare_pending_with_cosmo(
         )
     };
     let mut pm_clocks = Vec::with_capacity(r.steps * 5);
+    let u_start = a_start.sqrt();
+    let u_end = a.sqrt();
     for s in 0..r.steps {
-        let a0 = a_start + (a - a_start) * s as f64 / r.steps as f64;
-        let a1 = a_start + (a - a_start) * (s + 1) as f64 / r.steps as f64;
-        let amid = 0.5 * (a0 + a1);
+        let u0 = u_start + (u_end - u_start) * s as f64 / r.steps as f64;
+        let u1 = u_start + (u_end - u_start) * (s + 1) as f64 / r.steps as f64;
+        let umid = 0.5 * (u0 + u1);
+        let a0 = if s == 0 { a_start } else { u0 * u0 };
+        let a1 = if s + 1 == r.steps { a } else { u1 * u1 };
+        let amid = umid * umid;
         let kick0 = cosmology_clocks(Cosmology { omega_m: r.omega_m }, a0, amid).0;
         let drift = cosmology_clocks(Cosmology { omega_m: r.omega_m }, a0, a1).1;
         let kick1 = cosmology_clocks(Cosmology { omega_m: r.omega_m }, amid, a1).0;
@@ -2132,50 +2297,23 @@ impl PendingLabRun {
     }
     fn evolve_pm(&self, initial: PmState, tangent: PmTangent) -> Result<PmRun, String> {
         let sheet = Grid::new(self.request.dim, self.request.n, 1.0);
-        if sheet.size <= 16_384 {
-            let force_grid = Grid::new(self.request.dim, self.request.force_mesh, 1.0);
-            return evolve_cosmology(
-                &force_grid,
-                &sheet,
-                initial,
-                Some(tangent),
-                self.a,
-                self.request.steps,
-                Cosmology {
-                    omega_m: self.request.omega_m,
-                },
-                true,
-            );
-        }
-        let eff_force_mesh = if sheet.size > 65_536 {
-            self.request
-                .force_mesh
-                .min(if self.request.dim == 2 { 256 } else { 32 })
-        } else {
-            self.request.force_mesh
-        };
-        let eff_steps = if sheet.size > 262_144 {
-            self.request.steps.min(16)
-        } else if sheet.size > 65_536 {
-            self.request.steps.min(24)
-        } else {
-            self.request.steps
-        };
-        let force_grid = Grid::new(self.request.dim, eff_force_mesh, 1.0);
-        let mut run = evolve_cosmology(
+        let force_grid = Grid::new(self.request.dim, self.request.force_mesh, 1.0);
+        evolve_cosmology(
             &force_grid,
             &sheet,
             initial,
-            None,
+            if sheet.size > 65_536 {
+                None
+            } else {
+                Some(tangent)
+            },
             self.a,
-            eff_steps,
+            self.request.steps,
             Cosmology {
                 omega_m: self.request.omega_m,
             },
             true,
-        )?;
-        run.tangent = Some(tangent);
-        Ok(run)
+        )
     }
     pub fn pm_input(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
         (
@@ -2204,6 +2342,10 @@ impl PendingLabRun {
         out
     }
     pub fn finish_cpu(&self) -> Result<PreparedLabRun, String> {
+        if !self.request.needs_pm() {
+            let pm = skipped_pm_run(self);
+            return assemble_prepared(self, &pm, "f64", None);
+        }
         let pm = self.pm_reference_run()?;
         assemble_prepared(self, pm, "f64", None)
     }
@@ -2384,6 +2526,262 @@ fn gpu_pm_result(
     })
 }
 
+fn compute_custom_series_standalone(
+    pending: &PendingLabRun,
+    pm: &PmRun,
+    raw_opt: Option<&RawObservations>,
+) -> (serde_json::Map<String, Value>, Vec<(String, Vec<f32>)>) {
+    let r = &pending.request;
+    let c = &pending.c;
+    let d = pending.d;
+    let x = &pending.x;
+    let g = &c.grid;
+    let pmx = &pm.state.x;
+    let eg = Grid::new(r.dim, r.mesh, 1.0);
+    let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
+    let dy = 3.6 / 80.0;
+    let omit_large_mesh_json = eg.size > 262_144;
+    let empty_f32: &[f32] = &[];
+    let physical_volume = r.box_size.powi(r.dim as i32);
+    let physical_p = |v: &[f64]| v.iter().map(|p| p * physical_volume).collect::<Vec<_>>();
+    let cell_scale = r.box_size / r.mesh as f64;
+    let particle_scale = r.box_size / r.n as f64;
+    let r_min = (0.25 * cell_scale).max(0.05);
+    let r_max = (0.35 * r.box_size).max(r_min * 2.0);
+    let n_radii = 36usize;
+    let mut radii: Vec<f64> = (0..n_radii)
+        .map(|i| r_min * (r_max / r_min).powf(i as f64 / (n_radii - 1) as f64))
+        .collect();
+    for special in [8.0, r.initial_smoothing, cell_scale, particle_scale] {
+        if special >= r_min && special <= r_max {
+            radii.push(special);
+        }
+    }
+    radii.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    radii.dedup_by(|a, b| (*a - *b).abs() <= 1e-4 * b.abs().max(1e-12));
+    let spectrum_variance =
+        |sp: &spectra::Spectrum, radius_mpc: f64, gaussian_window: bool| -> f64 {
+            let r_unit = radius_mpc / r.box_size;
+            sp.k.iter()
+                .zip(&sp.p)
+                .zip(&sp.nmodes)
+                .map(|((&k, &p), &nm)| {
+                    let w = cosmological::filter_window(r.dim, k * r_unit, gaussian_window);
+                    nm * p * w * w
+                })
+                .sum::<f64>()
+        };
+    let mut custom_series = serde_json::Map::new();
+    let mut custom_rhos: Vec<(String, Vec<f32>)> = Vec::new();
+    if r.estimators.is_empty() {
+        return (custom_series, custom_rhos);
+    }
+    let active_lpt_tag = format!("{}lpt", r.order);
+    for (traj, ord_opt) in [
+        ("1lpt", Some(1usize)),
+        ("2lpt", Some(2usize)),
+        ("3lpt", Some(3usize)),
+        ("4lpt", Some(4usize)),
+        ("pm", None),
+    ] {
+        let prefix = format!("{traj}:");
+        let wanted_ests: Vec<&str> = r
+            .estimators
+            .iter()
+            .filter_map(|s| s.strip_prefix(&prefix))
+            .filter(|&e| matches!(e, "p0" | "p1" | "ngp" | "cic" | "tsc"))
+            .collect();
+        if wanted_ests.is_empty() {
+            continue;
+        }
+        let x_owned: Option<Vec<f64>> = match ord_opt {
+            Some(ord) if ord != r.order => Some(evaluate(c, d, ord, 1.0).0),
+            _ => None,
+        };
+        let x_traj: &[f64] = if traj == "pm" {
+            pmx
+        } else if let Some(ref xo) = x_owned {
+            xo.as_slice()
+        } else {
+            x
+        };
+        let pos_f32: Vec<f32> = x_traj.iter().map(|&v| v as f32).collect();
+        let can_reuse_active = raw_opt.is_some() && traj == active_lpt_tag;
+        let can_reuse_pm = raw_opt.is_some() && traj == "pm" && pm.completed_steps > 0;
+        let need_p0_fresh = wanted_ests.contains(&"p0") && !can_reuse_active && !can_reuse_pm;
+        let need_p1_fresh = wanted_ests.contains(&"p1") && !can_reuse_active;
+        let w_p1: Option<Vec<f32>> = if wanted_ests.contains(&"p1") {
+            if let Some(ord) = ord_opt {
+                let mut j = vec![0.0f64; g.size];
+                c.lpt_ref().jacobian(d, ord, &mut j);
+                Some(j.iter().map(|&v| (1.0 / v.abs().max(1e-6)) as f32).collect())
+            } else {
+                Some(observables::vertex_inverse_jacobians(g, x_traj))
+            }
+        } else {
+            None
+        };
+        let (mut pre_p0, mut pre_p1): (Option<Vec<f32>>, Option<Vec<f32>>) =
+            if need_p0_fresh && need_p1_fresh && g.dim >= 2 {
+                let w_ref = w_p1.as_ref().unwrap();
+                let (r0, r1) = if g.dim == 2 {
+                    sheet::sheet_density_2d_exact_p0_p1(g, &pos_f32, w_ref, r.mesh)
+                } else {
+                    sheet::sheet_density_3d_exact_p0_p1(g, &pos_f32, w_ref, r.mesh)
+                };
+                (Some(r0), Some(r1))
+            } else {
+                (None, None)
+            };
+        for &est in &wanted_ests {
+            let key = format!("{traj}:{est}");
+            if custom_series.contains_key(&key) {
+                continue;
+            }
+            let (raw_owned, smooth_owned, ps_owned): (
+                Option<Vec<f32>>,
+                Option<Vec<f32>>,
+                Option<spectra::Spectrum>,
+            );
+            let (raw_ref, smooth_ref, ps_ref): (&[f32], &[f32], &spectra::Spectrum) =
+                if let Some(raw) = raw_opt.filter(|_| can_reuse_active && matches!(est, "p0" | "p1" | "cic" | "tsc")) {
+                    let (r_slice, p_ref) = match est {
+                        "p0" => (raw.rho.as_slice(), &raw.ps),
+                        "p1" => (raw.rho_p1.as_slice(), &raw.ps_p1),
+                        "cic" => (raw.cic.as_slice(), &raw.psc),
+                        "tsc" => (raw.tsc.as_slice(), &raw.pst),
+                        _ => unreachable!(),
+                    };
+                    smooth_owned = Some(observables::smooth_density(&eg, r_slice, r.smoothing));
+                    (r_slice, smooth_owned.as_ref().unwrap().as_slice(), p_ref)
+                } else if let Some(raw) = raw_opt.filter(|_| can_reuse_pm && est == "p0") {
+                    smooth_owned = Some(observables::smooth_density(&eg, &raw.pmrho, r.smoothing));
+                    (raw.pmrho.as_slice(), smooth_owned.as_ref().unwrap().as_slice(), &raw.psp)
+                } else {
+                    let r_vec = match est {
+                        "p0" => pre_p0.take().unwrap_or_else(|| density(g, x_traj, r.mesh)),
+                        "p1" => pre_p1.take().unwrap_or_else(|| {
+                            let w_ref = w_p1.as_ref().unwrap();
+                            if g.dim == 1 {
+                                observables::interval_density_p1(g, x_traj, w_ref, r.mesh)
+                            } else if g.dim == 2 {
+                                sheet::sheet_density_2d_exact(g, &pos_f32, Some(w_ref), r.mesh)
+                            } else {
+                                sheet::sheet_density_3d_exact(g, &pos_f32, Some(w_ref), r.mesh)
+                            }
+                        }),
+                        "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                        "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                        "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.mesh),
+                        _ => unreachable!(),
+                    };
+                    let s_vec = observables::smooth_density(&eg, &r_vec, r.smoothing);
+                    let p_spec = power(&eg, &r_vec);
+                    raw_owned = Some(r_vec);
+                    smooth_owned = Some(s_vec);
+                    ps_owned = Some(p_spec);
+                    (
+                        raw_owned.as_ref().unwrap().as_slice(),
+                        smooth_owned.as_ref().unwrap().as_slice(),
+                        ps_owned.as_ref().unwrap(),
+                    )
+                };
+            let (logrho_est, vol_est, mass_est, var_est, dy_est, summary_est) =
+                if matches!(est, "p0" | "p1") {
+                    let w_simplex_p1 = if est == "p1" {
+                        w_p1.as_deref()
+                    } else {
+                        None
+                    };
+                    let (lr_e, v_e, m_e, _, var_e, dy_e, sum_e) =
+                        observables::simplex_density_pdf_and_summary(
+                            g,
+                            x_traj,
+                            w_simplex_p1,
+                            80,
+                            &probabilities,
+                        );
+                    (lr_e, v_e, m_e, var_e, dy_e, sum_e)
+                } else {
+                    let (pdf_raw_nat, pdf_smooth_nat);
+                    let (pdf_raw, pdf_smooth): (&[f32], &[f32]) =
+                        if r.mesh > r.n && matches!(est, "ngp" | "cic" | "tsc") {
+                            pdf_raw_nat = match est {
+                                "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                _ => unreachable!(),
+                            };
+                            pdf_smooth_nat =
+                                observables::smooth_density(&c.grid, &pdf_raw_nat, r.smoothing);
+                            (&pdf_raw_nat, &pdf_smooth_nat)
+                        } else {
+                            (raw_ref, smooth_ref)
+                        };
+                    let (lr_e, v_e, m_e, _, var_e) =
+                        observables::density_pdf(pdf_smooth, pdf_raw, 80);
+                    let sum_e =
+                        observables::density_summary(pdf_smooth, pdf_raw, &probabilities);
+                    (lr_e, v_e, m_e, var_e, dy, sum_e)
+                };
+            let direct_shell = if est == "p0" {
+                if let Some(raw) = raw_opt.filter(|_| can_reuse_active) {
+                    Some(physical_p(&raw.direct_shell_lpt))
+                } else if let Some(raw) = raw_opt.filter(|_| can_reuse_pm) {
+                    Some(physical_p(&raw.direct_shell_pm))
+                } else {
+                    Some(physical_p(&compute_meshfree_shell_single(pending, x_traj)))
+                }
+            } else {
+                None
+            };
+            let var_tophat: Vec<f64> = radii
+                .iter()
+                .map(|&rad| spectrum_variance(ps_ref, rad, false))
+                .collect();
+            let var_gaussian: Vec<f64> = radii
+                .iter()
+                .map(|&rad| spectrum_variance(ps_ref, rad, true))
+                .collect();
+            let var_unsmoothed = spectrum_variance(ps_ref, 0.0, false);
+            let rho_json_slice = if omit_large_mesh_json {
+                empty_f32
+            } else {
+                smooth_ref
+            };
+            custom_rhos.push((key.clone(), smooth_ref.to_vec()));
+            custom_series.insert(
+                key.clone(),
+                json!({
+                    "key": key,
+                    "traj": traj,
+                    "est": est,
+                    "rho": rho_json_slice,
+                    "massMean": mean(raw_ref),
+                    "power": physical_p(&ps_ref.p),
+                    "directShell": direct_shell,
+                    "variance": {
+                        "unsmoothed": var_unsmoothed,
+                        "tophat": var_tophat,
+                        "gaussian": var_gaussian,
+                    },
+                    "pdf": {
+                        "logrho": logrho_est,
+                        "dy": dy_est,
+                        "volume": vol_est,
+                        "mass": mass_est,
+                        "variance": var_est,
+                        "capturedVolume": vol_est.iter().sum::<f64>() * dy_est,
+                        "capturedMass": mass_est.iter().sum::<f64>() * dy_est,
+                        "summary": summary_est,
+                    }
+                }),
+            );
+        }
+    }
+    (custom_series, custom_rhos)
+}
+
 fn assemble_prepared(
     pending: &PendingLabRun,
     pm: &PmRun,
@@ -2441,61 +2839,30 @@ fn assemble_prepared(
         (cic.as_slice(), cics.as_slice())
     };
     let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
-    let w_lpt_active: Option<Vec<f32>> = if r.smoothing == 0.0 {
-        Some(observables::vertex_inverse_jacobians(g, &x))
-    } else {
-        None
+    let w_lpt_active: Vec<f32> = {
+        let mut j = vec![0.0f64; g.size];
+        c.lpt_ref().jacobian(d, r.order, &mut j);
+        j.iter().map(|&v| (1.0 / v.abs().max(1e-6)) as f32).collect()
     };
     let (
         (logrho, vol, mass, pdfmean, var, dy_p0, summary),
         (p1_logrho, p1vol, p1mass, _, p1var, dy_p1, p1_summary),
         (pm_logrho, pmvol, pmmass, _, pmvar, dy_pm, pm_summary),
-    ) = if r.smoothing == 0.0 {
-        (
-            observables::simplex_density_pdf_and_summary(g, &x, None, 80, &probabilities),
-            observables::simplex_density_pdf_and_summary(
-                g,
-                &x,
-                w_lpt_active.as_deref(),
-                80,
-                &probabilities,
-            ),
-            observables::simplex_density_pdf_and_summary(g, pmx, None, 80, &probabilities),
-        )
-    } else {
-        let dy_grid = 3.6 / 80.0;
-        let (lr0, v0, m0, mean0, var0) = observables::density_pdf(&rs, &rho, 80);
-        let (lr1, v1, m1, mean1, var1) = observables::density_pdf(&rs_p1, &rho_p1, 80);
-        let (lrpm, vpm, mpm, meanpm, varpm) = observables::density_pdf(&pms, &pmrho, 80);
-        (
-            (
-                lr0,
-                v0,
-                m0,
-                mean0,
-                var0,
-                dy_grid,
-                observables::density_summary(&rs, &rho, &probabilities),
-            ),
-            (
-                lr1,
-                v1,
-                m1,
-                mean1,
-                var1,
-                dy_grid,
-                observables::density_summary(&rs_p1, &rho_p1, &probabilities),
-            ),
-            (
-                lrpm,
-                vpm,
-                mpm,
-                meanpm,
-                varpm,
-                dy_grid,
-                observables::density_summary(&pms, &pmrho, &probabilities),
-            ),
-        )
+    ) = {
+        let p0_pdf = observables::simplex_density_pdf_and_summary(g, &x, None, 80, &probabilities);
+        let p1_pdf = observables::simplex_density_pdf_and_summary(
+            g,
+            &x,
+            Some(&w_lpt_active),
+            80,
+            &probabilities,
+        );
+        let pm_pdf = if pm.completed_steps > 0 && r.needs_pm() {
+            observables::simplex_density_pdf_and_summary(g, pmx, None, 80, &probabilities)
+        } else {
+            p0_pdf.clone()
+        };
+        (p0_pdf, p1_pdf, pm_pdf)
     };
     let (cic_logrho, cicvol, cicmass, _, cicvar) =
         observables::density_pdf(cic_pdf_smooth, cic_pdf_raw, 80);
@@ -2531,7 +2898,11 @@ fn assemble_prepared(
     let spec_ks: Vec<f64> = spec_modes.iter().map(|&m| g.kf() * m as f64).collect();
     let spec_powers = &raw.direct_powers;
     let spec_pm_powers = &raw.direct_pm_powers;
-    let pmdpos = pm.tangent.as_ref().unwrap().dx.clone();
+    let pmdpos = pm
+        .tangent
+        .as_ref()
+        .map(|t| t.dx.clone())
+        .unwrap_or_else(|| dpos.clone());
     let pm_initial_minimum_used = if pm_arithmetic == "f64" {
         pending.pm_initial_min_jacobian
     } else {
@@ -2846,7 +3217,7 @@ fn assemble_prepared(
                 && traj != active_lpt_tag
                 && traj != "pm";
             let need_p1_fresh = wanted_ests.contains(&"p1") && traj != active_lpt_tag;
-            let w_p1: Option<Vec<f32>> = if need_p1_fresh {
+            let w_p1: Option<Vec<f32>> = if wanted_ests.contains(&"p1") {
                 if let Some(ord) = ord_opt {
                     let mut j = vec![0.0f64; g.size];
                     c.lpt_ref().jacobian(d, ord, &mut j);
@@ -2920,7 +3291,7 @@ fn assemble_prepared(
                         )
                     };
                 let (logrho_est, vol_est, mass_est, var_est, dy_est, summary_est) =
-                    if r.smoothing == 0.0 && matches!(est, "p0" | "p1") {
+                    if matches!(est, "p0" | "p1") {
                         if traj == active_lpt_tag && est == "p0" {
                             (
                                 logrho.clone(),
@@ -2950,7 +3321,7 @@ fn assemble_prepared(
                             )
                         } else {
                             let w_simplex_p1 = if est == "p1" {
-                                Some(observables::vertex_inverse_jacobians(g, x_traj))
+                                w_p1.as_deref()
                             } else {
                                 None
                             };
@@ -2958,7 +3329,7 @@ fn assemble_prepared(
                                 observables::simplex_density_pdf_and_summary(
                                     g,
                                     x_traj,
-                                    w_simplex_p1.as_deref(),
+                                    w_simplex_p1,
                                     80,
                                     &probabilities,
                                 );
@@ -3259,11 +3630,16 @@ impl PreparedLabRun {
 
     fn direct_with_fields(&self, x: &[f64], dx: &[f64], pmx: &[f64], pmdx: &[f64]) -> Vec<f64> {
         let grid = Grid::new(self.request.dim, self.request.n, 1.0);
+        let need_pm = self.request.needs_pm();
         let mut out = Vec::with_capacity(self.modes.len() * 8);
         for mode in &self.modes {
             let k = [grid.kf() * mode[0] as f64, 0.0, 0.0];
             let (f, df) = observables::sheet_mode_jvp(&grid, x, dx, k);
-            let (pmf, pmdf) = observables::sheet_mode_jvp(&grid, pmx, pmdx, k);
+            let (pmf, pmdf) = if need_pm {
+                observables::sheet_mode_jvp(&grid, pmx, pmdx, k)
+            } else {
+                (f, df)
+            };
             out.extend([f.re, f.im, df.re, df.im, pmf.re, pmf.im, pmdf.re, pmdf.im]);
         }
         out

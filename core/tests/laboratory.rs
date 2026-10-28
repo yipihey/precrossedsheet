@@ -1159,6 +1159,18 @@ fn unsmoothed_sheet_pdfs_evaluate_directly_on_simplices_beyond_grid_limits() {
     assert!((p0["capturedVolume"].as_f64().unwrap() - 1.0).abs() < 1e-4);
     assert!((p1["capturedMass"].as_f64().unwrap() - 1.0).abs() < 1e-4);
     assert!((p1["capturedVolume"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+
+    let req_smoothed = LabRequest {
+        smoothing: 0.03,
+        ..req
+    };
+    let d_s = run(&req_smoothed).unwrap();
+    let p0_s_max = max_populated_rho(&d_s["customSeries"]["4lpt:p0"]["pdf"]);
+    let p1_s_max = max_populated_rho(&d_s["customSeries"]["4lpt:p1"]["pdf"]);
+    assert!(
+        (p0_s_max - p0_max).abs() < 1e-9 && (p1_s_max - p1_max).abs() < 1e-9,
+        "sheet PDFs must always evaluate directly on simplices and never revert to the narrow grid range"
+    );
 }
 
 #[test]

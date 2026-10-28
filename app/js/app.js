@@ -3,6 +3,7 @@ import { PRESETS, presetState } from './presets.js';
 import { LinePlot } from './viz/plot.js';
 import { COLORMAPS } from './viz/colormaps.js';
 import { copyText, downloadBlob, flash } from './viz/download.js';
+import { buildCompactManifest, buildPublishedReplayFromResult, deleteReplayFromLibrary, listReplayLibrary, saveReplayToLibrary } from './replay.js';
 
 function fragmentVersion(hash){const entry=String(hash||'').replace(/^#/,'').split('&').find(p=>p.startsWith('v='));return entry?entry.slice(2):null;}
 function fragmentPreset(hash){const entry=String(hash||'').replace(/^#/,'').split('&').find(p=>p.startsWith('preset='));if(!entry)return null;const raw=decodeURIComponent(entry.slice(7));return raw==='estimators2d'?'estimators':raw;}
@@ -21,6 +22,11 @@ function decodeHashWithPreset(hash){
 }
 let unsupportedSchema=fragmentVersion(location.hash)!=null&&!(['2',String(STATE_VERSION)].includes(fragmentVersion(location.hash)));
 let S = decodeHashWithPreset(location.hash), worker = null, timer = 0, requestId = 0, current = null, computedFor = '', activeKey = '', activeRequestId = null, activePhase = '', pendingRun = null, cancelTimer = 0, publishedPromise = null, publishedData = null, lastResult = null, lastResultKey = '', buildInfoPromise = null, runMilliseconds = null, execution = null;
+function requiresExtendedLimits(state = S) {
+  return state.n > gridLimit(state.dim, 'n', false) || state.mesh > gridLimit(state.dim, 'mesh', false) || state.forceMesh > gridLimit(state.dim, 'forceMesh', false) || state.steps > 512;
+}
+let extendedMode = requiresExtendedLimits(S), autoSaveToDisk = false, replayLibrary = [], activeReplaySourceId = 'packaged', overlayPackagedInReplay = true;
+void listReplayLibrary().then((items) => { replayLibrary = items; if (S.view === 'published') renderPublished(); });
 const densityViewOpts = { cmap: 'coolwarm', scale: 'log', vmin: 0.1, vmax: 10, interp: 'smooth' };
 const pdfViewOpts = { ordinate: 'linear' };
 const spectraViewOpts = { companion: 'ratio_sheet', filter: 'tophat', varianceOrdinate: 'sigma2' };
@@ -80,11 +86,109 @@ const initialPreset = PRESETS.find((p) => p.id === initialPresetId);
 presetSelect.value = initialPreset ? initialPreset.id : '';
 presetNote.textContent = initialPreset ? initialPreset.note : 'Adjust the controls or choose a guided experiment.';
 presetSelect.addEventListener('change', () => { clearUnsupportedSchema();S = normalizeState(presetState(presetSelect.value)); controls.sync(); selectView(S.view, false); updateURL(); run(); presetNote.textContent = PRESETS.find((p) => p.id === presetSelect.value)?.note || ''; });
-const exportJsonButton=$('button','qd-btn',presets,'Export experiment JSON');exportJsonButton.type='button';exportJsonButton.disabled=true;exportJsonButton.setAttribute('aria-label','Download the complete experiment state, result, and build manifest as JSON');
-const importLabel=$('label','import-json-button qd-btn',presets,'Import settings JSON');const importInput=$('input','',importLabel);importInput.type='file';importInput.accept='application/json,.json';importInput.setAttribute('aria-label','Import experiment settings from a JSON manifest');
-exportJsonButton.addEventListener('click',()=>exportExperiment());
-importInput.addEventListener('change',async()=>{const file=importInput.files?.[0];if(!file)return;try{const manifest=JSON.parse(await file.text());if(manifest.manifestFormat!=='precrossedsheet-experiment'||manifest.schemaVersion!==STATE_VERSION||!manifest.state)throw new Error(`Expected a precrossedsheet experiment manifest at schema version ${STATE_VERSION}.`);const imported=normalizeState(manifest.state);if(imported.schemaVersion!==STATE_VERSION)throw new Error('The experiment state version is missing or inconsistent.');for(const [key] of HASH_SCHEMA){if(!(key in manifest.state))throw new Error(`The manifest is missing reproducibility field “${key}”.`);const raw=manifest.state[key],value=imported[key];if(typeof raw==='number'&&!Object.is(raw,value)||typeof raw==='string'&&raw!==value||typeof raw==='boolean'&&raw!==value)throw new Error(`The saved value for “${key}” is outside the current experiment schema.`);}clearUnsupportedSchema();S=imported;controls.sync();presetSelect.value='';presetNote.textContent=`Imported experiment settings from ${file.name}.`;selectView(S.view,false);updateURL();run();}catch(error){setNotice(`Could not import settings: ${error?.message||error}`,'error');}finally{importInput.value='';}});
-async function exportExperiment(){if(!current||(!current?.published&&computedFor!==physicsKey())){setNotice('Wait until the result matches the current experiment settings before exporting.');return;}try{const build=await getBuildInfo();const isPublished=S.view==='published',result=isPublished?current?.published:current;const manifest={manifestFormat:'precrossedsheet-experiment',schemaVersion:STATE_VERSION,kind:isPublished?'archiveReplay':'liveNumericalRun',createdAt:new Date().toISOString(),state:{...S},request:isPublished?null:(current?.request||coreRequest(S)),execution:isPublished?null:(result?.execution||execution||null),build,run:{durationMilliseconds:runMilliseconds,guard:result?.guard||null,epoch:result?.request?.epoch??S.epoch,scaleFactor:result?.a??S.scaleFactor,growthFactor:result?.D??null,shellCrossingReference:result?.shellCrossing??null},source:isPublished?result?.provenance||null:null,result};const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});downloadBlob(blob,`precrossedsheet-${Date.now()}.json`);flash(exportJsonButton,'JSON saved');}catch(error){setNotice(`Could not export the experiment: ${error?.message||error}`,'error');}}
+const exportJsonButton=$('button','qd-btn',presets,'Save run to disk (.json)');exportJsonButton.type='button';exportJsonButton.disabled=true;exportJsonButton.setAttribute('aria-label','Download the complete experiment state, compact replay result, and build manifest as JSON');
+const importLabel=$('label','import-json-button qd-btn',presets,'Load / replay JSON');const importInput=$('input','',importLabel);importInput.type='file';importInput.accept='application/json,.json';importInput.setAttribute('aria-label','Load and replay an experiment JSON manifest from disk');
+exportJsonButton.addEventListener('click',()=>exportExperiment(true));
+async function importExperimentManifest(manifest, fileName = 'disk manifest', switchToView = null) {
+  if (!manifest || manifest.manifestFormat !== 'precrossedsheet-experiment') {
+    throw new Error('Expected a precrossedsheet-experiment JSON manifest.');
+  }
+  const hasSavedResult = Boolean(manifest.result && (manifest.result.spectra || manifest.result.pdf || manifest.result.rho || manifest.result.publishedReplay));
+  if (manifest.state) {
+    const imported = normalizeState(manifest.state);
+    if (!hasSavedResult) {
+      if (manifest.schemaVersion !== STATE_VERSION || imported.schemaVersion !== STATE_VERSION) {
+        throw new Error(`Expected a precrossedsheet experiment manifest at schema version ${STATE_VERSION}.`);
+      }
+      for (const [key] of HASH_SCHEMA) {
+        if (!(key in manifest.state)) throw new Error(`The manifest is missing reproducibility field “${key}”.`);
+        const raw = manifest.state[key], value = imported[key];
+        if ((typeof raw === 'number' && !Object.is(raw, value)) || (typeof raw === 'string' && raw !== value) || (typeof raw === 'boolean' && raw !== value)) {
+          throw new Error(`The saved value for “${key}” is outside the current experiment schema.`);
+        }
+      }
+    }
+    clearUnsupportedSchema();
+    S = imported;
+    if (requiresExtendedLimits(S) || manifest.request?.extended) extendedMode = true;
+    if (Array.isArray(manifest.request?.estimators) && manifest.request.estimators.length) {
+      selectedEstimators = manifest.request.estimators;
+      saveSelectedEstimators();
+      syncEstimatorMatrixUI();
+    }
+  }
+  if (hasSavedResult) {
+    const res = manifest.result;
+    if (!res.publishedReplay) res.publishedReplay = buildPublishedReplayFromResult(res, S);
+    const savedEntry = {
+      ...manifest,
+      id: manifest.id || `imported-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      label: manifest.label || `${res.dim || S.dim}D · N=${res.n || S.n}^${res.dim || S.dim} · mesh=${res.mesh || S.mesh}^${res.dim || S.dim} (${fileName})`,
+      createdAt: manifest.createdAt || new Date().toISOString(),
+    };
+    await saveReplayToLibrary(savedEntry);
+    replayLibrary = await listReplayLibrary();
+    activeReplaySourceId = savedEntry.id;
+    if (switchToView) S.view = switchToView;
+    controls.sync();
+    presetSelect.value = '';
+    presetNote.textContent = `Loaded saved simulation from ${fileName} (instant replay active).`;
+    const key = physicsKey();
+    lastResult = res;
+    lastResultKey = key;
+    computedFor = key;
+    current = S.view === 'published' ? { published: res.publishedReplay, savedRun: savedEntry } : res;
+    execution = res.execution || manifest.execution || null;
+    runMilliseconds = manifest.run?.durationMilliseconds ?? null;
+    exportJsonButton.disabled = false;
+    selectView(S.view, false);
+    updateURL();
+    status.textContent = 'Replaying saved run';
+    setNotice(`Loaded saved simulation from ${fileName}. Instant replay is active across all Laboratory tabs and in Published replay.`, 'success');
+    return;
+  }
+  clearUnsupportedSchema();
+  controls.sync();
+  presetSelect.value = '';
+  presetNote.textContent = `Imported experiment settings from ${fileName}.`;
+  selectView(S.view, false);
+  updateURL();
+  run();
+}
+importInput.addEventListener('change',async()=>{const file=importInput.files?.[0];if(!file)return;try{const manifest=JSON.parse(await file.text());await importExperimentManifest(manifest,file.name);}catch(error){setNotice(`Could not import settings: ${error?.message||error}`,'error');}finally{importInput.value='';}});
+async function exportExperiment(downloadToDisk = true){
+  const sourceResult = S.view === 'published' ? (current?.savedRun?.result || lastResult || (current?.published ? { published: current.published } : null)) : current;
+  if(!sourceResult||(!sourceResult?.published&&S.view!=='published'&&computedFor!==physicsKey())){
+    setNotice('Wait until the result matches the current experiment settings before saving.');
+    return null;
+  }
+  try{
+    const build=await getBuildInfo();
+    const manifest=buildCompactManifest({
+      state: S,
+      request: sourceResult?.request || { ...coreRequest(S), estimators: selectedEstimators, extended: extendedMode || requiresExtendedLimits(S) },
+      result: sourceResult,
+      execution: sourceResult?.execution || execution || null,
+      build,
+      runMilliseconds,
+    });
+    if (!sourceResult.published) {
+      await saveReplayToLibrary(manifest);
+      replayLibrary = await listReplayLibrary();
+      activeReplaySourceId = manifest.id;
+    }
+    if (downloadToDisk) {
+      const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
+      const tag = sourceResult.published ? 'archive' : `${S.dim}d-N${S.n}-M${S.mesh}-F${S.forceMesh}`;
+      downloadBlob(blob,`precrossedsheet-${tag}-${Date.now()}.json`);
+      flash(exportJsonButton,'Saved to disk & library');
+    }
+    return manifest;
+  }catch(error){
+    setNotice(`Could not save the experiment: ${error?.message||error}`,'error');
+    return null;
+  }
+}
 function getBuildInfo(){if(!buildInfoPromise)buildInfoPromise=fetch('./data/build-info.json').then(r=>{if(!r.ok)throw new Error(`build metadata HTTP ${r.status}`);return r.json();}).catch(()=>({engineVersion:'unknown',gitRevision:'unavailable',buildTime:null}));return buildInfoPromise;}
 
 const layout = $('div', 'lab-layout', root), sidebar = $('aside', 'lab-sidebar', layout), main = $('section', 'lab-main', layout);
@@ -195,11 +299,11 @@ function selectControl(key, label, opts, help) {
   sel.addEventListener('change', () => {
     S[key] = ['dim','n','order','seed','steps','mesh','forceMesh','initialCutoff'].includes(key) ? Number(sel.value) : sel.value;
     if (key === 'dim') {
-      S.n = Math.min(S.n, gridLimit(S.dim, 'n'));
-      S.mesh = Math.min(S.mesh, gridLimit(S.dim, 'mesh'));
-      S.forceMesh = Math.min(S.n, gridLimit(S.dim, 'forceMesh'));
+      S.n = Math.min(S.n, gridLimit(S.dim, 'n', extendedMode));
+      S.mesh = Math.min(S.mesh, gridLimit(S.dim, 'mesh', extendedMode));
+      S.forceMesh = Math.min(Math.max(S.forceMesh, S.n), gridLimit(S.dim, 'forceMesh', extendedMode));
     } else if (key === 'n') {
-      S.forceMesh = Math.min(S.n, gridLimit(S.dim, 'forceMesh'));
+      S.forceMesh = Math.min(Math.max(S.forceMesh, S.n), gridLimit(S.dim, 'forceMesh', extendedMode));
     }
     if (key === 'n' || S.n <= 8 * S.initialCutoff) {
       S.initialCutoff = Math.max(1, Math.min(32, Math.floor((S.n - 1) / 8)));
@@ -234,19 +338,54 @@ selectControl('transfer', 'Linear transfer function', [['smooth','EH98 no-wiggle
 numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed seed, used only by Gaussian initial conditions.');
 selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
 activeControlGroup=controlSection('Evolution and observation grids');
-selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of drift-kick-drift time steps for the comparison particle-mesh trajectory.');
+selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of √a-spaced canonical KDK time steps for the deconvolved TSC particle-mesh trajectory (≥ 64 recommended).');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Eulerian grid resolution used to deposit density, compute PDFs, and evaluate FFT power spectra.');
-selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Separate Eulerian grid used only for the PM Poisson force calculation; auto-matches vertex resolution when vertices per axis is changed.');
+selectControl('forceMesh', 'PM force grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Deconvolved TSC Poisson force grid (filtered to the Lagrangian Brillouin zone when forceMesh > n); constrained ≥ vertex grid for high-fidelity PM.');
 selectControl('backend', 'Compute backend', [['cpu','CPU reference'],['gpu','GPU experimental'],['auto','Automatic (CPU)']], 'CPU is the default and automatic selection uses the f64 CPU reference. A GPU request can construct nLPT fields on radix lattices, evolve PM trajectories, clip the exact P₀ sheet, and recover weak analytic modes with compensated arithmetic. CPU f64 recovery remains available when a GPU stage fails validation or a mode misses its accuracy gate. One-dimensional runs use CPU.');
+{
+  const extWrap = $('label', 'control-field', activeControlGroup);
+  const extRow = $('span', 'control-top', extWrap);
+  $('span', 'control-name', extRow, 'Extended long-running mode (larger 2D/3D grids)');
+  const extCb = $('input', '', extRow);
+  extCb.type = 'checkbox';
+  extCb.checked = extendedMode;
+  extCb.setAttribute('aria-label', 'Unlock extended long-running 2D and 3D simulation grids');
+  $('small', 'control-help', extWrap, 'Unlocks larger multi-second / multi-minute browser simulations (1D/2D up to 2048², 3D up to 128³ vertices and 256³ meshes, up to 1024 PM steps, 3.5 GiB budget). Completed runs are automatically saved to the browser Replay Library and can be exported to disk (.json).');
+  extCb.addEventListener('change', () => {
+    extendedMode = extCb.checked;
+    if (!extendedMode) {
+      S.n = Math.min(S.n, gridLimit(S.dim, 'n', false));
+      S.mesh = Math.min(S.mesh, gridLimit(S.dim, 'mesh', false));
+      S.forceMesh = Math.min(Math.max(S.forceMesh, S.n), gridLimit(S.dim, 'forceMesh', false));
+      S.steps = Math.min(S.steps, 512);
+    }
+    controls.sync();
+    changed(true);
+  });
+  controlHandles._extendedMode = { set: () => { extCb.checked = extendedMode; }, el: extCb };
+
+  const autoWrap = $('label', 'control-field', activeControlGroup);
+  const autoRow = $('span', 'control-top', autoWrap);
+  $('span', 'control-name', autoRow, 'Auto-download run to disk (.json) on completion');
+  const autoCb = $('input', '', autoRow);
+  autoCb.type = 'checkbox';
+  autoCb.checked = autoSaveToDisk;
+  autoCb.setAttribute('aria-label', 'Automatically download completed run to disk as JSON');
+  $('small', 'control-help', autoWrap, 'Useful for unattended longer 2D/3D jobs: as soon as the worker finishes, the browser automatically downloads the compact replay JSON file to disk in addition to saving it in the Published Replay library.');
+  autoCb.addEventListener('change', () => {
+    autoSaveToDisk = autoCb.checked;
+  });
+}
 activeControlGroup=controlSection('Density observation');
 rangeControl('smoothing', 'Observation smoothing R/L', 0, .15, .0025, 'Gaussian measurement filter as a fraction of the box length. This is not initial-condition smoothing.');
 selectControl('weight','Primary PDF weighting',[['volume','Volume weighted'],['mass','Mass weighted']],'Both PDFs are plotted; the selected weighting is emphasized, and the URL records the choice.');
-const controls = { sync() { for (const [k, h] of Object.entries(controlHandles)) h.set(S[k]); updateGridOptions(); updateClockControls(); updateMemoryEstimate(); } };
-function estimatePeakBytes(state=S){const N=state.n**state.dim,M=Math.max(state.mesh,state.forceMesh)**state.dim;return N*(state.dim<3?750:2400)+M*(state.dim<3?200:250);}
-function updateGridOptions(){for(const key of ['n','mesh','forceMesh']){const select=controlHandles[key]?.el;if(!select)continue;const max=gridLimit(S.dim,key);for(const option of select.options){const val=Number(option.value),candidate={...S,[key]:val},tooLarge=estimatePeakBytes(candidate)>1024**3;option.disabled=val>max||tooLarge;option.textContent=`${val}${val>max?' · dimension limit':tooLarge?' · allocation limit':''}`;}}}
+const controls = { sync() { if (requiresExtendedLimits(S)) extendedMode = true; for (const [k, h] of Object.entries(controlHandles)) { if (k.startsWith('_')) h.set(); else h.set(S[k]); } updateGridOptions(); updateClockControls(); updateMemoryEstimate(); } };
+function estimatePeakBytes(state=S, isExt=extendedMode){const N=state.n**state.dim,M=Math.max(state.mesh,state.forceMesh)**state.dim;if(isExt&&(N>262144||M>262144))return N*(state.dim<3?450:800)+M*(state.dim<3?96:110);return N*(state.dim<3?750:2400)+M*(state.dim<3?200:250);}
+function currentBudgetBytes(isExt=extendedMode){return (isExt?3584:1024)*1024*1024;}
+function updateGridOptions(){const budget=currentBudgetBytes(extendedMode);for(const key of ['n','mesh','forceMesh']){const select=controlHandles[key]?.el;if(!select)continue;const max=gridLimit(S.dim,key,extendedMode);for(const option of select.options){const val=Number(option.value),candidate={...S,[key]:val},tooLarge=estimatePeakBytes(candidate,extendedMode)>budget,subVertex=key==='forceMesh'&&val<S.n;option.disabled=val>max||tooLarge||subVertex;option.textContent=`${val}${val>max?(extendedMode?' · dimension limit':' · enable Extended mode'):tooLarge?' · allocation limit':subVertex?' · < vertex grid (under-resolved PM)':''}`;}}const stepsSel=controlHandles.steps?.el;if(stepsSel){for(const option of stepsSel.options){const val=Number(option.value);option.disabled=!extendedMode&&val>512;option.textContent=`${val} steps${!extendedMode&&val>512?' · enable Extended mode':''}`;}}}
 function updateClockControls(){for(const key of ['fraction','scaleFactor']){const field=controlHandles[key]?.el;const active=key==='fraction'?S.epoch==='fraction':S.epoch==='scaleFactor';if(field){field.disabled=!active;field.closest('.control-field')?.classList.toggle('control-disabled',!active);}}}
 const memoryEstimate=$('p','resource-estimate',sidebar);
-function updateMemoryEstimate(){const bytes=estimatePeakBytes(),fits=bytes<=1024**3;memoryEstimate.textContent=`Conservative core allocation estimate: ${(bytes/1048576).toFixed(1)} MiB (budget 1024 MiB; estimate, not a measured peak). ${fits?'The current grid combination is within the estimate.':'This selected combination will be rejected explicitly; grids will not be reduced.'}`;memoryEstimate.classList.toggle('resource-over-limit',!fits);}
+function updateMemoryEstimate(){const budget=currentBudgetBytes(extendedMode),bytes=estimatePeakBytes(S,extendedMode),fits=bytes<=budget;memoryEstimate.textContent=`Conservative core allocation estimate: ${(bytes/1048576).toFixed(1)} MiB (budget ${(budget/1048576).toFixed(0)} MiB${extendedMode?' · Extended mode active':''}). ${fits?'The current grid combination is within the estimate.':'This selected combination exceeds the active budget; enable Extended mode or reduce a grid.'}`;memoryEstimate.classList.toggle('resource-over-limit',!fits);}
 const selftestLink=$('a','chapter-link',sidebar,'Run the GPU self-test ↗');selftestLink.href='./gpu-test.html';
 
 const chapterLink = $('a', 'chapter-link', sidebar, 'Read the chapter behind this view ↗'); chapterLink.href = chapterRefs[S.view];
@@ -263,22 +402,42 @@ const theory = $('aside', 'lab-theory', root);
 function selectView(view, doRun = true) { const changedView = S.view !== view; S.view = view; for (const [k, b] of Object.entries(viewButtons)) b.setAttribute('aria-pressed', String(k === view)); chapterLink.href = chapterRefs[view] || chapterRefs.sheet; updateURL(); if (changedView && doRun) run(); else render(); }
 function updateURL() { if(unsupportedSchema)return;history.replaceState(null, '', '#' + encodeHash(S)); }
 function changed(immediate = false) { clearUnsupportedSchema();S = normalizeState(S); controls.sync(); presetSelect.value=''; presetNote.textContent='Custom experiment settings.';exportJsonButton.disabled=true; updateURL(); selectView(S.view, false); if (timer) clearTimeout(timer); if (immediate) run(); else { status.textContent = 'Waiting for input…'; timer = setTimeout(run, 180); } }
-function physicsKey() { const { view, rotate, tilt, weight, paired, pubmodel, pubest, pubr, schemaVersion, ...physics } = S; return JSON.stringify({ ...physics, estimators: selectedEstimators }); }
+function physicsKey() { const { view, rotate, tilt, weight, paired, pubmodel, pubest, pubr, schemaVersion, ...physics } = S; return JSON.stringify(physics); }
 function run() {
   if (timer) clearTimeout(timer); timer = 0;
   if(unsupportedSchema){S=decodeHash('');controls.sync();status.textContent='Unsupported saved experiment';setNotice('Unknown URL schema. No numerical run was started. Select a new preset or change a control before running.','error');exportJsonButton.disabled=true;clearHost();return;}
   if (S.view === 'published') { retireWorker(); activeKey=''; current = null; execution=null; exportJsonButton.disabled=true; loadPublished(); return; }
   const key = physicsKey();
-  if (lastResultKey === key && lastResult) { cancelObsoleteForCachedResult(); current=lastResult;execution=current.execution||null;computedFor=key;exportJsonButton.disabled=false;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready';render();return; }
-  if (computedFor === key && current && !current.published) {cancelObsoleteForCachedResult();exportJsonButton.disabled=false;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':'Ready';render();return;}
-  const job={key,state:{...S},request:{...coreRequest(S),estimators:selectedEstimators},policy:executionPolicy(S)};
+  if (lastResultKey === key && lastResult && !lastResult.error) {
+    const missing = selectedEstimators.filter(k => !lastResult.customSeries?.[k]);
+    const pmNeededNow = missing.some(k => k.startsWith('pm:')) && !lastResult._pmComputed;
+    if (missing.length === 0) {
+      cancelObsoleteForCachedResult();
+      current = lastResult;
+      execution = current.execution || null;
+      computedFor = key;
+      exportJsonButton.disabled = false;
+      status.textContent = current?.guard?.ok === false ? 'Post-crossing · interpret cautiously' : 'Ready';
+      render();
+      return;
+    }
+    if (!pmNeededNow) {
+      const isExt = Boolean(extendedMode || requiresExtendedLimits(S));
+      const job = { key, estimatorsOnly: true, allEstimators: [...selectedEstimators], state: { ...S }, request: { ...coreRequest(S), estimators: missing, extended: isExt }, policy: executionPolicy(S) };
+      if (activeRequestId != null) { pendingRun = job; cancelActiveRun(); return; }
+      dispatchRun(job);
+      return;
+    }
+  }
+  const isExt = Boolean(extendedMode || requiresExtendedLimits(S));
+  const job={key,estimatorsOnly:false,allEstimators:[...selectedEstimators],state:{...S},request:{...coreRequest(S),estimators:selectedEstimators,extended:isExt},policy:executionPolicy(S)};
   if(activeRequestId!=null){pendingRun=job;cancelActiveRun();return;}
   dispatchRun(job);
 }
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261027f',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261028d',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -288,14 +447,37 @@ function ensureWorker(){
     clearTimeout(cancelTimer);cancelTimer=0;activeRequestId=null;activePhase='';activeKey='';runMilliseconds=data.durationMilliseconds??null;
     if(pendingRun&&pendingRun.key!==data.key){const next=pendingRun;pendingRun=null;dispatchRun(next);return;}
     if(data.error){current={error:data.error,execution:data.execution||null};execution=data.execution||null;computedFor='';status.textContent='Run failed';}
-    else{current=data.result;execution=current?.execution||data.execution||null;lastResult=current;lastResultKey=data.key;computedFor=data.key;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':current?.error?'Run failed':'Ready';exportJsonButton.disabled=false;}
+    else if(data.estimatorsOnly && data.customSeries && lastResult && lastResultKey===data.key){
+      lastResult.customSeries = { ...(lastResult.customSeries || {}), ...data.customSeries };
+      current = lastResult;
+      execution = current.execution || null;
+      computedFor = data.key;
+      status.textContent = current?.guard?.ok===false ? 'Post-crossing · interpret cautiously' : 'Ready';
+      exportJsonButton.disabled = false;
+    }
+    else{
+      if (lastResult && lastResultKey === data.key && lastResult.customSeries && data.result) {
+        data.result.customSeries = { ...lastResult.customSeries, ...(data.result.customSeries || {}) };
+      }
+      if (data.result) {
+        data.result._pmComputed = Boolean(
+          !data.result?.execution?.pmEvolution?.skipped &&
+          (selectedEstimators.some(k => k.startsWith('pm:')) || Object.keys(data.result?.customSeries || {}).some(k => k.startsWith('pm:')))
+        );
+      }
+      current=data.result;execution=current?.execution||data.execution||null;lastResult=current;lastResultKey=data.key;computedFor=data.key;status.textContent=current?.guard?.ok===false?'Post-crossing · interpret cautiously':current?.error?'Run failed':'Ready';exportJsonButton.disabled=false;
+      if (autoSaveToDisk || extendedMode || (runMilliseconds && runMilliseconds > 1500)) {
+        void exportExperiment(autoSaveToDisk);
+      }
+    }
     render();
-    if(pendingRun){const next=pendingRun;pendingRun=null;if(next.key!==data.key)dispatchRun(next);}
+    if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}
+    else if(lastResultKey===physicsKey()&&lastResult&&!lastResult.error&&selectedEstimators.some(k=>!lastResult.customSeries?.[k])){run();}
   };
   worker.onerror=(event)=>{clearTimeout(cancelTimer);cancelTimer=0;worker?.terminate();worker=null;activeRequestId=null;activePhase='';activeKey='';computedFor='';current={error:event.message||'Could not start the numerical worker.'};status.textContent='Run failed';render();};
   return worker;
 }
-function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;execution=null;exportJsonButton.disabled=true;status.textContent='Preparing…';notice.textContent='Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,state:job.request,policy:job.policy});}
+function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;if(!job.estimatorsOnly)execution=null;exportJsonButton.disabled=true;status.textContent=job.estimatorsOnly?'Updating estimators…':'Preparing…';notice.textContent=job.estimatorsOnly?'Depositing newly selected trajectory/estimator fields from retained particle positions.':'Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,estimatorsOnly:Boolean(job.estimatorsOnly),allEstimators:job.allEstimators||null,state:job.request,policy:job.policy});}
 function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;worker.postMessage({type:'cancel',requestId:id});status.textContent='Updating calculation…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},8000);}
 function cancelObsoleteForCachedResult(){pendingRun=null;if(activeRequestId!=null&&worker){const id=activeRequestId;activeRequestId=null;activePhase='';activeKey='';clearTimeout(cancelTimer);cancelTimer=0;worker.postMessage({type:'cancel',requestId:id});}}
 function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
@@ -356,7 +538,7 @@ function renderSheet(d) {
   const alt=dimension===1?'One-dimensional phase-space curve with position x and velocity dx/da':dimension===2?'Triangulated two-dimensional Lagrangian sheet in the x0–x1 position plane with equal spatial-axis scales':'Rotatable, equal-scale orthographic position projection of the three-dimensional Lagrangian sheet embedded in six-dimensional phase space';
   const c=canvasFor(p,alt,true);
   const draw=()=>paintCanvas(c,(ctx,W,H)=>{
-    const n=Number(d.n||S.n),dim=Number(d.dim||S.dim),q=arr(d.q),x=arr(d.x),v=arr(d.v); const nv=Math.floor(Math.min(q.length,x.length,v.length)/(dim||1));
+    const n=Number(d.sheetN||d.n||S.n),dim=Number(d.dim||S.dim),q=arr(d.q),x=arr(d.x),v=arr(d.v); const nv=Math.floor(Math.min(q.length,x.length,v.length)/(dim||1));
     if (!nv) { ctx.fillStyle=getComputedStyle(c).color; ctx.fillText('Sheet coordinates were not returned.',32,40); return; }
     const idx=(i,j=0,k=0)=>dim===1?i:dim===2?i*n+j:(i*n+j)*n+k;
     const budget=dim===1?2000:dim===2?10000:8500,stride=Math.max(1,Math.ceil((n**dim/budget)**(1/dim)));
@@ -498,11 +680,17 @@ function renderDensity(d) {
   }
   const withRho=activeSeries.filter(s=>s.rho.length>0);
   if(withRho.length){
-    const stats=(values)=>{let empty=0,minimum=Infinity,maximum=0;for(let i=0;i<values.length;i++){const v=Number(values[i])||0;if(v<=1e-6)empty++;minimum=Math.min(minimum,v);maximum=Math.max(maximum,v);}return {empty,minimum,maximum};};
+    const stats=(s)=>{
+      const pre=d.densitySliceStats?.[s.fieldKey];
+      if(pre&&pre.totalCells)return {empty:pre.empty,total:pre.totalCells,minimum:pre.minimum,maximum:pre.maximum};
+      const values=s.rho;let empty=0,minimum=Infinity,maximum=0;
+      for(let i=0;i<values.length;i++){const v=Number(values[i])||0;if(v<=1e-6)empty++;minimum=Math.min(minimum,v);maximum=Math.max(maximum,v);}
+      return {empty,total:values.length,minimum,maximum};
+    };
     const table=$('table','summary-table',p);$('caption','',table,'Cell statistics of the displayed (filtered) fields: a connected sheet never leaves an interior cell empty');
     const head=$('thead','',table),hr=$('tr','',head);for(const label of ['Trajectory · Estimator','Empty cells','Minimum ρ/mean','Maximum ρ/mean'])$('th','',hr,label);
     const body=$('tbody','',table);
-    for(const s of withRho){const st=stats(s.rho),tr=$('tr','',body);$('th','',tr,s.label);$('td','',tr,`${st.empty} of ${s.rho.length}`);$('td','',tr,num(st.minimum/(mean||1),4));$('td','',tr,num(st.maximum/(mean||1),4));}
+    for(const s of withRho){const st=stats(s),tr=$('tr','',body);$('th','',tr,s.label);$('td','',tr,`${st.empty} of ${st.total}`);$('td','',tr,num(st.minimum/(mean||1),4));$('td','',tr,num(st.maximum/(mean||1),4));}
   }
 }
 function drawDensityMap(parent,title,values,label,dim,mesh,name,scaleMin,scaleMax,mean){
@@ -519,13 +707,14 @@ function drawDensityMap(parent,title,values,label,dim,mesh,name,scaleMin,scaleMa
   paintCanvas(c,(ctx,W,H)=>{
     const ink=getComputedStyle(c).color;ctx.fillStyle=ink;
     if(!rho.length){ctx.fillText('Density cells were not returned.',32,42);return;}
-    const n=mesh,left=56,right=W-24,top=16,bottom=H-92;
+    const isSlice2d=(dim===3&&rho.length<mesh**3)||(dim===2&&rho.length<mesh*mesh);
+    const n=isSlice2d?(Math.round(Math.sqrt(rho.length))||mesh):mesh,left=56,right=W-24,top=16,bottom=H-92;
     if(dim===1){for(let i=0;i<rho.length;i++){const t=normVal(rho[i]),height=t*(bottom-top);ctx.fillStyle=densityColor(t);const xStart=Math.round(left+i*(right-left)/rho.length),xEnd=Math.round(left+(i+1)*(right-left)/rho.length);ctx.fillRect(xStart,bottom-height,Math.max(1,xEnd-xStart),height);}}
-    else {const side=Math.round(Math.min(right-left,bottom-top)),x0=Math.round(left+(right-left-side)/2),y0=Math.round(top+(bottom-top-side)/2),kMid=Math.floor(mesh/2);
+    else {const side=Math.round(Math.min(right-left,bottom-top)),x0=Math.round(left+(right-left-side)/2),y0=Math.round(top+(bottom-top-side)/2),kMid=Math.floor(n/2);
       const off=document.createElement('canvas');off.width=n;off.height=n;
       const octx=off.getContext('2d'),img=octx.createImageData(n,n),buf=img.data;
       for(let i=0;i<n;i++)for(let j=0;j<n;j++){
-        const index=dim===3?(i*n+j)*n+kMid:i*n+j;
+        const index=(dim===3&&!isSlice2d)?(i*n+j)*n+kMid:i*n+j;
         const [r,g,b]=densityColorRgb(normVal(Number(rho[index]??0)));
         const p=4*((n-1-j)*n+i);
         buf[p]=r;buf[p+1]=g;buf[p+2]=b;buf[p+3]=255;
@@ -842,40 +1031,114 @@ function renderVarianceScale(d) {
     for(const [k] of cols)$('td','',trRow,num(vData[k]?.[idx],4));
   }
 }
+function pdfOrdinateMeta(mode) {
+  if (mode === 'cdf') {
+    return {
+      shortKind: 'CDF',
+      yLabelSuffix: 'CDF  P(≤ ρ/ρ̄)',
+      ylog: false,
+      ylim: [0, 1.02],
+    };
+  }
+  if (mode === 'peaked_cdf') {
+    return {
+      shortKind: 'peaked CDF',
+      yLabelSuffix: 'peaked CDF  min(P(≤ ρ/ρ̄), P(≥ ρ/ρ̄))',
+      ylog: true,
+      ylim: undefined,
+    };
+  }
+  if (mode === 'log10') {
+    return {
+      shortKind: 'PDF',
+      yLabelSuffix: 'dP / d log₁₀(ρ/ρ̄)',
+      ylog: true,
+      ylim: undefined,
+    };
+  }
+  return {
+    shortKind: 'PDF',
+    yLabelSuffix: 'dP / d(ρ/ρ̄)',
+    ylog: true,
+    ylim: undefined,
+  };
+}
+function transformPdfOrdinate(arrVals, sRhoAxis, sDy, mode) {
+  const vals = arr(arrVals).map(Number);
+  if (!vals.length) return [];
+  if (mode === 'log10') return vals;
+  if (mode === 'linear') {
+    const sFactor = Math.pow(10, sDy / 2) - Math.pow(10, -sDy / 2);
+    return vals.map((v, i) => {
+      const r = sRhoAxis[i] || 1;
+      return (v * sDy) / Math.max(1e-30, r * sFactor);
+    });
+  }
+  const probs = vals.map((v) => Math.max(0, (Number.isFinite(v) ? v : 0) * sDy));
+  let tot = 0;
+  let firstIdx = -1;
+  let lastIdx = -1;
+  for (let i = 0; i < probs.length; i++) {
+    if (probs[i] > 0) {
+      if (firstIdx < 0) firstIdx = i;
+      lastIdx = i;
+      tot += probs[i];
+    }
+  }
+  if (!(tot > 0) || firstIdx < 0) return vals.map(() => NaN);
+  const out = new Array(probs.length).fill(NaN);
+  let cumBefore = 0;
+  for (let i = firstIdx; i <= lastIdx; i++) {
+    const p = probs[i];
+    if (mode === 'cdf') {
+      out[i] = (cumBefore + p) / tot;
+    } else {
+      const fLe = (cumBefore + 0.5 * p) / tot;
+      const fGe = Math.max(0, 1 - fLe);
+      out[i] = Math.max(1e-30, Math.min(fLe, fGe));
+    }
+    cumBefore += p;
+  }
+  return out;
+}
 function renderPdfs(d) {
   const activeSeries=resolveActiveSeries(d).filter(s=>arr(s.pdf?.volume).length>0);
-  const p=panel('Density probability distributions',`Comparing probability distributions for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄ on log–log axes. When observation filter R/L = 0, continuous P₀ and P₁ sheet PDFs are evaluated directly from the Lagrangian simplices (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) without grid deposition, extending smoothly across deep voids and high-density caustics; only the grid-based particle estimators (NGP, CIC, TSC) are limited in density range by the Eulerian grid and zero-particle starvation. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
+  const p=panel('Density probability distributions',`Comparing probability distributions (PDF, CDF, and peaked CDF) for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄. Continuous P₀ and P₁ sheet distributions are always evaluated directly from the Lagrangian simplices (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) without grid deposition, extending smoothly across deep voids and high-density caustics; only the grid-based particle estimators (NGP, CIC, TSC) are limited in density range by the Eulerian grid and zero-particle starvation. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
   const logrho=arr(d.pdf?.logrho);
   const rhoAxis=logrho.map(y=>Math.pow(10,Number(y)));
   const bar=$('div','published-controls',p);
   const wrap=$('label','published-select',bar);$('span','',wrap,'PDF ordinate');
   const sel=$('select','lab-select',wrap);
-  for(const [v,t] of [['linear','dP / d(ρ/ρ̄)  (probability density per unit ρ/ρ̄)'],['log10','dP / d log₁₀(ρ/ρ̄)  (per decade)']]){const o=$('option','',sel,t);o.value=v;}
+  for(const [v,t] of [
+    ['linear','PDF: dP / d(ρ/ρ̄)  (probability density per unit ρ/ρ̄)'],
+    ['log10','PDF: dP / d log₁₀(ρ/ρ̄)  (probability density per decade)'],
+    ['cdf','CDF: P(≤ ρ/ρ̄)  (cumulative distribution function)'],
+    ['peaked_cdf','Peaked CDF: min(P(≤ ρ/ρ̄), P(≥ ρ/ρ̄))  (folded two-sided tail probability)'],
+  ]){const o=$('option','',sel,t);o.value=v;}
   sel.value=pdfViewOpts.ordinate;
   sel.addEventListener('change',()=>{pdfViewOpts.ordinate=sel.value;render();});
-  if(Number(S.smoothing)===0){
-    $('p','panel-note',p,`Direct simplex evaluation active (R/L = 0): P₀ and P₁ sheet PDFs and quantiles are accumulated directly over all Lagrangian simplices (using exact Jacobian density 1/|J_T| for P₀ and corner-interpolated vertex densities for P₁) without depositing onto an Eulerian mesh. Grid-based particle estimators (NGP, CIC, TSC) are deposited onto their Eulerian grid.`);
-  }else if(S.mesh>S.n){
-    $('p','panel-note',p,`When the observation mesh (${S.mesh}^${S.dim}) is finer than the Lagrangian particle grid (${S.n}^${S.dim}), the continuous sheet PDFs (P₀ and P₁) are evaluated at the full ${S.mesh}^${S.dim} mesh resolution, while particle-estimator PDFs (NGP, CIC, TSC) are evaluated on their natural ${S.n}^${S.dim} particle grid (1 cell per mean particle spacing Δq = L/n) so that isolated particles are not assigned artificial sub-cell spike densities of (mesh/n)^${S.dim} = ${Math.pow(S.mesh/S.n,S.dim)}.`);
-  }
+  $('p','panel-note',p,`Direct simplex evaluation active: P₀ and P₁ sheet distributions and quantiles are accumulated directly over all Lagrangian simplices (using exact Jacobian density 1/|J_T| for P₀ and analytical nodal vertex Jacobians 1/|J(q_i)| for P₁) without depositing onto an Eulerian mesh. Grid-based particle estimators (NGP, CIC, TSC) are deposited onto their Eulerian grid${S.mesh>S.n?` (at their natural ${S.n}^${S.dim} particle spacing so isolated particles do not create artificial sub-cell spikes)`:''}.`);
   const pdfData={rhoAxis};
   const volumeDefs=[],massDefs=[];
   for(const s of activeSeries){
     const sLogrho=arr(s.pdf?.logrho).length?arr(s.pdf.logrho):logrho;
     const sRhoAxis=sLogrho.map(y=>Math.pow(10,Number(y)));
     const sDy=Number(s.pdf?.dy)>0?Number(s.pdf.dy):(sLogrho.length>1?Math.abs(Number(sLogrho[1])-Number(sLogrho[0])):3.6/80);
-    const sFactor=Math.pow(10,sDy/2)-Math.pow(10,-sDy/2);
-    const toPr=(arrVals)=>arr(arrVals).map((v,i)=>{const r=sRhoAxis[i]||1;return pdfViewOpts.ordinate==='log10'?Number(v):(Number(v)*sDy)/Math.max(1e-30,r*sFactor);});
     const xKey=`${s.fieldKey}_x`,vKey=`${s.fieldKey}_vol`,mKey=`${s.fieldKey}_mass`;
     pdfData[xKey]=sRhoAxis;
-    pdfData[vKey]=toPr(s.pdf.volume);
-    pdfData[mKey]=toPr(s.pdf.mass);
+    pdfData[vKey]=transformPdfOrdinate(s.pdf.volume,sRhoAxis,sDy,pdfViewOpts.ordinate);
+    pdfData[mKey]=transformPdfOrdinate(s.pdf.mass,sRhoAxis,sDy,pdfViewOpts.ordinate);
     volumeDefs.push({key:vKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
     massDefs.push({key:mKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
   }
-  const yLabelSuffix=pdfViewOpts.ordinate==='log10'?'dP / d log₁₀(ρ/ρ̄)':'dP / d(ρ/ρ̄)';
-  if(S.weight==='mass'){addPlot(p,'PRIMARY · mass-weighted PDF',rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);addPlot(p,'Volume-weighted PDF',rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);}
-  else{addPlot(p,'PRIMARY · volume-weighted PDF',rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);addPlot(p,'Mass-weighted PDF',rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);}
+  const ordMeta=pdfOrdinateMeta(pdfViewOpts.ordinate);
+  if(S.weight==='mass'){
+    addPlot(p,`PRIMARY · mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+    addPlot(p,`Volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+  } else {
+    addPlot(p,`PRIMARY · volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+    addPlot(p,`Mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+  }
   renderPdfSummaries(p,d.pdf||{},activeSeries);
 }
 function renderPdfSummaries(parent,pdf,activeSeries){
@@ -1209,6 +1472,17 @@ function renderRsd(d) {
     `Evaluating 1/|J_{s,T}| directly on the redshifted simplices without grid deposition captures the full caustic density tail induced by redshift-space shell crossing (J_{s,T} → 0) as well as the expanded void tail (1 + a ∂_∥ v_∥ > 1). The companion chart shows the Lagrangian mass distribution of signed simplex volumes J_T (real space) vs J_{s,T} (redshift space), where the tail at J_{s,T} ≤ 0 measures velocity-induced shell crossing.`
   );
   const rpdf=rsd.pdf||{};
+  const rsdPdfBar=$('div','published-controls',pPdf);
+  const rsdOrdWrap=$('label','published-select',rsdPdfBar);$('span','',rsdOrdWrap,'PDF ordinate');
+  const rsdOrdSel=$('select','lab-select',rsdOrdWrap);
+  for(const [v,t] of [
+    ['linear','PDF: dP / d(ρ/ρ̄)  (probability density per unit ρ/ρ̄)'],
+    ['log10','PDF: dP / d log₁₀(ρ/ρ̄)  (probability density per decade)'],
+    ['cdf','CDF: P(≤ ρ/ρ̄)  (cumulative distribution function)'],
+    ['peaked_cdf','Peaked CDF: min(P(≤ ρ/ρ̄), P(≥ ρ/ρ̄))  (folded two-sided tail probability)'],
+  ]){const o=$('option','',rsdOrdSel,t);o.value=v;}
+  rsdOrdSel.value=pdfViewOpts.ordinate;
+  rsdOrdSel.addEventListener('change',()=>{pdfViewOpts.ordinate=rsdOrdSel.value;render();});
   const pdfPlotData={};
   const pdfDefs=[];
   const weightKey=S.weight==='mass'?'mass':'volume';
@@ -1222,22 +1496,18 @@ function renderRsd(d) {
     const lr=arr(obj.logrho);
     const rhoAx=lr.map(y=>Math.pow(10,Number(y)));
     const sDy=Number(obj.dy)>0?Number(obj.dy):3.6/80;
-    const sFactor=Math.pow(10,sDy/2)-Math.pow(10,-sDy/2);
-    const vals=arr(obj[weightKey]).map((v,i)=>{
-      const r=rhoAx[i]||1;
-      return pdfViewOpts.ordinate==='log10'?Number(v):(Number(v)*sDy)/Math.max(1e-30,r*sFactor);
-    });
+    const vals=transformPdfOrdinate(obj[weightKey],rhoAx,sDy,pdfViewOpts.ordinate);
     pdfPlotData[`${k}_x`]=rhoAx;
     pdfPlotData[`${k}_y`]=vals;
     pdfDefs.push({key:`${k}_y`,xkey:`${k}_x`,label,color,dash,width:2.0});
   }
-  const yLabelSuffix=pdfViewOpts.ordinate==='log10'?'dP / d log₁₀(ρ/ρ̄)':'dP / d(ρ/ρ̄)';
+  const rsdOrdMeta=pdfOrdinateMeta(pdfViewOpts.ordinate);
   addPlot(
     pPdf,
-    `${S.weight==='mass'?'Mass':'Volume'}-weighted density PDF: Real-space simplices vs Redshifted simplices vs Velocity-gradient Gaussians`,
+    `${S.weight==='mass'?'Mass':'Volume'}-weighted density ${rsdOrdMeta.shortKind}: Real-space simplices vs Redshifted simplices vs Velocity-gradient Gaussians`,
     pdfPlotData.rsdSheet_x||[],
     pdfDefs,
-    {xlabel:'ρ / ρ̄',ylabel:`${S.weight}-weighted ${yLabelSuffix}`,xlog:true,ylog:true},
+    {xlabel:'ρ / ρ̄',ylabel:`${S.weight}-weighted ${rsdOrdMeta.yLabelSuffix}`,xlog:true,ylog:rsdOrdMeta.ylog,ylim:rsdOrdMeta.ylim},
     pdfPlotData
   );
 
@@ -1377,28 +1647,257 @@ function showExecution(meta){
   const pre=$('pre','execution-raw-json',details);pre.textContent=JSON.stringify(meta,null,2);
 }
 function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and simplex Jacobian determinants are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'The sheet maps use exact cell integration of the P₀ and P₁ phase-space sheet following LPT trajectories. The CIC and TSC maps treat the same vertices as point particles; their empty cells and discreteness are properties of the estimator, not of the dynamics.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare Lagrangian resolution and observation-grid changes independently.',variance:'By Parseval’s theorem, the variance σ²(R) of a smoothed periodic field equals the sum over discrete Fourier modes weighted by W²(kR). At R = 8 Mpc/h with a real-space Top-Hat window, the unfiltered linear spectrum reproduces σ₈²(D(a)/D(1))² by construction.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
-async function loadPublished(){if(publishedData){current={published:publishedData};exportJsonButton.disabled=false;status.textContent='Published data ready';renderPublished();return;}status.textContent='Loading published replay…';notice.textContent='Loading packaged reference data.';try{if(!publishedPromise)publishedPromise=fetch('./data/published-results.json').then((res)=>{if(!res.ok)throw Error(`HTTP ${res.status}`);return res.json();});const data=await publishedPromise;if(S.view!=='published')return;publishedData=data;current={published:data};exportJsonButton.disabled=false;status.textContent='Published data ready';renderPublished();}catch(e){if(S.view!=='published')return;publishedPromise=null;current={publishedError:String(e.message||e)};exportJsonButton.disabled=true;status.textContent='Published data unavailable';renderPublished();}}
+async function loadPublished(){
+  replayLibrary = await listReplayLibrary();
+  if(!publishedData){
+    status.textContent='Loading published replay…';
+    notice.textContent='Loading packaged reference data.';
+    try{
+      if(!publishedPromise)publishedPromise=fetch('./data/published-results.json').then((res)=>{if(!res.ok)throw Error(`HTTP ${res.status}`);return res.json();});
+      publishedData=await publishedPromise;
+    }catch(e){
+      publishedPromise=null;
+      if(S.view==='published'&&activeReplaySourceId==='packaged'){
+        current={publishedError:String(e.message||e)};
+        exportJsonButton.disabled=true;
+        status.textContent='Published data unavailable';
+        renderPublished();
+        return;
+      }
+    }
+  }
+  if(S.view!=='published')return;
+  syncActivePublishedSource();
+  exportJsonButton.disabled=false;
+  status.textContent='Published data ready';
+  renderPublished();
+}
+function syncActivePublishedSource(){
+  if(activeReplaySourceId==='live'&&lastResult){
+    const pub = lastResult.publishedReplay || buildPublishedReplayFromResult(lastResult, S);
+    lastResult.publishedReplay = pub;
+    current = { published: pub, savedRun: { id: 'live', label: 'Current live browser run', state: { ...S }, result: lastResult, run: { durationMilliseconds: runMilliseconds } } };
+    return;
+  }
+  if(activeReplaySourceId!=='packaged'){
+    const entry = replayLibrary.find((r)=>r.id===activeReplaySourceId);
+    if(entry&&entry.result){
+      const pub = entry.result.publishedReplay || buildPublishedReplayFromResult(entry.result, entry.state || S);
+      entry.result.publishedReplay = pub;
+      current = { published: pub, savedRun: entry };
+      return;
+    }
+    activeReplaySourceId='packaged';
+  }
+  current={published:publishedData,savedRun:null};
+}
 function renderPublished(){
-  explain();clearHost();renderTheory();const data=current?.published;
+  explain();clearHost();renderTheory();
+  syncActivePublishedSource();
+  const data=current?.published;
+  const savedEntry=current?.savedRun||null;
+
+  // Replay Archive & Saved Runs Manager Panel
+  const mgr=panel(
+    'Replay Archive & Saved Browser Simulations',
+    'Replay the packaged 300 Mpc/h DiscoDJ reference archive (List, Hahn & Abel 2026) or load and replay any saved 1D/2D/3D browser simulation from disk (.json) or the browser’s persistent Replay Library. Saved runs can also be hydrated across all 8 Laboratory views instantaneously without recomputing.'
+  );
+  const mgrBar=$('div','published-controls',mgr);
+  const srcWrap=$('label','published-select',mgrBar);
+  srcWrap.style.flex='1 1 24rem';
+  $('span','',srcWrap,'Active replay dataset');
+  const srcSel=$('select','lab-select',srcWrap);
+  const addOpt=(val,txt)=>{const o=$('option','',srcSel,txt);o.value=val;};
+  addOpt('packaged','Packaged reference archive — List, Hahn & Abel (2026) 300 Mpc/h DiscoDJ');
+  if(lastResult&&!lastResult.published){
+    addOpt('live',`[Live in memory] ${lastResult.dim||S.dim}D · N=${lastResult.n||S.n}^${lastResult.dim||S.dim} · mesh=${lastResult.mesh||S.mesh}^${lastResult.dim||S.dim} · a=${num(lastResult.a??S.scaleFactor,4)}`);
+  }
+  for(const item of replayLibrary){
+    const dur=item.run?.durationMilliseconds?` · ${(item.run.durationMilliseconds/1000).toFixed(1)}s`:'';
+    const ts=item.createdAt?` · ${new Date(item.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`:'';
+    addOpt(item.id,`[Saved] ${item.label||item.id}${dur}${ts}`);
+  }
+  srcSel.value=activeReplaySourceId;
+  srcSel.addEventListener('change',()=>{
+    activeReplaySourceId=srcSel.value;
+    syncActivePublishedSource();
+    const d=current?.published;
+    if(d){
+      if(d.models?.length&&!d.models.some(m=>m.id===S.pubmodel))S.pubmodel=d.models[0].id;
+      if(d.estimators?.length&&!d.estimators.some(e=>e.id===S.pubest))S.pubest=d.estimators[0].id;
+    }
+    renderPublished();
+  });
+
+  // Load from disk button inside Published Replay
+  const diskLabel=$('label','import-json-button qd-btn',mgrBar,'Load run from disk (.json)');
+  diskLabel.style.alignSelf='end';
+  const diskInput=$('input','',diskLabel);
+  diskInput.type='file';
+  diskInput.accept='application/json,.json';
+  diskInput.addEventListener('change',async()=>{
+    const file=diskInput.files?.[0];
+    if(!file)return;
+    try{
+      const manifest=JSON.parse(await file.text());
+      await importExperimentManifest(manifest,file.name,'published');
+    }catch(error){
+      setNotice(`Could not load replay JSON: ${error?.message||error}`,'error');
+    }finally{
+      diskInput.value='';
+    }
+  });
+
+  if(lastResult&&!lastResult.published){
+    const saveLiveBtn=$('button','qd-btn',mgrBar,'Save live run to disk & library');
+    saveLiveBtn.type='button';
+    saveLiveBtn.style.alignSelf='end';
+    saveLiveBtn.addEventListener('click',async()=>{
+      const prev=current;
+      current=lastResult;
+      const saved=await exportExperiment(true);
+      if(saved){
+        activeReplaySourceId=saved.id;
+        syncActivePublishedSource();
+        renderPublished();
+        setNotice(`Saved live simulation (${saved.label}) to disk and to the Replay Library.`,'success');
+      }else{
+        current=prev;
+      }
+    });
+  }
+
+  if(savedEntry&&savedEntry.result){
+    const openAllBtn=$('button','qd-btn',mgrBar,'Inspect across all 8 Laboratory views (instant replay)');
+    openAllBtn.type='button';
+    openAllBtn.style.alignSelf='end';
+    openAllBtn.addEventListener('click',()=>{
+      if(savedEntry.state){
+        S=normalizeState({...savedEntry.state,view:'sheet'});
+        if(requiresExtendedLimits(S)||savedEntry.request?.extended)extendedMode=true;
+      }else{
+        S.view='sheet';
+      }
+      if(Array.isArray(savedEntry.request?.estimators)&&savedEntry.request.estimators.length){
+        selectedEstimators=savedEntry.request.estimators;
+        saveSelectedEstimators();
+        syncEstimatorMatrixUI();
+      }
+      controls.sync();
+      const key=physicsKey();
+      lastResult=savedEntry.result;
+      lastResultKey=key;
+      computedFor=key;
+      current=savedEntry.result;
+      execution=savedEntry.result.execution||savedEntry.execution||null;
+      runMilliseconds=savedEntry.run?.durationMilliseconds??null;
+      exportJsonButton.disabled=false;
+      selectView('sheet',false);
+      updateURL();
+      status.textContent='Replaying saved run';
+      setNotice(`Instant replay active for “${savedEntry.label}”. Switch freely among Phase-space sheet, Density, Power spectra, Variance vs scale, PDFs, Redshift space (RSD), and Differentiability without recomputing.`,'success');
+    });
+
+    if(savedEntry.id!=='live'){
+      const downloadSavedBtn=$('button','qd-btn',mgrBar,'Download .json to disk');
+      downloadSavedBtn.type='button';
+      downloadSavedBtn.style.alignSelf='end';
+      downloadSavedBtn.addEventListener('click',()=>{
+        const blob=new Blob([JSON.stringify(savedEntry)],{type:'application/json'});
+        downloadBlob(blob,`precrossedsheet-replay-${savedEntry.id}.json`);
+        flash(downloadSavedBtn,'Downloaded');
+      });
+
+      const delBtn=$('button','qd-btn',mgrBar,'Delete from library');
+      delBtn.type='button';
+      delBtn.style.alignSelf='end';
+      delBtn.addEventListener('click',async()=>{
+        await deleteReplayFromLibrary(savedEntry.id);
+        replayLibrary=await listReplayLibrary();
+        activeReplaySourceId='packaged';
+        syncActivePublishedSource();
+        renderPublished();
+      });
+    }
+  }
+
   if(!data){setNotice(`Published replay is unavailable: ${current?.publishedError||'Loading packaged reference data.'}`,current?.publishedError?'error':'');return;}
-  setNotice('Published reference replay loaded. Its archive and single-stream restrictions are listed below.','success');
-  const p=panel(data.title||'Published density replay','Reported density PDFs and moments from the packaged simulation archive. This package contains no published power-spectrum curves.');
+  setNotice(
+    savedEntry
+      ? `Replaying saved simulation: ${savedEntry.label}. Use “Inspect across all 8 Laboratory views” above to explore its 3D sheet, density slices, RSD, and spectra interactively.`
+      : 'Published reference replay loaded. Its archive and single-stream restrictions are listed below.',
+    'success'
+  );
+  const p=panel(
+    data.title||'Published density replay',
+    savedEntry
+      ? 'Replaying density PDFs, moments, quantiles, and single-stream diagnostics from the selected saved simulation.'
+      : 'Reported density PDFs and moments from the packaged simulation archive. This package contains no published power-spectrum curves.'
+  );
   const choose=$('div','published-controls',p);
-  addPublishedSelect(choose,'Model','pubmodel',(data.models||[]).map((m)=>[m.id,m.label]));
-  addPublishedSelect(choose,'Estimator','pubest',(data.estimators||[]).map((e)=>[e.id,e.label]));
-  const radii=(data.smoothing_radii_mpc_h||[7,14,28,42]);addPublishedSelect(choose,'Smoothing radius R','pubr',radii.map((r)=>[r,`${r} Mpc/h`]));
-  addPublishedSelect(choose,'Snapshot pairing','paired',[[true,'Phase-shifted companion pair'],[false,'Unpaired run']]);
-  const model=S.pubmodel,est=S.pubest,R=Number(S.pubr);
+  const availModels=(data.models||[]).map((m)=>[m.id,m.label]);
+  const availEsts=(data.estimators||[]).map((e)=>[e.id,e.label]);
+  const radii=(data.smoothing_radii_mpc_h||[7,14,28,42]);
+  const activeModel=availModels.some(([id])=>id===S.pubmodel)?S.pubmodel:(availModels[0]?.[0]||S.pubmodel);
+  const activeEst=availEsts.some(([id])=>id===S.pubest)?S.pubest:(availEsts[0]?.[0]||S.pubest);
+  const activeR=radii.some((r)=>Number(r)===Number(S.pubr))?Number(S.pubr):Number(radii[0]??S.pubr);
+
+  if(savedEntry){
+    const addLocalSelect=(label,val,opts,onChange)=>{
+      const wrap=$('label','published-select',choose);$('span','',wrap,label);
+      const sel=$('select','lab-select',wrap);
+      for(const [v,t] of opts){const o=$('option','',sel,t);o.value=String(v);}
+      sel.value=String(val);
+      sel.addEventListener('change',()=>onChange(sel.value));
+    };
+    addLocalSelect('Model',activeModel,availModels,(v)=>{S.pubmodel=v;renderPublished();});
+    addLocalSelect('Estimator',activeEst,availEsts,(v)=>{S.pubest=v;renderPublished();});
+    addLocalSelect('Smoothing radius R',activeR,radii.map((r)=>[r,`${r} Mpc/h`]),()=>renderPublished());
+    if(publishedData){
+      const ovWrap=$('label','published-select',choose);
+      $('span','',ovWrap,'Packaged DiscoDJ reference overlay');
+      const ovSel=$('select','lab-select',ovWrap);
+      for(const [v,t] of [['1','Overlay packaged 300 Mpc/h DiscoDJ archive'],['0','Hide packaged reference overlay']]){const o=$('option','',ovSel,t);o.value=v;}
+      ovSel.value=overlayPackagedInReplay?'1':'0';
+      ovSel.addEventListener('change',()=>{overlayPackagedInReplay=ovSel.value==='1';renderPublished();});
+    }
+  }else{
+    addPublishedSelect(choose,'Model','pubmodel',availModels);
+    addPublishedSelect(choose,'Estimator','pubest',availEsts);
+    addPublishedSelect(choose,'Smoothing radius R','pubr',radii.map((r)=>[r,`${r} Mpc/h`]));
+    addPublishedSelect(choose,'Snapshot pairing','paired',[[true,'Phase-shifted companion pair'],[false,'Unpaired run']]);
+  }
+
+  const model=activeModel,est=activeEst,R=activeR;
   const runRec=(m,e,paired)=>data.runs?.find((r)=>r.model===m&&r.estimator===e&&(paired===undefined||r.paired===paired)&&r.radii?.some((x)=>Number(x.R)===R));
-  const selectedRun=runRec(model,est,S.paired),selectedRadius=selectedRun?.radii?.find((x)=>Number(x.R)===R);
+  const selectedRun=runRec(model,est,savedEntry?undefined:S.paired),selectedRadius=selectedRun?.radii?.find((x)=>Number(x.R)===R);
   if(!selectedRun||!selectedRadius){$('p','panel-note',p,'No packaged run matches this model, estimator, and smoothing radius.');return;}
   const weight=S.weight,otherModel=model==='nbody'?'4lpt':'nbody',otherRun=runRec(otherModel,est,selectedRun.paired),otherRadius=otherRun?.radii?.find((x)=>Number(x.R)===R);
   const estimatorOther=est==='sheet'?'cic':'sheet',pairedRun=selectedRun.paired?runRec(model,estimatorOther,true):null,pairedRadius=pairedRun?.radii?.find((x)=>Number(x.R)===R);
   const bins=arr(data.bin_edges_log10rho),centersLog=bins.slice(0,-1).map((x,i)=>(Number(x)+Number(bins[i+1]))/2),centersRho=centersLog.map((x)=>Math.pow(10,x)),ln10=Math.LN10;
   const toLinearPdf=(arrLog)=>arr(arrLog).map((v,i)=>{const r=centersRho[i];return r>0?Number(v)/(ln10*r):0;});
-  const curves={selected:toLinearPdf(selectedRadius[weight]?.pdf||[])};const definitions=[{key:'selected',label:`${model.toUpperCase()} ${est} · ${weight}`}];
-  if(otherRadius){curves.comparison=toLinearPdf(otherRadius[weight]?.pdf||[]);definitions.push({key:'comparison',label:`${otherModel.toUpperCase()} ${est} · ${weight}`});}
-  if(pairedRadius){curves.paired=toLinearPdf(pairedRadius[weight]?.pdf||[]);definitions.push({key:'paired',label:`${model.toUpperCase()} ${estimatorOther} · ${weight}`});}
+  const curves={selected:toLinearPdf(selectedRadius[weight]?.pdf||[])};
+  const definitions=[{key:'selected',label:`${model.toUpperCase()} ${est} · ${weight}`,color:'#0072B2',width:2.2}];
+  if(otherRadius){curves.comparison=toLinearPdf(otherRadius[weight]?.pdf||[]);definitions.push({key:'comparison',label:`${otherModel.toUpperCase()} ${est} · ${weight}`,color:'#D55E00',width:2.0});}
+  if(pairedRadius){curves.paired=toLinearPdf(pairedRadius[weight]?.pdf||[]);definitions.push({key:'paired',label:`${model.toUpperCase()} ${estimatorOther} · ${weight}`,color:'#009E73',dash:'6 3',width:1.9});}
+
+  // Optional overlay of packaged DiscoDJ reference when viewing a saved run
+  if(savedEntry&&overlayPackagedInReplay&&publishedData){
+    const pkgRadii=publishedData.smoothing_radii_mpc_h||[7,14,28,42];
+    const nearestPkgR=pkgRadii.reduce((best,cand)=>Math.abs(cand-R)<Math.abs(best-R)?cand:best,pkgRadii[0]||14);
+    const pkgEst=['sheet','cic'].includes(est)?est:'sheet';
+    const pkgModel=['1lpt','2lpt','3lpt','4lpt','nbody'].includes(model)?model:'4lpt';
+    const pkgRun=publishedData.runs?.find((r)=>r.model===pkgModel&&r.estimator===pkgEst&&r.paired===true&&r.radii?.some((x)=>Number(x.R)===nearestPkgR));
+    const pkgRad=pkgRun?.radii?.find((x)=>Number(x.R)===nearestPkgR);
+    if(pkgRad){
+      const pkgBins=arr(publishedData.bin_edges_log10rho);
+      const pkgCentersRho=pkgBins.slice(0,-1).map((x,i)=>Math.pow(10,(Number(x)+Number(pkgBins[i+1]))/2));
+      curves.pkgX=pkgCentersRho;
+      curves.pkgY=arr(pkgRad[weight]?.pdf||[]).map((v,i)=>{const r=pkgCentersRho[i];return r>0?Number(v)/(ln10*r):0;});
+      definitions.push({key:'pkgY',xkey:'pkgX',label:`Packaged DiscoDJ ${pkgModel.toUpperCase()} ${pkgEst} (R=${nearestPkgR} Mpc/h)`,color:'#34495e',dash:'3 3',width:1.7});
+    }
+  }
+
   addPlot(p,'Published density PDF',centersRho,definitions,{xlabel:'ρ / ρ̄',ylabel:'dP / d(ρ / ρ̄)',xlog:true,ylog:true},curves);
   const metrics=$('div','metric-strip',p),qs=selectedRadius[weight]?.quantiles_rho||[];
   const qps=arr(data.quantile_probabilities);for(let i=0;i<qps.length;i++)addMetric(metrics,`ρ quantile ${num(Number(qps[i])*100,3)}%`,num(qs[i],4));
@@ -1415,6 +1914,15 @@ function renderPublished(){
   if(Array.isArray(source.restrictions)){const visible=$('section','published-restrictions',p);$('h4','',visible,'Scope and limits');const ul=$('ul','',visible);for(const restriction of source.restrictions)$('li','',ul,String(restriction));}
   if(Array.isArray(source.source_paths))$('p','panel-note',prov,`Source files: ${source.source_paths.join(', ')}`);
   if(data.runs?.some((r)=>r.crossing?.ever_mass_fraction>0))$('p','published-caveat',p,'These archives are predominantly single stream, but the recorded N-body runs include a small nonzero shell-crossed mass fraction.');
+
+  // If replaying a saved browser simulation, also render its saved Power Spectra, Variance vs Scale, and Diagnostics right inside Published Replay!
+  if(savedEntry?.result){
+    const sr=savedEntry.result;
+    if(sr.spectra&&arr(sr.spectra.k).length){
+      renderSpectra(sr);
+    }
+    showDiagnostics(sr);
+  }
 }
 function addPublishedSelect(parent,label,key,options){const wrap=$('label','published-select',parent);$('span','',wrap,label);const sel=$('select','lab-select',wrap);sel.setAttribute('aria-label',label);for(const [value,text] of options){const o=$('option','',sel,text);o.value=String(value);}sel.value=String(S[key]);sel.addEventListener('change',()=>{S[key]=key==='pubr'?Number(sel.value):key==='paired'?sel.value==='true':sel.value;S=normalizeState(S);updateURL();renderPublished();});}
 function addMetric(parent,label,value){const item=$('div','metric',parent);$('span','metric-label',item,label);$('strong','metric-value',item,value);}

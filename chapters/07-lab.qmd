@@ -53,9 +53,10 @@ Launch the 3D laboratory experiment. Rotate the tetrahedral sheet to inspect the
 ## Resolution Controls and Bandwidth Protection {#sec-lab-resolution}
 
 The laboratory enforces rigorous numerical ceilings to prevent out-of-memory errors and ensure physical accuracy:
-* **Lagrangian Grids:** Up to 1024 elements in 1D, $256^2$ in 2D, and $64^3$ in 3D.
-* **Eulerian Analysis Grids:** Up to $128^3$ in 3D, configured independently of the Lagrangian particle resolution.
-* **Bandwidth Protection for 4LPT:** To guarantee that high-order displacement convolutions do not alias across the grid Nyquist frequency, the engine enforces $N_q > 8 m_{\rm cut}$ for Gaussian realizations.
+* **Lagrangian Grids:** Up to 1024 elements in 1D, $1024^2$ in 2D, and $64^3$ in 3D.
+* **Eulerian Analysis Grids:** Up to $1024^2$ in 2D and $128^3$ in 3D, configured independently of the Lagrangian particle resolution.
+* **PM Force Grid Resolution ($N_{\rm PM} \ge N_q$):** To guarantee that the deconvolved TSC Poisson solver resolves the Lagrangian inter-particle spacing without truncating active modes, interactive force-grid options below the vertex resolution ($N_{\rm PM} < N_q$) are disabled. When $N_{\rm PM} > N_q$ (such as $N_{\rm PM} = 2 N_q$), the spectral Poisson solver filters out modes outside the Lagrangian first Brillouin zone ($|m_j| \ge N_q / 2$), eliminating particle-lattice aliasing without $2^d\times$ particle resampling.
+* **Bandwidth Protection for 4LPT and PM:** To guarantee that high-order displacement convolutions do not alias across the grid Nyquist frequency and that active modes are resolved by at least 8 lattice cells per wavelength, the engine enforces $N_q > 8 m_{\rm cut}$ for Gaussian realizations.
 
 A complete run manifest containing every physical parameter, random seed, execution timing, and diagnostic metric can be exported as a standalone JSON file with a single click.
 

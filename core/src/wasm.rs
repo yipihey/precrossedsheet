@@ -23,6 +23,21 @@ pub struct PreparedLabRun {
 }
 
 #[wasm_bindgen]
+pub struct PreparedEstimatorUpdate {
+    inner: crate::laboratory::PreparedEstimatorUpdate,
+}
+
+#[wasm_bindgen]
+impl PreparedEstimatorUpdate {
+    pub fn json(&self) -> String {
+        self.inner.json().to_string()
+    }
+    pub fn custom_rho_f32(&self, key: &str) -> Vec<f32> {
+        self.inner.custom_rho_f32(key)
+    }
+}
+
+#[wasm_bindgen]
 pub struct PendingLabRun {
     inner: crate::laboratory::PendingLabRun,
 }
@@ -95,6 +110,20 @@ impl LabSession {
         self.inner
             .try_cached_observed_source(&request, arithmetic, initial_source, deposit_source)
             .map(|result| result.map(|inner| PreparedLabRun { inner }))
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn compute_estimators_cached(
+        &mut self,
+        request: &str,
+        arithmetic: &str,
+        initial_source: &str,
+    ) -> Result<Option<PreparedEstimatorUpdate>, JsValue> {
+        let request: crate::laboratory::LabRequest = serde_json::from_str(request)
+            .map_err(|e| JsValue::from_str(&format!("Invalid laboratory request: {e}")))?;
+        self.inner
+            .compute_estimators_cached(&request, arithmetic, initial_source)
+            .map(|result| result.map(|inner| PreparedEstimatorUpdate { inner }))
             .map_err(|e| JsValue::from_str(&e))
     }
 

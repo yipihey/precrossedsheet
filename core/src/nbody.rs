@@ -45,30 +45,40 @@ pub struct PmRun {
     pub first_crossing: Option<PmCrossing>,
 }
 
-/// CIC stencil and directional weight derivatives, periodic at mesh nodes.
-fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> ([(usize, f64, f64); 8], usize) {
+/// TSC (piecewise-quadratic B-spline M_3) stencil and directional weight derivatives,
+/// periodic at mesh nodes. C^1 continuous with position-independent second moment.
+fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> ([(usize, f64, f64); 27], usize) {
     let mut base = [0usize; 3];
-    let mut f = [0.0; 3];
+    let mut w1d = [[0.0; 3]; 3];
+    let mut dw1d = [[0.0; 3]; 3];
     let inv_dx = 1.0 / grid.dx();
     let nf = grid.n as f64;
     for a in 0..grid.dim {
-        let u = (x[a] * inv_dx - 0.5).rem_euclid(nf);
+        let u = (x[a] * inv_dx + 0.5).rem_euclid(nf);
         let fl = u.floor();
         base[a] = (fl as usize) % grid.n;
-        f[a] = u - fl;
+        let d = (u - fl) - 0.5;
+        let m = 0.5 - d;
+        let p = 0.5 + d;
+        w1d[a] = [0.5 * m * m, 0.75 - d * d, 0.5 * p * p];
+        if let Some(v) = dx {
+            let s = v[a] * inv_dx;
+            dw1d[a] = [(d - 0.5) * s, -2.0 * d * s, (d + 0.5) * s];
+        }
     }
-    let count = 1usize << grid.dim;
-    let mut out = [(0usize, 0.0, 0.0); 8];
-    for bits in 0..count {
-        let mut ijk = base;
+    let count = 3usize.pow(grid.dim as u32);
+    let mut out = [(0usize, 0.0, 0.0); 27];
+    let n = grid.n;
+    for idx in 0..count {
+        let c0 = idx % 3;
+        let c1 = (idx / 3) % 3;
+        let c2 = idx / 9;
+        let cs = [c0, c1, c2];
+        let mut ijk = [0usize; 3];
         let mut factors = [1.0; 3];
         for a in 0..grid.dim {
-            if bits & (1 << a) != 0 {
-                ijk[a] = (base[a] + 1) % grid.n;
-                factors[a] = f[a];
-            } else {
-                factors[a] = 1.0 - f[a];
-            }
+            ijk[a] = (base[a] + n + cs[a] - 1) % n;
+            factors[a] = w1d[a][cs[a]];
         }
         let w = match grid.dim {
             1 => factors[0],
@@ -76,10 +86,9 @@ fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> ([(usize, f64, f64); 8
             _ => factors[0] * factors[1] * factors[2],
         };
         let mut dw = 0.0;
-        if let Some(v) = dx {
+        if dx.is_some() {
             for a in 0..grid.dim {
-                let sign = if bits & (1 << a) != 0 { 1.0 } else { -1.0 };
-                let mut term = sign * v[a] * inv_dx;
+                let mut term = dw1d[a][cs[a]];
                 for b in 0..grid.dim {
                     if b != a {
                         term *= factors[b];
@@ -88,7 +97,7 @@ fn stencil(grid: &Grid, x: &[f64], dx: Option<&[f64]>) -> ([(usize, f64, f64); 8
                 dw += term;
             }
         }
-        out[bits] = (grid.ravel(ijk), w, dw);
+        out[idx] = (grid.ravel(ijk), w, dw);
     }
     (out, count)
 }
@@ -125,7 +134,40 @@ pub fn cic_density_jvp(mesh: &Grid, x: &[f64], dx: Option<&[f64]>) -> (Vec<f64>,
     (rho, drho)
 }
 
-fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64], omega_m: f64) -> Vec<Vec<f64>> {
+fn sheet_side(dim: usize, np: usize) -> usize {
+    match dim {
+        1 => np,
+        2 => (np as f64).sqrt().round() as usize,
+        _ => (np as f64).cbrt().round() as usize,
+    }
+}
+
+fn inv_tsc_window_sq(mesh: &Grid, i: usize, sheet_n: usize) -> f64 {
+    let ijk = mesh.unravel(i);
+    let inv_n = std::f64::consts::PI / mesh.n as f64;
+    let mut w = 1.0;
+    for d in 0..mesh.dim {
+        let m = mesh.ifreq(ijk[d]);
+        if mesh.n > sheet_n && (m.unsigned_abs() as usize) * 2 >= sheet_n {
+            return 0.0;
+        }
+        if m != 0 {
+            let theta = (m as f64) * inv_n;
+            let sinc = theta.sin() / theta;
+            let s2 = sinc * sinc;
+            w *= s2 * s2 * s2;
+        }
+    }
+    1.0 / w
+}
+
+fn mesh_force(
+    mesh: &Grid,
+    eng: &mut FftEngine,
+    rho: &[f64],
+    omega_m: f64,
+    sheet_n: usize,
+) -> Vec<Vec<f64>> {
     let hat = eng.forward_real(rho);
     (0..mesh.dim)
         .map(|a| {
@@ -137,7 +179,8 @@ fn mesh_force(mesh: &Grid, eng: &mut FftEngine, rho: &[f64], omega_m: f64) -> Ve
                     if k2 == 0.0 {
                         C64::new(0.0, 0.0)
                     } else {
-                        C64::new(0.0, 1.5 * omega_m * mesh.kvec(i)[a] / k2) * z
+                        let deconv = inv_tsc_window_sq(mesh, i, sheet_n);
+                        C64::new(0.0, 1.5 * omega_m * deconv * mesh.kvec(i)[a] / k2) * z
                     }
                 })
                 .collect();
@@ -171,11 +214,13 @@ fn force_jvp_with_engine(
     dx: Option<&[f64]>,
     omega_m: f64,
 ) -> (Vec<f64>, Vec<f64>) {
+    let np = x.len() / mesh.dim;
+    let sheet_n = sheet_side(mesh.dim, np);
     let (rho, drho) = cic_density_jvp(mesh, x, dx);
-    let f = mesh_force(mesh, eng, &rho, omega_m);
+    let f = mesh_force(mesh, eng, &rho, omega_m, sheet_n);
     let mut out = vec![0.0; x.len()];
     if dx.is_some() {
-        let df = mesh_force(mesh, eng, &drho, omega_m);
+        let df = mesh_force(mesh, eng, &drho, omega_m, sheet_n);
         let mut dout = vec![0.0; x.len()];
         for i in 0..x.len() / mesh.dim {
             let j = i * mesh.dim;
@@ -450,10 +495,15 @@ pub fn evolve_cosmology(
         tangent.as_ref().map(|t| t.dx.as_slice()),
         cosmo.omega_m,
     );
+    let u_start = a_start.sqrt();
+    let u_end = a_end.sqrt();
     for s in 0..steps {
-        let a0 = a_start + (a_end - a_start) * s as f64 / steps as f64;
-        let a1 = a_start + (a_end - a_start) * (s + 1) as f64 / steps as f64;
-        let amid = 0.5 * (a0 + a1);
+        let u0 = u_start + (u_end - u_start) * s as f64 / steps as f64;
+        let u1 = u_start + (u_end - u_start) * (s + 1) as f64 / steps as f64;
+        let umid = 0.5 * (u0 + u1);
+        let a0 = if s == 0 { a_start } else { u0 * u0 };
+        let a1 = if s + 1 == steps { a_end } else { u1 * u1 };
+        let amid = umid * umid;
         let k0 = cosmology_clocks(cosmo, a0, amid).0;
         let k1 = cosmology_clocks(cosmo, amid, a1).0;
         let drift = cosmology_clocks(cosmo, a0, a1).1;

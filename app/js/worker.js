@@ -47,7 +47,7 @@ self.onmessage = ({ data }) => {
 
 function start(data) {
   if (shuttingDown) return;
-  const task = { requestId: data.requestId, key: data.key, state: data.state, policy: data.policy || { requested: 'cpu' }, cancelled: false, controller: null };
+  const task = { requestId: data.requestId, key: data.key, state: data.state, allEstimators: data.allEstimators || null, estimatorsOnly: Boolean(data.estimatorsOnly), policy: data.policy || { requested: 'cpu' }, cancelled: false, controller: null };
   active = task;
   void execute(task).then((result) => {
     if (cancelled(task)) send({ type: 'cancelled', requestId: task.requestId });
@@ -72,10 +72,47 @@ function start(data) {
 async function execute(task) {
   const started = performance.now();
   const inBrowserWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
-  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261027f', import.meta.url) }) : init();
+  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261028d', import.meta.url) }) : init();
   try { await wasmReady; } catch (error) { wasmReady = null; throw error; }
   const wasm = wasmApi;
   if (cancelled(task)) return {};
+
+  if (task.estimatorsOnly && labSession && typeof labSession.compute_estimators_cached === 'function' && !task.policy?.disableCache) {
+    phase(task, 'observations', 'Constructing requested LPT/estimator density fields from retained trajectories.', false);
+    const reqJson = JSON.stringify(task.state);
+    const candidateSources = lastPhysical?.source ? [lastPhysical.source, lastPhysical.source === 'gpu-f32' ? 'cpu-f64' : 'gpu-f32'] : ['cpu-f64', 'gpu-f32'];
+    const candidateArith = lastPhysical?.arithmetic ? [lastPhysical.arithmetic, lastPhysical.arithmetic === 'f32' ? 'f64' : 'f32'] : ['f64', 'f32'];
+    let upd = null;
+    for (const src of candidateSources) {
+      for (const ar of candidateArith) {
+        try {
+          upd = labSession.compute_estimators_cached(reqJson, ar, src);
+          if (upd) break;
+        } catch (_) {
+          upd = null;
+        }
+      }
+      if (upd) break;
+    }
+    if (upd) {
+      try {
+        const parsed = parseJson(upd.json(), 'estimator update');
+        if (parsed.customSeries && typeof upd.custom_rho_f32 === 'function') {
+          for (const [k, entry] of Object.entries(parsed.customSeries)) {
+            if (entry && (!entry.rho || entry.rho.length === 0)) {
+              entry.rho = upd.custom_rho_f32(k);
+            }
+          }
+        }
+        return { estimatorsOnly: true, customSeries: parsed.customSeries || {}, durationMilliseconds: performance.now() - started };
+      } finally {
+        upd.free?.();
+      }
+    }
+    if (Array.isArray(task.allEstimators) && task.allEstimators.length) {
+      task.state = { ...task.state, estimators: task.allEstimators };
+    }
+  }
 
   phase(task, 'preparing', 'Preparing trajectories, tangents, and exact observations.');
   const preparationStarted = performance.now();
@@ -358,7 +395,7 @@ function reusedStage(record, fallback) {
   const value = record || fallback;
   return { ...value, reused: true, previousRunTimings: value.timings || value.previousRunTimings || null, timings: null };
 }
-function physicalKey(state) { const { smoothing, mesh, ...physical } = state; return JSON.stringify(physical); }
+function physicalKey(state) { const { smoothing, mesh, estimators, ...physical } = state; return JSON.stringify(physical); }
 async function preparePhysical(task, wasm, preparedCtor) {
   if (typeof wasm.LabSession !== 'function') return { prepared: new preparedCtor(JSON.stringify(task.state)),
     lptExecution: { backend: 'cpu', precision: 'f32 spatial tensors; f64 growth/state' },
@@ -370,12 +407,17 @@ async function preparePhysical(task, wasm, preparedCtor) {
   const radix = (n) => Number.isInteger(n) && n >= 2 && (n & (n-1)) === 0;
   const gridCells = (task.state.n || 0) ** (task.state.dim || 1);
   const meshCells = (task.state.mesh || 0) ** (task.state.dim || 1);
-  const gpuLpt = requestedGpu && !task.policy.disableLpt && radix(task.state.n) && gridCells <= 262144 && typeof wasm.GpuLptSeed === 'function';
-  const gpuPm = requestedGpu && !task.policy.disablePm && radix(task.state.forceMesh) && gridCells <= 13824;
+  const maxGpuLptCells = task.state.extended ? 4194304 : 262144;
+  const maxGpuPmCells = task.state.extended ? 262144 : 13824;
+  const needPm = !Array.isArray(task.state.estimators) || task.state.estimators.length === 0 || task.state.estimators.some(e => String(e).startsWith('pm:'));
+  const gpuLpt = requestedGpu && !task.policy.disableLpt && radix(task.state.n) && gridCells <= maxGpuLptCells && typeof wasm.GpuLptSeed === 'function';
+  const gpuPm = needPm && requestedGpu && !task.policy.disablePm && radix(task.state.forceMesh) && gridCells <= maxGpuPmCells;
   const gpuDeposit = requestedGpu && !task.policy.disableDeposit && gridCells <= 65536 && meshCells <= 65536;
   const forcePhysical = ['forceLptFailure','forcePmFailure','forceDepositFailure'].some(k => task.policy[k]);
   let lptExecution = { backend: 'cpu', precision: 'f32 nLPT tensors; f64 cosmological growth/state', fallbackReason: task.policy.disableLpt ? 'GPU nLPT disabled for an explicit reference comparison.' : requestedGpu && !gpuLpt ? (gridCells > 262144 ? 'Large lattice uses CPU f64 LPT construction.' : 'GPU nLPT requires a radix lattice in 2D/3D.') : null };
-  let pmExecution = { backend: 'cpu', precision: 'f64', fallbackReason: task.policy.disablePm ? 'Resident PM disabled for an explicit reference comparison.' : requestedGpu && !gpuPm ? (gridCells > 13824 ? 'Large-grid laboratory omits PM evolution.' : 'Resident PM requires a power-of-two force mesh.') : null };
+  let pmExecution = !needPm
+    ? { backend: 'cpu', precision: 'skipped (LPT-only selection)', skipped: true, fallbackReason: 'No PM trajectory/estimator selected in the comparison matrix; skipped PM simulation for fast LPT evaluation.' }
+    : { backend: 'cpu', precision: 'f64', fallbackReason: task.policy.disablePm ? 'Resident PM disabled for an explicit reference comparison.' : requestedGpu && !gpuPm ? (gridCells > 13824 ? 'Large-grid laboratory omits PM evolution.' : 'Resident PM requires a power-of-two force mesh.') : null };
   let depositExecution = { backend: 'cpu', provenance: 'cpu-exact', arithmeticPrecision: 'f64 geometry and accumulation', fallbackReason: task.policy.disableDeposit ? 'GPU exact deposition disabled for an explicit reference comparison.' : requestedGpu && !gpuDeposit ? 'Large observation grid uses CPU exact deposition.' : null };
   const source = gpuLpt ? 'gpu-f32' : 'cpu-f64', arithmetic = gpuPm ? 'f32' : 'f64', depositSource = gpuDeposit ? DEPOSIT_SOURCE : 'cpu-exact';
   const key = physicalKey(task.state);
@@ -484,7 +526,7 @@ async function preparePhysical(task, wasm, preparedCtor) {
         const count=meta.n**meta.dim*4;
         const input={dim:meta.dim,n:meta.n,meshN:task.state.mesh,boxSize:1};
         const lpt=await runExactDeposit(context.device,{...input,positions:copyF32(pending.lpt_positions())},options);
-        const pmDensity=gridCells>13824?lpt:await runExactDeposit(context.device,{...input,positions:cachedPmPositions || (pm?pm.x:copyF32(pending.pm_reference()).subarray(0,count))},options);
+        const pmDensity=(!needPm||gridCells>13824)?lpt:await runExactDeposit(context.device,{...input,positions:cachedPmPositions || (pm?pm.x:copyF32(pending.pm_reference()).subarray(0,count))},options);
         if(cancelled(task))return null;
         attempt={...attempt,timings:{lpt:lpt.timings,pm:pmDensity.timings},diagnostics:{lpt:lpt.diagnostics,pm:pmDensity.diagnostics},kernelProvenance:lpt.provenance};
         if(failure==='readback')throw new Error('Forced exact-deposition readback failure.');

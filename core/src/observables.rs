@@ -381,7 +381,7 @@ pub fn simplex_density_pdf_and_summary(
             }
         }
         let n = verts.len();
-        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-6);
+        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-8);
         let r_t = 1.0 / abs_j;
         let v_t = mass * abs_j;
         if let Some(w) = vertex_weights {
@@ -390,7 +390,7 @@ pub fn simplex_density_pdf_and_summary(
             let mut w_min = f64::INFINITY;
             let mut w_max = f64::NEG_INFINITY;
             for (vi, &(id, _)) in verts.iter().enumerate() {
-                let wa = (w[id] as f64).max(1e-6);
+                let wa = (w[id] as f64).max(1e-8);
                 w_v[vi] = wa;
                 w_sum += wa;
                 if wa < w_min {
@@ -419,7 +419,7 @@ pub fn simplex_density_pdf_and_summary(
                 for vi in 0..n {
                     dw_q += bary[vi] * (w_v[vi] - w_bar);
                 }
-                let r_q = (r_t + alpha * dw_q).max(1e-6);
+                let r_q = (r_t + alpha * dw_q).max(1e-8);
                 let shape = r_q / r_t;
                 let y = r_q.log10();
                 if y < min_y {
@@ -452,8 +452,8 @@ pub fn simplex_density_pdf_and_summary(
         (-1.8, 1.8)
     } else {
         let pad = ((max_y - min_y) * 0.015).max(1e-3);
-        let lo_bound = (min_y - pad).max(-6.0);
-        let hi_bound = (max_y + pad).min(6.0);
+        let lo_bound = (min_y - pad).max(-8.0);
+        let hi_bound = (max_y + pad).min(8.0);
         (lo_bound, hi_bound)
     };
     let dy = (hi - lo) / bins as f64;
@@ -480,7 +480,7 @@ pub fn simplex_density_pdf_and_summary(
             }
         }
         let n = verts.len();
-        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-6);
+        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-8);
         let r_t = 1.0 / abs_j;
         let v_t = mass * abs_j;
         let mut accum = |r: f64, v: f64, m: f64| {
@@ -506,7 +506,7 @@ pub fn simplex_density_pdf_and_summary(
             let mut w_min = f64::INFINITY;
             let mut w_max = f64::NEG_INFINITY;
             for (vi, &(id, _)) in verts.iter().enumerate() {
-                let wa = (w[id] as f64).max(1e-6);
+                let wa = (w[id] as f64).max(1e-8);
                 w_v[vi] = wa;
                 w_sum += wa;
                 if wa < w_min {
@@ -535,7 +535,7 @@ pub fn simplex_density_pdf_and_summary(
                 for vi in 0..n {
                     dw_q += bary[vi] * (w_v[vi] - w_bar);
                 }
-                let r_q = (r_t + alpha * dw_q).max(1e-6);
+                let r_q = (r_t + alpha * dw_q).max(1e-8);
                 let shape = r_q / r_t;
                 accum(r_q, v_t / k_pts, mass * shape / k_pts);
             }
@@ -718,8 +718,10 @@ pub fn sheet_modes_along_ray(
         .enumerate()
         .map(|(i, &m)| if i == 0 { m } else { m - modes[i - 1] })
         .collect();
-    let sub_stride = if nm > 6 && max_sub_n > 0 && grid.n > max_sub_n && grid.n % max_sub_n == 0 {
-        grid.n / max_sub_n
+    let sub_stride = if nm > 6 && max_sub_n > 0 && grid.n > max_sub_n {
+        (1..=grid.n)
+            .find(|&s| grid.n % s == 0 && grid.n / s <= max_sub_n)
+            .unwrap_or(1)
     } else {
         1
     };
@@ -929,8 +931,10 @@ pub fn redshift_space_analysis(
         2 => 128,
         _ => 32,
     };
-    let stride = if grid.n > max_n && grid.n % max_n == 0 {
-        grid.n / max_n
+    let stride = if grid.n > max_n {
+        (1..=grid.n)
+            .find(|&s| grid.n % s == 0 && grid.n / s <= max_n)
+            .unwrap_or(1)
     } else {
         1
     };

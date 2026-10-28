@@ -494,12 +494,12 @@ fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
     // changes. Leave room for legitimate small compiler and FFT differences.
     for errors in displacement_errors.windows(2) {
         assert!(
-            errors[1] < 0.6 * errors[0],
+            errors[1] < 0.45 * errors[0],
             "displacement residuals: {displacement_errors:?}"
         );
     }
     assert!(
-        displacement_errors[0] > 0.05 && displacement_errors[2] < 0.025,
+        displacement_errors[0] > 0.005 && displacement_errors[2] < 0.002,
         "displacement residuals: {displacement_errors:?}"
     );
     let power_errors: Vec<f64> = fundamental_power_ratios
@@ -513,7 +513,7 @@ fn mixed_waves_joint_particle_mesh_refinement_converges_toward_lpt() {
         );
     }
     assert!(
-        power_errors[0] > 0.05 && power_errors[2] < 0.01,
+        power_errors[0] > 0.005 && power_errors[2] < 0.002,
         "fundamental ratios: {fundamental_power_ratios:?}"
     );
 }
@@ -728,7 +728,8 @@ fn crossing_policy_continues_and_records_first_drift_or_crossed_input() {
         let crossing = run.first_crossing.unwrap();
         assert_eq!(crossing.step, 1);
         assert_eq!(crossing.a_start, 0.2);
-        assert!((crossing.a_end - (0.2 + 0.1 / 3.0)).abs() < 1e-14);
+        let expected_a1 = (0.2_f64.sqrt() + (0.3_f64.sqrt() - 0.2_f64.sqrt()) / 3.0).powi(2);
+        assert!((crossing.a_end - expected_a1).abs() < 1e-14);
         assert!(crossing.minimum_jacobian <= 0.0);
     }
     let mut crossed_x = x;

@@ -178,22 +178,25 @@ function fixturePacked(n,dim,{translation=[0,0,0],tangent=[0,0,0],velocity=[0,0,
   return {x,p,dx,dp};
 }
 
-// Independent f64 matched CIC / spectral force and directional derivative.
+// Independent f64 matched deconvolved-TSC / spectral force and directional derivative.
 // The FFT is a direct O(N^2) DFT, small enough for the n=16 Poisson fixture.
-function spectralForceReference({n,dim,boxSize,omegaM,x,dx}){
-  const size=n**dim,np=x.length/4,rho=new Float64Array(size),drho=new Float64Array(size),strides=Array(dim);
+function spectralForceReference({n,dim,boxSize,omegaM,x,dx,sheetN=n}){
+  const size=n**dim,np=x.length/4,rho=new Float64Array(size),drho=new Float64Array(size),strides=Array(dim),corners=3**dim;
   for(let a=0;a<dim;a++)strides[a]=n**(dim-1-a);
+  const tscW=(d,c)=>c===0?0.5*(0.5-d)*(0.5-d):c===1?0.75-d*d:0.5*(0.5+d)*(0.5+d);
+  const tscDW=(d,c)=>c===0?d-0.5:c===1?-2*d:d+0.5;
   const nodes=(pos,dir)=>{
-    const base=[],frac=[];for(let a=0;a<dim;a++){const u=((pos[a]/boxSize)%1+1)%1*n;base[a]=Math.floor(u)%n;frac[a]=u-Math.floor(u);}
-    const out=[];for(let bits=0;bits<(1<<dim);bits++){let flat=0,w=1,dw=0,axisWeights=[];for(let a=0;a<dim;a++){const upper=(bits>>a)&1,wa=upper?frac[a]:1-frac[a],sign=upper?1:-1;axisWeights.push(wa);flat+=((base[a]+upper)%n)*strides[a];w*=wa;}
-      if(dir)for(let a=0;a<dim;a++){let term=((bits>>a)&1?1:-1)*dir[a]/boxSize*n;for(let b=0;b<dim;b++)if(b!==a)term*=axisWeights[b];dw+=term;}out.push([flat,w,dw]);}return out;
+    const base=[],frac=[];for(let a=0;a<dim;a++){const u=((pos[a]/boxSize)%1+1)%1*n+0.5,cell=Math.floor(u);base[a]=((cell%n)+n)%n;frac[a]=(u-cell)-0.5;}
+    const out=[];for(let c=0;c<corners;c++){let rem=c,flat=0,w=1,dw=0,axisWeights=[],axisDWeights=[];for(let a=0;a<dim;a++){const b=rem%3;rem=Math.floor(rem/3);const wa=tscW(frac[a],b),dwa=tscDW(frac[a],b);axisWeights.push(wa);axisDWeights.push(dwa);flat+=(((base[a]+b-1)%n+n)%n)*strides[a];w*=wa;}
+      if(dir)for(let a=0;a<dim;a++){let term=axisDWeights[a]*dir[a]/boxSize*n;for(let b=0;b<dim;b++)if(b!==a)term*=axisWeights[b];dw+=term;}out.push([flat,w,dw]);}return out;
   };
   for(let i=0;i<np;i++){const pos=[],dir=[];for(let a=0;a<dim;a++){pos.push(x[4*i+a]);dir.push(dx?.[4*i+a]??0);}for(const [node,w,dw] of nodes(pos,dir)){rho[node]+=size/np*w;drho[node]+=size/np*dw;}}
   const coordinates=(flat)=>strides.map((s)=>Math.floor(flat/s)%n),forward=(field)=>{
     const re=new Float64Array(size),im=new Float64Array(size);
     for(let q=0;q<size;q++){const qc=coordinates(q);for(let j=0;j<size;j++){const jc=coordinates(j),phase=-2*Math.PI*qc.reduce((v,c,a)=>v+c*jc[a]/n,0),z=field[j];re[q]+=z*Math.cos(phase);im[q]+=z*Math.sin(phase);}}return [re,im];
   };
-  const inverseForce=(hat,a)=>{const out=new Float64Array(size);for(let j=0;j<size;j++){const jc=coordinates(j);let sum=0;for(let q=0;q<size;q++){const qc=coordinates(q),mode=qc.map(v=>v>=n/2?v-n:v);let k2=0;for(const m of mode){const k=2*Math.PI*m/boxSize;k2+=k*k;}const qa=mode[a],kd=n%2===0&&qc[a]===n/2?0:2*Math.PI*qa/boxSize;if(!k2||!kd)continue;const coeff=1.5*omegaM*kd/k2,phase=2*Math.PI*qc.reduce((v,c,b)=>v+c*jc[b]/n,0),hr=hat[0][q],hi=hat[1][q];sum+=coeff*(-hr*Math.sin(phase)-hi*Math.cos(phase));}out[j]=sum/size;}return out;};
+  const sinc3Inv2=(m)=>{if(m===0)return 1;const th=Math.PI*m/n,s=Math.sin(th)/th;return 1/(s**6);};
+  const inverseForce=(hat,a)=>{const out=new Float64Array(size);for(let j=0;j<size;j++){const jc=coordinates(j);let sum=0;for(let q=0;q<size;q++){const qc=coordinates(q),mode=qc.map(v=>v>=n/2?v-n:v);if(n>sheetN&&mode.some(m=>Math.abs(m)*2>=sheetN))continue;let k2=0,deconv=1;for(const m of mode){const k=2*Math.PI*m/boxSize;k2+=k*k;deconv*=sinc3Inv2(m);}const qa=mode[a],kd=n%2===0&&qc[a]===n/2?0:2*Math.PI*qa/boxSize;if(!k2||!kd)continue;const coeff=1.5*omegaM*deconv*kd/k2,phase=2*Math.PI*qc.reduce((v,c,b)=>v+c*jc[b]/n,0),hr=hat[0][q],hi=hat[1][q];sum+=coeff*(-hr*Math.sin(phase)-hi*Math.cos(phase));}out[j]=sum/size;}return out;};
   const rh=forward(rho),drh=forward(drho),force=[],dforce=[];for(let a=0;a<dim;a++){force.push(inverseForce(rh,a));dforce.push(inverseForce(drh,a));}
   const f=new Float64Array(x.length),df=new Float64Array(x.length);
   for(let i=0;i<np;i++){const pos=[],dir=[];for(let a=0;a<dim;a++){pos.push(x[4*i+a]);dir.push(dx?.[4*i+a]??0);}for(const [node,w,dw] of nodes(pos,dir))for(let a=0;a<dim;a++){f[4*i+a]+=w*force[a][node];df[4*i+a]+=w*dforce[a][node]+dw*force[a][node];}}
@@ -482,7 +485,7 @@ export async function runResidentChecks({device,signal,onProgress=()=>{},benchma
     }
     // A long-range crossed run exercises the continuation diagnostic on a
     // physical prepared fixture. Its trajectory remains usable for deposits.
-    const crossedRequest=request({dim:3,n:16,forceMesh:32,mesh:16,omegaM:.315,scaleFactor:1});
+    const crossedRequest=request({dim:3,n:16,forceMesh:32,mesh:16,omegaM:.315,scaleFactor:1,ic:'gaussian',sigma8:1.4,initialSmoothing:0});
     const crossed=await pmFixture(device,crossedRequest,{signal,onProgress,checkAllDrifts:true,compareFullRun:true});
     const crossingRow=crossed.rows.find(r=>/full-run shell-crossing continuation/.test(r.label));
     rows.push(...crossed.rows);fixtures.push(crossed);
