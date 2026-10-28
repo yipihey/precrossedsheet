@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 const stateSource=await readFile(new URL('../app/js/state.js',import.meta.url),'utf8');
 const state=await import(`data:text/javascript;base64,${Buffer.from(stateSource).toString('base64')}`);
 const workerUrl=new URL('../app/js/worker.js',import.meta.url).href;
-const coreUrl=new URL('../app/pkg/hcc_core.js?v=20261027f',import.meta.url).href;
+const coreUrl=new URL('../app/pkg/hcc_core.js?v=20261027g',import.meta.url).href;
 const wasmPath=new URL('../app/pkg/hcc_core_bg.wasm',import.meta.url).pathname;
 
 // Bootstrap preinitializes the real wasm-bindgen module with bytes, then loads

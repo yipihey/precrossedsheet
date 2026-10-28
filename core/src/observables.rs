@@ -307,6 +307,284 @@ pub fn density_summary(rho: &[f32], raw_mass: &[f32], probabilities: &[f64]) -> 
         "volumeQuantiles":probabilities.iter().map(|&p|quantile(p,false)).collect::<Vec<_>>(),
         "massQuantiles":probabilities.iter().map(|&p|quantile(p,true)).collect::<Vec<_>>()})
 }
+
+/// Compute the continuous sheet volume-weighted and mass-weighted log10(rho)
+/// PDF and full-field summary statistics directly from the Lagrangian simplices
+/// (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) without depositing
+/// onto an Eulerian grid.
+///
+/// When `vertex_weights` is `None`, evaluates the exact piecewise-constant (P0)
+/// simplex densities `r_T = 1 / |J_T|` with volume weight `V_T = m_T |J_T|` and
+/// mass weight `m_T`. When `vertex_weights` is `Some(w)`, evaluates the P1
+/// corner densities `r_{T,a} = r_T * w_a / mean(w_T)` with volume weight
+/// `V_T / (d + 1)` and mass weight `m_T * w_a / ((d + 1) * mean(w_T))`.
+pub fn simplex_density_pdf_and_summary(
+    grid: &Grid,
+    pos: &[f64],
+    vertex_weights: Option<&[f32]>,
+    bins: usize,
+    probabilities: &[f64],
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, f64, serde_json::Value) {
+    assert_eq!(pos.len(), grid.size * grid.dim);
+    let d = grid.dim;
+    let q_det = grid.dx().powi(d as i32);
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    let mut total_vol = 0.0_f64;
+    let mut total_mass = 0.0_f64;
+
+    // Symmetric barycentric lattice on the d-simplex (including the vertices
+    // themselves as well as edge/interior nodes) so that P1 linear interpolation
+    // reaches the true nodal extrema while conserving simplex volume and mass.
+    let p1_bary_1d: &[[f64; 4]] = &[
+        [1.0, 0.0, 0.0, 0.0],
+        [2.0 / 3.0, 1.0 / 3.0, 0.0, 0.0],
+        [1.0 / 3.0, 2.0 / 3.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+    ];
+    let p1_bary_2d: &[[f64; 4]] = &[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [2.0 / 3.0, 1.0 / 3.0, 0.0, 0.0],
+        [2.0 / 3.0, 0.0, 1.0 / 3.0, 0.0],
+        [1.0 / 3.0, 2.0 / 3.0, 0.0, 0.0],
+        [0.0, 2.0 / 3.0, 1.0 / 3.0, 0.0],
+        [1.0 / 3.0, 0.0, 2.0 / 3.0, 0.0],
+        [0.0, 1.0 / 3.0, 2.0 / 3.0, 0.0],
+        [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.0],
+    ];
+    let p1_bary_3d: &[[f64; 4]] = &[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.5, 0.5, 0.0, 0.0],
+        [0.5, 0.0, 0.5, 0.0],
+        [0.5, 0.0, 0.0, 0.5],
+        [0.0, 0.5, 0.5, 0.0],
+        [0.0, 0.5, 0.0, 0.5],
+        [0.0, 0.0, 0.5, 0.5],
+    ];
+    let p1_bary = match d {
+        1 => p1_bary_1d,
+        2 => p1_bary_2d,
+        _ => p1_bary_3d,
+    };
+
+    // Pass 1: streaming extrema, total Eulerian simplex volume, and total mass.
+    for_each_simplex(grid, |verts, mass| {
+        let mut x = [[0.0; 3]; 4];
+        for (vi, &(id, lift)) in verts.iter().enumerate() {
+            for a in 0..d {
+                x[vi][a] = pos[id * d + a] + lift[a];
+            }
+        }
+        let n = verts.len();
+        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-6);
+        let r_t = 1.0 / abs_j;
+        let v_t = mass * abs_j;
+        if let Some(w) = vertex_weights {
+            let mut w_v = [0.0_f64; 4];
+            let mut w_sum = 0.0_f64;
+            let mut w_min = f64::INFINITY;
+            let mut w_max = f64::NEG_INFINITY;
+            for (vi, &(id, _)) in verts.iter().enumerate() {
+                let wa = (w[id] as f64).max(1e-6);
+                w_v[vi] = wa;
+                w_sum += wa;
+                if wa < w_min {
+                    w_min = wa;
+                }
+                if wa > w_max {
+                    w_max = wa;
+                }
+            }
+            let w_bar = w_sum / n as f64;
+            let r_lo = r_t.min(w_min);
+            let r_hi = r_t.max(w_max);
+            let mut alpha = 1.0_f64;
+            for vi in 0..n {
+                let dw = w_v[vi] - w_bar;
+                if dw > 1e-12 {
+                    alpha = alpha.min((r_hi - r_t) / dw);
+                } else if dw < -1e-12 {
+                    alpha = alpha.min((r_lo - r_t) / dw);
+                }
+            }
+            alpha = alpha.clamp(0.0, 1.0);
+            let k_pts = p1_bary.len() as f64;
+            for bary in p1_bary {
+                let mut dw_q = 0.0_f64;
+                for vi in 0..n {
+                    dw_q += bary[vi] * (w_v[vi] - w_bar);
+                }
+                let r_q = (r_t + alpha * dw_q).max(1e-6);
+                let shape = r_q / r_t;
+                let y = r_q.log10();
+                if y < min_y {
+                    min_y = y;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
+                total_vol += v_t / k_pts;
+                total_mass += mass * shape / k_pts;
+            }
+        } else {
+            let y = r_t.log10();
+            if y < min_y {
+                min_y = y;
+            }
+            if y > max_y {
+                max_y = y;
+            }
+            total_vol += v_t;
+            total_mass += mass;
+        }
+    });
+
+    let total_vol = total_vol.max(1e-30);
+    let total_mass = total_mass.max(1e-30);
+    let mean = total_mass / total_vol;
+
+    let (lo, hi) = if !min_y.is_finite() || !max_y.is_finite() || (max_y - min_y).abs() < 1e-9 {
+        (-1.8, 1.8)
+    } else {
+        let pad = ((max_y - min_y) * 0.015).max(1e-3);
+        let lo_bound = (min_y - pad).max(-6.0);
+        let hi_bound = (max_y + pad).min(6.0);
+        (lo_bound, hi_bound)
+    };
+    let dy = (hi - lo) / bins as f64;
+
+    const CDF_BINS: usize = 8192;
+    let cdf_lo = (min_y - 1e-4).min(lo);
+    let cdf_hi = (max_y + 1e-4).max(hi).max(cdf_lo + 1e-3);
+    let cdf_dy = (cdf_hi - cdf_lo) / CDF_BINS as f64;
+
+    let mut pv = vec![0.0_f64; bins];
+    let mut pm = vec![0.0_f64; bins];
+    let mut cdf_v = vec![0.0_f64; CDF_BINS];
+    let mut cdf_m = vec![0.0_f64; CDF_BINS];
+    let mut m2 = 0.0_f64;
+    let mut m3 = 0.0_f64;
+    let mut m4 = 0.0_f64;
+
+    // Pass 2: streaming histogram, central moments, and fine CDF bins.
+    for_each_simplex(grid, |verts, mass| {
+        let mut x = [[0.0; 3]; 4];
+        for (vi, &(id, lift)) in verts.iter().enumerate() {
+            for a in 0..d {
+                x[vi][a] = pos[id * d + a] + lift[a];
+            }
+        }
+        let n = verts.len();
+        let abs_j = (det(&x[..n], d) / q_det).abs().max(1e-6);
+        let r_t = 1.0 / abs_j;
+        let v_t = mass * abs_j;
+        let mut accum = |r: f64, v: f64, m: f64| {
+            let y = r.log10();
+            let b = ((y - lo) / dy).floor() as isize;
+            if b >= 0 && (b as usize) < bins {
+                pv[b as usize] += v / (total_vol * dy);
+                pm[b as usize] += m / (total_mass * dy);
+            }
+            let cb = (((y - cdf_lo) / cdf_dy).floor() as isize).clamp(0, CDF_BINS as isize - 1) as usize;
+            cdf_v[cb] += v;
+            cdf_m[cb] += m;
+            let dr = r - mean;
+            let dr2 = dr * dr;
+            let vw = v / total_vol;
+            m2 += vw * dr2;
+            m3 += vw * dr2 * dr;
+            m4 += vw * dr2 * dr2;
+        };
+        if let Some(w) = vertex_weights {
+            let mut w_v = [0.0_f64; 4];
+            let mut w_sum = 0.0_f64;
+            let mut w_min = f64::INFINITY;
+            let mut w_max = f64::NEG_INFINITY;
+            for (vi, &(id, _)) in verts.iter().enumerate() {
+                let wa = (w[id] as f64).max(1e-6);
+                w_v[vi] = wa;
+                w_sum += wa;
+                if wa < w_min {
+                    w_min = wa;
+                }
+                if wa > w_max {
+                    w_max = wa;
+                }
+            }
+            let w_bar = w_sum / n as f64;
+            let r_lo = r_t.min(w_min);
+            let r_hi = r_t.max(w_max);
+            let mut alpha = 1.0_f64;
+            for vi in 0..n {
+                let dw = w_v[vi] - w_bar;
+                if dw > 1e-12 {
+                    alpha = alpha.min((r_hi - r_t) / dw);
+                } else if dw < -1e-12 {
+                    alpha = alpha.min((r_lo - r_t) / dw);
+                }
+            }
+            alpha = alpha.clamp(0.0, 1.0);
+            let k_pts = p1_bary.len() as f64;
+            for bary in p1_bary {
+                let mut dw_q = 0.0_f64;
+                for vi in 0..n {
+                    dw_q += bary[vi] * (w_v[vi] - w_bar);
+                }
+                let r_q = (r_t + alpha * dw_q).max(1e-6);
+                let shape = r_q / r_t;
+                accum(r_q, v_t / k_pts, mass * shape / k_pts);
+            }
+        } else {
+            accum(r_t, v_t, mass);
+        }
+    });
+
+    let variance = m2;
+    let s3 = if variance > 1e-24 {
+        Some(m3 / variance.powi(2))
+    } else {
+        None
+    };
+    let s4 = if variance > 1e-24 {
+        Some((m4 - 3.0 * variance.powi(2)) / variance.powi(3))
+    } else {
+        None
+    };
+
+    let quantile_from_cdf = |p: f64, is_mass: bool| -> f64 {
+        let tot = if is_mass { total_mass } else { total_vol };
+        let hist = if is_mass { &cdf_m } else { &cdf_v };
+        let target = p * tot;
+        let mut cum = 0.0_f64;
+        for (i, &w) in hist.iter().enumerate() {
+            let next = cum + w;
+            if next >= target && w > 0.0 {
+                let frac = ((target - cum) / w).clamp(0.0, 1.0);
+                let y = cdf_lo + (i as f64 + frac) * cdf_dy;
+                return 10.0_f64.powf(y);
+            }
+            cum = next;
+        }
+        10.0_f64.powf(max_y)
+    };
+
+    let summary = serde_json::json!({
+        "mean": mean,
+        "variance": variance,
+        "S3": s3,
+        "S4": s4,
+        "probabilities": probabilities,
+        "volumeQuantiles": probabilities.iter().map(|&p| quantile_from_cdf(p, false)).collect::<Vec<_>>(),
+        "massQuantiles": probabilities.iter().map(|&p| quantile_from_cdf(p, true)).collect::<Vec<_>>(),
+    });
+    let logrho: Vec<f64> = (0..bins).map(|b| lo + (b as f64 + 0.5) * dy).collect();
+    (logrho, pv, pm, mean, variance, dy, summary)
+}
 /// Continuous P0 sheet mode and directional derivative for fixed element
 /// masses. `jvp` maps normalized vertex phases, so no volume derivative is
 /// needed: density and volume factors cancel in each element's mass.

@@ -1101,3 +1101,62 @@ fn gaussian_runs_report_particle_deposits_and_the_filtered_linear_input() {
     let parsed: LabRequest = serde_json::from_str(r#"{"dim":2,"n":16}"#).unwrap();
     assert_eq!(parsed.transfer, "smooth", "older manifests without the field keep the smooth fit");
 }
+
+#[test]
+fn unsmoothed_sheet_pdfs_evaluate_directly_on_simplices_beyond_grid_limits() {
+    let req = LabRequest {
+        dim: 2,
+        n: 64,
+        mesh: 16,
+        force_mesh: 64,
+        order: 4,
+        epoch: "scaleFactor".into(),
+        scale_factor: 1.35,
+        ic: "gaussian".into(),
+        transfer: "bao".into(),
+        initial_cutoff: 16,
+        box_size: 1000.0,
+        initial_smoothing: 6.0,
+        smoothing: 0.0,
+        steps: 32,
+        seed: 7,
+        estimators: vec![
+            "4lpt:p0".into(),
+            "4lpt:p1".into(),
+            "4lpt:cic".into(),
+            "pm:p0".into(),
+        ],
+        ..Default::default()
+    };
+    let d = run(&req).unwrap();
+    let p0 = &d["customSeries"]["4lpt:p0"]["pdf"];
+    let p1 = &d["customSeries"]["4lpt:p1"]["pdf"];
+    let cic = &d["customSeries"]["4lpt:cic"]["pdf"];
+
+    let max_populated_rho = |pdf: &serde_json::Value| -> f64 {
+        let lr = pdf["logrho"].as_array().unwrap();
+        let m = pdf["mass"].as_array().unwrap();
+        lr.iter()
+            .zip(m.iter())
+            .filter(|(_, mv)| mv.as_f64().unwrap() > 0.0)
+            .map(|(y, _)| 10.0_f64.powf(y.as_f64().unwrap()))
+            .fold(0.0_f64, f64::max)
+    };
+
+    let p0_max = max_populated_rho(p0);
+    let p1_max = max_populated_rho(p1);
+    let cic_max = max_populated_rho(cic);
+
+    assert!(
+        p0_max > cic_max * 5.0,
+        "direct simplex P0 PDF should extend far beyond the coarse Eulerian grid CIC limit ({p0_max} vs {cic_max})"
+    );
+    assert!(
+        p1_max > cic_max * 5.0,
+        "direct simplex P1 PDF should extend far beyond the coarse Eulerian grid CIC limit ({p1_max} vs {cic_max})"
+    );
+    assert!((p0["capturedMass"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+    assert!((p0["capturedVolume"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+    assert!((p1["capturedMass"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+    assert!((p1["capturedVolume"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+}

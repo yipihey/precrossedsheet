@@ -2440,15 +2440,66 @@ fn assemble_prepared(
     } else {
         (cic.as_slice(), cics.as_slice())
     };
-    let (logrho, vol, mass, pdfmean, var) = observables::density_pdf(&rs, &rho, 80);
-    let (_, p1vol, p1mass, _, p1var) = observables::density_pdf(&rs_p1, &rho_p1, 80);
-    let (_, pmvol, pmmass, _, pmvar) = observables::density_pdf(&pms, &pmrho, 80);
-    let (_, cicvol, cicmass, _, cicvar) =
-        observables::density_pdf(cic_pdf_smooth, cic_pdf_raw, 80);
     let probabilities = [0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999];
-    let summary = observables::density_summary(&rs, &rho, &probabilities);
-    let p1_summary = observables::density_summary(&rs_p1, &rho_p1, &probabilities);
-    let pm_summary = observables::density_summary(&pms, &pmrho, &probabilities);
+    let w_lpt_active: Option<Vec<f32>> = if r.smoothing == 0.0 {
+        Some(observables::vertex_inverse_jacobians(g, &x))
+    } else {
+        None
+    };
+    let (
+        (logrho, vol, mass, pdfmean, var, dy_p0, summary),
+        (p1_logrho, p1vol, p1mass, _, p1var, dy_p1, p1_summary),
+        (pm_logrho, pmvol, pmmass, _, pmvar, dy_pm, pm_summary),
+    ) = if r.smoothing == 0.0 {
+        (
+            observables::simplex_density_pdf_and_summary(g, &x, None, 80, &probabilities),
+            observables::simplex_density_pdf_and_summary(
+                g,
+                &x,
+                w_lpt_active.as_deref(),
+                80,
+                &probabilities,
+            ),
+            observables::simplex_density_pdf_and_summary(g, pmx, None, 80, &probabilities),
+        )
+    } else {
+        let dy_grid = 3.6 / 80.0;
+        let (lr0, v0, m0, mean0, var0) = observables::density_pdf(&rs, &rho, 80);
+        let (lr1, v1, m1, mean1, var1) = observables::density_pdf(&rs_p1, &rho_p1, 80);
+        let (lrpm, vpm, mpm, meanpm, varpm) = observables::density_pdf(&pms, &pmrho, 80);
+        (
+            (
+                lr0,
+                v0,
+                m0,
+                mean0,
+                var0,
+                dy_grid,
+                observables::density_summary(&rs, &rho, &probabilities),
+            ),
+            (
+                lr1,
+                v1,
+                m1,
+                mean1,
+                var1,
+                dy_grid,
+                observables::density_summary(&rs_p1, &rho_p1, &probabilities),
+            ),
+            (
+                lrpm,
+                vpm,
+                mpm,
+                meanpm,
+                varpm,
+                dy_grid,
+                observables::density_summary(&pms, &pmrho, &probabilities),
+            ),
+        )
+    };
+    let (cic_logrho, cicvol, cicmass, _, cicvar) =
+        observables::density_pdf(cic_pdf_smooth, cic_pdf_raw, 80);
+    let dy_cic = 3.6 / 80.0;
     let cic_summary =
         observables::density_summary(cic_pdf_smooth, cic_pdf_raw, &probabilities);
     let tscs = observables::smooth_density(&eg, &raw.tsc, r.smoothing);
@@ -2868,25 +2919,73 @@ fn assemble_prepared(
                             ps_owned.as_ref().unwrap(),
                         )
                     };
-                let (pdf_raw_nat, pdf_smooth_nat);
-                let (pdf_raw, pdf_smooth): (&[f32], &[f32]) =
-                    if r.mesh > r.n && matches!(est, "ngp" | "cic" | "tsc") {
-                        pdf_raw_nat = match est {
-                            "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.n),
-                            "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.n),
-                            "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.n),
-                            _ => unreachable!(),
-                        };
-                        pdf_smooth_nat =
-                            observables::smooth_density(&c.grid, &pdf_raw_nat, r.smoothing);
-                        (&pdf_raw_nat, &pdf_smooth_nat)
+                let (logrho_est, vol_est, mass_est, var_est, dy_est, summary_est) =
+                    if r.smoothing == 0.0 && matches!(est, "p0" | "p1") {
+                        if traj == active_lpt_tag && est == "p0" {
+                            (
+                                logrho.clone(),
+                                vol.clone(),
+                                mass.clone(),
+                                var,
+                                dy_p0,
+                                summary.clone(),
+                            )
+                        } else if traj == active_lpt_tag && est == "p1" {
+                            (
+                                p1_logrho.clone(),
+                                p1vol.clone(),
+                                p1mass.clone(),
+                                p1var,
+                                dy_p1,
+                                p1_summary.clone(),
+                            )
+                        } else if traj == "pm" && est == "p0" {
+                            (
+                                pm_logrho.clone(),
+                                pmvol.clone(),
+                                pmmass.clone(),
+                                pmvar,
+                                dy_pm,
+                                pm_summary.clone(),
+                            )
+                        } else {
+                            let w_simplex_p1 = if est == "p1" {
+                                Some(observables::vertex_inverse_jacobians(g, x_traj))
+                            } else {
+                                None
+                            };
+                            let (lr_e, v_e, m_e, _, var_e, dy_e, sum_e) =
+                                observables::simplex_density_pdf_and_summary(
+                                    g,
+                                    x_traj,
+                                    w_simplex_p1.as_deref(),
+                                    80,
+                                    &probabilities,
+                                );
+                            (lr_e, v_e, m_e, var_e, dy_e, sum_e)
+                        }
                     } else {
-                        (raw_ref, smooth_ref)
+                        let (pdf_raw_nat, pdf_smooth_nat);
+                        let (pdf_raw, pdf_smooth): (&[f32], &[f32]) =
+                            if r.mesh > r.n && matches!(est, "ngp" | "cic" | "tsc") {
+                                pdf_raw_nat = match est {
+                                    "ngp" => sheet::ngp_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                    "cic" => sheet::cic_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                    "tsc" => sheet::tsc_density(r.dim, &pos_f32, g.size, 1.0, r.n),
+                                    _ => unreachable!(),
+                                };
+                                pdf_smooth_nat =
+                                    observables::smooth_density(&c.grid, &pdf_raw_nat, r.smoothing);
+                                (&pdf_raw_nat, &pdf_smooth_nat)
+                            } else {
+                                (raw_ref, smooth_ref)
+                            };
+                        let (lr_e, v_e, m_e, _, var_e) =
+                            observables::density_pdf(pdf_smooth, pdf_raw, 80);
+                        let sum_e =
+                            observables::density_summary(pdf_smooth, pdf_raw, &probabilities);
+                        (lr_e, v_e, m_e, var_e, dy, sum_e)
                     };
-                let (_, vol_est, mass_est, _, var_est) =
-                    observables::density_pdf(pdf_smooth, pdf_raw, 80);
-                let summary_est =
-                    observables::density_summary(pdf_smooth, pdf_raw, &probabilities);
                 let direct_shell = if est == "p0" {
                     if traj == active_lpt_tag {
                         Some(physical_p(&raw.direct_shell_lpt))
@@ -2929,11 +3028,13 @@ fn assemble_prepared(
                             "gaussian": var_gaussian,
                         },
                         "pdf": {
+                            "logrho": logrho_est,
+                            "dy": dy_est,
                             "volume": vol_est,
                             "mass": mass_est,
                             "variance": var_est,
-                            "capturedVolume": vol_est.iter().sum::<f64>() * dy,
-                            "capturedMass": mass_est.iter().sum::<f64>() * dy,
+                            "capturedVolume": vol_est.iter().sum::<f64>() * dy_est,
+                            "capturedMass": mass_est.iter().sum::<f64>() * dy_est,
                             "summary": summary_est,
                         }
                     }),
@@ -2950,7 +3051,7 @@ fn assemble_prepared(
         "customSeries":custom_series,
         "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"sheetP1":physical_p(&ps_p1.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&spec_ks),"direct":physical_p(spec_powers),"directPM":physical_p(spec_pm_powers),"directShellK":physical_k(&raw.direct_shell_k),"directShell":physical_p(&raw.direct_shell_lpt),"directShellPM":physical_p(&raw.direct_shell_pm),"directShellRealizedK":physical_k(&raw.direct_shell_realized_k),"directShellRealized":physical_p(&raw.direct_shell_realized),"directShellLinearK":direct_shell_linear_k,"directShellLinear":direct_shell_linear_p,"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
         "varianceScale":variance_scale,
-        "pdf":{"logrho":logrho,"volume":vol,"mass":mass,"p1Volume":p1vol,"p1Mass":p1mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"p1Variance":p1var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"p1Summary":p1_summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy,"capturedMass":mass.iter().sum::<f64>()*dy,"p1CapturedVolume":p1vol.iter().sum::<f64>()*dy,"p1CapturedMass":p1mass.iter().sum::<f64>()*dy,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy},
+        "pdf":{"logrho":logrho,"p1Logrho":p1_logrho,"pmLogrho":pm_logrho,"cicLogrho":cic_logrho,"dy":dy_p0,"p1Dy":dy_p1,"pmDy":dy_pm,"cicDy":dy_cic,"volume":vol,"mass":mass,"p1Volume":p1vol,"p1Mass":p1mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"p1Variance":p1var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"p1Summary":p1_summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy_p0,"capturedMass":mass.iter().sum::<f64>()*dy_p0,"p1CapturedVolume":p1vol.iter().sum::<f64>()*dy_p1,"p1CapturedMass":p1mass.iter().sum::<f64>()*dy_p1,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy_pm,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy_pm,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy_cic,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy_cic},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},
         "diagnostics":{"mass":mean(&rho),"p1Mass":mean(&rho_p1),"pmMass":mean(&pmrho),"cicMass":mean(&raw.cic),"tscMass":mean(&raw.tsc),"positionRms":position_rms,"positionRelativeRms":position_rms/displacement_rms.max(1e-30),"powerRelativeError":power_error},
         "conventions":{"liveCosmology":if c.cosmo.is_eds(){"EdS"}else{"flat LCDM"},"initialBandCutoff":r.initial_cutoff,

@@ -426,14 +426,14 @@ function resolveActiveSeries(d) {
         rho: arr(d?.rho), massMean: d?.diagnostics?.mass, power: arr(sp.sheet),
         directShell: arr(sp.directShell).length ? arr(sp.directShell) : arr(sp.direct),
         variance: { unsmoothed: vs.unsmoothed?.sheet, tophat: arr(vs.tophat?.sheet), gaussian: arr(vs.gaussian?.sheet) },
-        pdf: { volume: arr(pdf.volume), mass: arr(pdf.mass), variance: pdf.variance, capturedVolume: pdf.capturedVolume, capturedMass: pdf.capturedMass, summary: pdf.summary },
+        pdf: { logrho: arr(pdf.logrho), dy: pdf.dy, volume: arr(pdf.volume), mass: arr(pdf.mass), variance: pdf.variance, capturedVolume: pdf.capturedVolume, capturedMass: pdf.capturedMass, summary: pdf.summary },
       });
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'p1' && traj !== 'pm') {
       out.push({
         key, fieldKey: 'legacy_sheet_p1', traj, est, label, shortLabel, color, dash, width,
         rho: arr(d?.rhoP1), massMean: d?.diagnostics?.p1Mass, power: arr(sp.sheetP1), directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.sheetP1, tophat: arr(vs.tophat?.sheetP1), gaussian: arr(vs.gaussian?.sheetP1) },
-        pdf: { volume: arr(pdf.p1Volume), mass: arr(pdf.p1Mass), variance: pdf.p1Variance, capturedVolume: pdf.p1CapturedVolume, capturedMass: pdf.p1CapturedMass, summary: pdf.p1Summary },
+        pdf: { logrho: arr(pdf.p1Logrho || pdf.logrho), dy: pdf.p1Dy || pdf.dy, volume: arr(pdf.p1Volume), mass: arr(pdf.p1Mass), variance: pdf.p1Variance, capturedVolume: pdf.p1CapturedVolume, capturedMass: pdf.p1CapturedMass, summary: pdf.p1Summary },
       });
     } else if (traj === 'pm' && est === 'p0') {
       out.push({
@@ -441,14 +441,14 @@ function resolveActiveSeries(d) {
         rho: arr(d?.pmRho), massMean: d?.diagnostics?.pmMass, power: arr(sp.pm),
         directShell: arr(sp.directShellPM).length ? arr(sp.directShellPM) : arr(sp.directPM),
         variance: { unsmoothed: vs.unsmoothed?.pm, tophat: arr(vs.tophat?.pm), gaussian: arr(vs.gaussian?.pm) },
-        pdf: { volume: arr(pdf.pmVolume), mass: arr(pdf.pmMass), variance: pdf.pmVariance, capturedVolume: pdf.pmCapturedVolume, capturedMass: pdf.pmCapturedMass, summary: pdf.pmSummary },
+        pdf: { logrho: arr(pdf.pmLogrho || pdf.logrho), dy: pdf.pmDy || pdf.dy, volume: arr(pdf.pmVolume), mass: arr(pdf.pmMass), variance: pdf.pmVariance, capturedVolume: pdf.pmCapturedVolume, capturedMass: pdf.pmCapturedMass, summary: pdf.pmSummary },
       });
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'cic') {
       out.push({
         key, fieldKey: 'legacy_cic', traj, est, label, shortLabel, color, dash, width,
         rho: arr(d?.cicRho), massMean: d?.diagnostics?.cicMass, power: arr(sp.cic), directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.cic, tophat: arr(vs.tophat?.cic), gaussian: arr(vs.gaussian?.cic) },
-        pdf: { volume: arr(pdf.cicVolume), mass: arr(pdf.cicMass), variance: pdf.cicVariance, capturedVolume: pdf.cicCapturedVolume, capturedMass: pdf.cicCapturedMass, summary: pdf.cicSummary },
+        pdf: { logrho: arr(pdf.cicLogrho || pdf.logrho), dy: pdf.cicDy || pdf.dy, volume: arr(pdf.cicVolume), mass: arr(pdf.cicMass), variance: pdf.cicVariance, capturedVolume: pdf.cicCapturedVolume, capturedMass: pdf.cicCapturedMass, summary: pdf.cicSummary },
       });
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'tsc') {
       out.push({
@@ -841,29 +841,34 @@ function renderVarianceScale(d) {
 }
 function renderPdfs(d) {
   const activeSeries=resolveActiveSeries(d).filter(s=>arr(s.pdf?.volume).length>0);
-  const p=panel('Density probability distributions',`Comparing probability distributions for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄ on log–log axes. Volume PDFs use observed spatial cell volume; mass PDFs use raw mass weights. In voids (low ρ/ρ̄), traditional NGP/CIC/TSC particle estimators suffer from Poisson shot noise and zero-particle starvation, truncating the low-density volume tail, whereas the continuous P₀ and P₁ sheets resolve the low-density void PDF smoothly. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
+  const p=panel('Density probability distributions',`Comparing probability distributions for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄ on log–log axes. When observation filter R/L = 0, continuous P₀ and P₁ sheet PDFs are evaluated directly from the Lagrangian simplices (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) without grid deposition, extending smoothly across deep voids and high-density caustics; only the grid-based particle estimators (NGP, CIC, TSC) are limited in density range by the Eulerian grid and zero-particle starvation. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
   const logrho=arr(d.pdf?.logrho);
   const rhoAxis=logrho.map(y=>Math.pow(10,Number(y)));
-  const dy=logrho.length>1?Math.abs(Number(logrho[1])-Number(logrho[0])):3.6/80;
-  const factor=Math.pow(10,dy/2)-Math.pow(10,-dy/2);
-  const toPr=(arrVals)=>arr(arrVals).map((v,i)=>{const r=rhoAxis[i]||1;return pdfViewOpts.ordinate==='log10'?Number(v):(Number(v)*dy)/Math.max(1e-30,r*factor);});
   const bar=$('div','published-controls',p);
   const wrap=$('label','published-select',bar);$('span','',wrap,'PDF ordinate');
   const sel=$('select','lab-select',wrap);
   for(const [v,t] of [['linear','dP / d(ρ/ρ̄)  (probability density per unit ρ/ρ̄)'],['log10','dP / d log₁₀(ρ/ρ̄)  (per decade)']]){const o=$('option','',sel,t);o.value=v;}
   sel.value=pdfViewOpts.ordinate;
   sel.addEventListener('change',()=>{pdfViewOpts.ordinate=sel.value;render();});
-  if(S.mesh>S.n){
+  if(Number(S.smoothing)===0){
+    $('p','panel-note',p,`Direct simplex evaluation active (R/L = 0): P₀ and P₁ sheet PDFs and quantiles are accumulated directly over all Lagrangian simplices (using exact Jacobian density 1/|J_T| for P₀ and corner-interpolated vertex densities for P₁) without depositing onto an Eulerian mesh. Grid-based particle estimators (NGP, CIC, TSC) are deposited onto their Eulerian grid.`);
+  }else if(S.mesh>S.n){
     $('p','panel-note',p,`When the observation mesh (${S.mesh}^${S.dim}) is finer than the Lagrangian particle grid (${S.n}^${S.dim}), the continuous sheet PDFs (P₀ and P₁) are evaluated at the full ${S.mesh}^${S.dim} mesh resolution, while particle-estimator PDFs (NGP, CIC, TSC) are evaluated on their natural ${S.n}^${S.dim} particle grid (1 cell per mean particle spacing Δq = L/n) so that isolated particles are not assigned artificial sub-cell spike densities of (mesh/n)^${S.dim} = ${Math.pow(S.mesh/S.n,S.dim)}.`);
   }
   const pdfData={rhoAxis};
   const volumeDefs=[],massDefs=[];
   for(const s of activeSeries){
-    const vKey=`${s.fieldKey}_vol`,mKey=`${s.fieldKey}_mass`;
+    const sLogrho=arr(s.pdf?.logrho).length?arr(s.pdf.logrho):logrho;
+    const sRhoAxis=sLogrho.map(y=>Math.pow(10,Number(y)));
+    const sDy=Number(s.pdf?.dy)>0?Number(s.pdf.dy):(sLogrho.length>1?Math.abs(Number(sLogrho[1])-Number(sLogrho[0])):3.6/80);
+    const sFactor=Math.pow(10,sDy/2)-Math.pow(10,-sDy/2);
+    const toPr=(arrVals)=>arr(arrVals).map((v,i)=>{const r=sRhoAxis[i]||1;return pdfViewOpts.ordinate==='log10'?Number(v):(Number(v)*sDy)/Math.max(1e-30,r*sFactor);});
+    const xKey=`${s.fieldKey}_x`,vKey=`${s.fieldKey}_vol`,mKey=`${s.fieldKey}_mass`;
+    pdfData[xKey]=sRhoAxis;
     pdfData[vKey]=toPr(s.pdf.volume);
     pdfData[mKey]=toPr(s.pdf.mass);
-    volumeDefs.push({key:vKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
-    massDefs.push({key:mKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
+    volumeDefs.push({key:vKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
+    massDefs.push({key:mKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
   }
   const yLabelSuffix=pdfViewOpts.ordinate==='log10'?'dP / d log₁₀(ρ/ρ̄)':'dP / d(ρ/ρ̄)';
   if(S.weight==='mass'){addPlot(p,'PRIMARY · mass-weighted PDF',rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);addPlot(p,'Volume-weighted PDF',rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${yLabelSuffix}`,xlog:true,ylog:true},pdfData);}

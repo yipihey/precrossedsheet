@@ -308,13 +308,27 @@ export class LinePlot {
 
   _dataRange(series, key, log) {
     let lo = Infinity, hi = -Infinity;
+    const requirePosY = key === 'x' && this._effAxes().ylog;
     for (const s of series) {
       const a = s[key];
+      const y = s.y;
       for (let i = 0; i < a.length; i++) {
+        if (requirePosY && y && !(y[i] > 0)) continue;
         const v = a[i];
         if (!Number.isFinite(v) || (log && v <= 0)) continue;
         if (v < lo) lo = v;
         if (v > hi) hi = v;
+      }
+    }
+    if (!(lo <= hi) && requirePosY) {
+      for (const s of series) {
+        const a = s[key];
+        for (let i = 0; i < a.length; i++) {
+          const v = a[i];
+          if (!Number.isFinite(v) || (log && v <= 0)) continue;
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
       }
     }
     return [lo, hi];
