@@ -11,6 +11,9 @@ pub struct Spectrum {
     pub k: Vec<f64>,
     pub p: Vec<f64>,
     pub nmodes: Vec<f64>,
+    pub fine_k: Vec<f64>,
+    pub fine_p: Vec<f64>,
+    pub fine_nmodes: Vec<f64>,
 }
 
 /// Bin edges: log-spaced from k_f to √dim k_nyq (nbins bins).
@@ -21,22 +24,31 @@ pub fn bin_edges(grid: &Grid, nbins: usize) -> Vec<f64> {
 }
 
 /// Binned (cross-)power spectrum of two Fourier fields (forward unnormalized FFT),
-/// P(k) = L^d Re[a b*] / N^{2d}.
+/// P(k) = L^d Re[a b*] / N^{2d}. Also populates a high-resolution shell-binned
+/// representation (`fine_k`, `fine_p`, `fine_nmodes`) in the same pass so the UI
+/// can dynamically rebin to fewer or more k-shells without recomputing FFTs.
 pub fn power_spectrum_hat(grid: &Grid, a: &[C64], b: &[C64], nbins: usize, window: Option<&dyn Fn(usize) -> f64>) -> Spectrum {
     let edges = bin_edges(grid, nbins);
     let mut ksum = vec![0.0; nbins];
     let mut psum = vec![0.0; nbins];
     let mut cnt = vec![0.0; nbins];
+    let fine_nbins = grid.n.clamp(32, 256).max(nbins);
+    let fine_edges = bin_edges(grid, fine_nbins);
+    let mut f_ksum = vec![0.0; fine_nbins];
+    let mut f_psum = vec![0.0; fine_nbins];
+    let mut f_cnt = vec![0.0; fine_nbins];
     let norm = grid.l.powi(grid.dim as i32) / (grid.size as f64).powi(2);
     let lk0 = edges[0].ln();
     let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
+    let f_lk0 = fine_edges[0].ln();
+    let f_dlk = (fine_edges[fine_nbins] / fine_edges[0]).ln() / fine_nbins as f64;
     for idx in 1..grid.size {
         let k = grid.k2(idx).sqrt();
         if k < edges[0] || k >= edges[nbins] {
             continue;
         }
-        let bi = ((k.ln() - lk0) / dlk).floor() as usize;
-        let bi = bi.min(nbins - 1);
+        let bi = (((k.ln() - lk0) / dlk).floor() as usize).min(nbins - 1);
+        let f_bi = (((k.ln() - f_lk0) / f_dlk).floor() as usize).min(fine_nbins - 1);
         let mut v = (a[idx] * b[idx].conj()).re * norm;
         if let Some(w) = window {
             v /= w(idx);
@@ -44,6 +56,9 @@ pub fn power_spectrum_hat(grid: &Grid, a: &[C64], b: &[C64], nbins: usize, windo
         ksum[bi] += k;
         psum[bi] += v;
         cnt[bi] += 1.0;
+        f_ksum[f_bi] += k;
+        f_psum[f_bi] += v;
+        f_cnt[f_bi] += 1.0;
     }
     let mut k = Vec::new();
     let mut p = Vec::new();
@@ -55,7 +70,17 @@ pub fn power_spectrum_hat(grid: &Grid, a: &[C64], b: &[C64], nbins: usize, windo
             nm.push(cnt[i]);
         }
     }
-    Spectrum { k, p, nmodes: nm }
+    let mut fine_k = Vec::new();
+    let mut fine_p = Vec::new();
+    let mut fine_nmodes = Vec::new();
+    for i in 0..fine_nbins {
+        if f_cnt[i] > 0.0 {
+            fine_k.push(f_ksum[i] / f_cnt[i]);
+            fine_p.push(f_psum[i] / f_cnt[i]);
+            fine_nmodes.push(f_cnt[i]);
+        }
+    }
+    Spectrum { k, p, nmodes: nm, fine_k, fine_p, fine_nmodes }
 }
 
 pub fn power_spectrum(grid: &Grid, eng: &mut FftEngine, f: &[f32], nbins: usize) -> Spectrum {

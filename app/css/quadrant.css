@@ -49,6 +49,7 @@
 .qd-plot-tools .qd-pt-btn { font: inherit; padding: 0 0.35rem; border: 1px solid var(--qd-border); border-radius: 3px; background: transparent; color: inherit; cursor: pointer; line-height: 1.3; }
 .qd-plot-tools .qd-pt-btn:hover { border-color: var(--qd-accent, #0072B2); color: var(--qd-accent, #0072B2); }
 .qd-plot-tools .qd-pt-in { font: inherit; width: 4.6em; padding: 0 0.2rem; border: 1px solid var(--qd-border); border-radius: 3px; background: transparent; color: inherit; text-align: right; }
+.qd-plot-tools .qd-pt-bin-in { width: 3.1em; text-align: center; font-variant-numeric: tabular-nums; }
 .qd-plot-tools .qd-pt-dash { opacity: 0.6; }
 .qd-plot-tools .qd-pt-readout { margin-left: auto; font-variant-numeric: tabular-nums; min-width: 9em; text-align: right; }
 .qd-plot-tools.is-changed .qd-pt-reset { border-color: var(--qd-accent, #0072B2); color: var(--qd-accent, #0072B2); }

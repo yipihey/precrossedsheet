@@ -298,8 +298,12 @@ fn power(g: &Grid, rho: &[f32]) -> spectra::Spectrum {
 /// The linear power of *this realization*, D^2 |delta0_k|^2, averaged over the same
 /// isotropic bins as the measured fields, for bins lying entirely inside the radial
 /// cutoff (where the mesh modes and the input modes coincide). Unit-box units.
-fn realized_linear_bins(c: &Cosmo, eg: &Grid, d: f64, cutoff: usize) -> (Vec<f64>, Vec<f64>) {
-    let nbins = spectrum_bins(eg.n);
+fn realized_linear_bins_with_count(
+    c: &Cosmo,
+    eg: &Grid,
+    d: f64,
+    nbins: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let edges = spectra::bin_edges(eg, nbins);
     let lk0 = edges[0].ln();
     let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
@@ -320,7 +324,6 @@ fn realized_linear_bins(c: &Cosmo, eg: &Grid, d: f64, cutoff: usize) -> (Vec<f64
         }
     }
     let g = &c.grid;
-    let _ = cutoff;
     let mut psum = vec![0.0; nbins];
     for idx in 1..g.size {
         let ijk = g.unravel(idx);
@@ -334,13 +337,15 @@ fn realized_linear_bins(c: &Cosmo, eg: &Grid, d: f64, cutoff: usize) -> (Vec<f64
     let limit = g.knyq().min(eg.knyq());
     let mut ks = Vec::new();
     let mut ps = Vec::new();
+    let mut counts = Vec::new();
     for b in 0..nbins {
         if cnt[b] > 0. && edges[b + 1] <= limit * (1. + 1e-9) {
             ks.push(ksum[b] / cnt[b]);
             ps.push(psum[b] / cnt[b]);
+            counts.push(cnt[b]);
         }
     }
-    (ks, ps)
+    (ks, ps, counts)
 }
 fn mean(v: &[f32]) -> f64 {
     v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64
@@ -2543,6 +2548,7 @@ fn compute_custom_series_standalone(
     let omit_large_mesh_json = eg.size > 262_144;
     let empty_f32: &[f32] = &[];
     let physical_volume = r.box_size.powi(r.dim as i32);
+    let physical_k = |v: &[f64]| v.iter().map(|k| k / r.box_size).collect::<Vec<_>>();
     let physical_p = |v: &[f64]| v.iter().map(|p| p * physical_volume).collect::<Vec<_>>();
     let cell_scale = r.box_size / r.mesh as f64;
     let particle_scale = r.box_size / r.n as f64;
@@ -2759,6 +2765,10 @@ fn compute_custom_series_standalone(
                     "rho": rho_json_slice,
                     "massMean": mean(raw_ref),
                     "power": physical_p(&ps_ref.p),
+                    "counts": ps_ref.nmodes,
+                    "fineK": physical_k(&ps_ref.fine_k),
+                    "finePower": physical_p(&ps_ref.fine_p),
+                    "fineCounts": ps_ref.fine_nmodes,
                     "directShell": direct_shell,
                     "variance": {
                         "unsmoothed": var_unsmoothed,
@@ -2963,6 +2973,8 @@ fn assemble_prepared(
     let (
         linear_k,
         linear_p,
+        fine_linear_k,
+        fine_linear_p,
         direct_linear_k,
         direct_linear_p,
         direct_shell_linear_k,
@@ -2988,6 +3000,12 @@ fn assemble_prepared(
             .map(|&k| input(k))
             .filter(|(_, p)| *p > 0.)
             .collect();
+        let fine_band: Vec<(f64, f64)> = ps
+            .fine_k
+            .iter()
+            .map(|&k| input(k))
+            .filter(|(_, p)| *p > 0.)
+            .collect();
         let axis: Vec<(f64, f64)> = spec_ks
             .iter()
             .map(|&k| input(k))
@@ -3002,6 +3020,8 @@ fn assemble_prepared(
         (
             band.iter().map(|v| v.0).collect::<Vec<_>>(),
             band.iter().map(|v| v.1).collect::<Vec<_>>(),
+            fine_band.iter().map(|v| v.0).collect::<Vec<_>>(),
+            fine_band.iter().map(|v| v.1).collect::<Vec<_>>(),
             axis.iter().map(|v| v.0).collect::<Vec<_>>(),
             axis.iter().map(|v| v.1).collect::<Vec<_>>(),
             shell.iter().map(|v| v.0).collect::<Vec<_>>(),
@@ -3015,10 +3035,24 @@ fn assemble_prepared(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
         )
     };
-    let (realized_k, realized_p, direct_realized_k, direct_realized_p) = if r.ic == "gaussian" {
-        let (ks_r, ps_r) = realized_linear_bins(c, &eg, d, r.initial_cutoff);
+    let (
+        realized_k,
+        realized_p,
+        realized_counts,
+        fine_realized_k,
+        fine_realized_p,
+        fine_realized_counts,
+        direct_realized_k,
+        direct_realized_p,
+    ) = if r.ic == "gaussian" {
+        let (ks_r, ps_r, cnts_r) =
+            realized_linear_bins_with_count(c, &eg, d, spectrum_bins(eg.n));
+        let (fks_r, fps_r, fcnts_r) =
+            realized_linear_bins_with_count(c, &eg, d, eg.n.clamp(32, 256));
         let mut dk = Vec::new();
         let mut dp = Vec::new();
         for (&m, &k) in spec_modes.iter().zip(&spec_ks) {
@@ -3031,9 +3065,27 @@ fn assemble_prepared(
             dk.push(k);
             dp.push((d * c.delta0_hat[idx].norm() / g.size as f64).powi(2));
         }
-        (physical_k(&ks_r), physical_p(&ps_r), physical_k(&dk), physical_p(&dp))
+        (
+            physical_k(&ks_r),
+            physical_p(&ps_r),
+            cnts_r,
+            physical_k(&fks_r),
+            physical_p(&fps_r),
+            fcnts_r,
+            physical_k(&dk),
+            physical_p(&dp),
+        )
     } else {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     };
     let psc_nat_owned = if r.mesh > r.n {
         Some(power(&c.grid, cic_pdf_raw))
@@ -3392,6 +3444,10 @@ fn assemble_prepared(
                         "rho": rho_json_slice,
                         "massMean": mean(raw_ref),
                         "power": physical_p(&ps_ref.p),
+                        "counts": ps_ref.nmodes,
+                        "fineK": physical_k(&ps_ref.fine_k),
+                        "finePower": physical_p(&ps_ref.fine_p),
+                        "fineCounts": ps_ref.fine_nmodes,
                         "directShell": direct_shell,
                         "variance": {
                             "unsmoothed": var_unsmoothed,
@@ -3434,7 +3490,7 @@ fn assemble_prepared(
         "q":q_json,"x":[],"v":v_json,"pmX":[],"pmV":pmv_json,"rho":rs_json,"rhoP1":rs_p1_json,"pmRho":pms_json,"cicRho":cics_json,"tscRho":tscs_json,
         "customSeries":custom_series,
         "rsd":rsd,
-        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"sheetP1":physical_p(&ps_p1.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"directK":physical_k(&spec_ks),"direct":physical_p(spec_powers),"directPM":physical_p(spec_pm_powers),"directShellK":physical_k(&raw.direct_shell_k),"directShell":physical_p(&raw.direct_shell_lpt),"directShellPM":physical_p(&raw.direct_shell_pm),"directShellRealizedK":physical_k(&raw.direct_shell_realized_k),"directShellRealized":physical_p(&raw.direct_shell_realized),"directShellLinearK":direct_shell_linear_k,"directShellLinear":direct_shell_linear_p,"linearK":linear_k,"linear":linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
+        "spectra":{"k":physical_k(&ps.k),"sheet":physical_p(&ps.p),"sheetP1":physical_p(&ps_p1.p),"cic":physical_p(&psc.p),"tsc":physical_p(&pst.p),"pm":physical_p(&psp.p),"counts":ps.nmodes,"fineK":physical_k(&ps.fine_k),"fineCounts":ps.fine_nmodes,"fineSheet":physical_p(&ps.fine_p),"fineSheetP1":physical_p(&ps_p1.fine_p),"fineCic":physical_p(&psc.fine_p),"fineTsc":physical_p(&pst.fine_p),"finePm":physical_p(&psp.fine_p),"directK":physical_k(&spec_ks),"direct":physical_p(spec_powers),"directPM":physical_p(spec_pm_powers),"directShellK":physical_k(&raw.direct_shell_k),"directShell":physical_p(&raw.direct_shell_lpt),"directShellPM":physical_p(&raw.direct_shell_pm),"directShellRealizedK":physical_k(&raw.direct_shell_realized_k),"directShellRealized":physical_p(&raw.direct_shell_realized),"directShellLinearK":direct_shell_linear_k,"directShellLinear":direct_shell_linear_p,"linearK":linear_k,"linear":linear_p,"fineLinearK":fine_linear_k,"fineLinear":fine_linear_p,"directLinearK":direct_linear_k,"directLinear":direct_linear_p,"realizedK":realized_k,"realized":realized_p,"realizedCounts":realized_counts,"fineRealizedK":fine_realized_k,"fineRealized":fine_realized_p,"fineRealizedCounts":fine_realized_counts,"directRealizedK":direct_realized_k,"directRealized":direct_realized_p},
         "varianceScale":variance_scale,
         "pdf":{"logrho":logrho,"p1Logrho":p1_logrho,"pmLogrho":pm_logrho,"cicLogrho":cic_logrho,"dy":dy_p0,"p1Dy":dy_p1,"pmDy":dy_pm,"cicDy":dy_cic,"volume":vol,"mass":mass,"p1Volume":p1vol,"p1Mass":p1mass,"pmVolume":pmvol,"pmMass":pmmass,"cicVolume":cicvol,"cicMass":cicmass,"mean":pdfmean,"variance":var,"p1Variance":p1var,"pmVariance":pmvar,"cicVariance":cicvar,"summary":summary,"p1Summary":p1_summary,"pmSummary":pm_summary,"cicSummary":cic_summary,"capturedVolume":vol.iter().sum::<f64>()*dy_p0,"capturedMass":mass.iter().sum::<f64>()*dy_p0,"p1CapturedVolume":p1vol.iter().sum::<f64>()*dy_p1,"p1CapturedMass":p1mass.iter().sum::<f64>()*dy_p1,"pmCapturedVolume":pmvol.iter().sum::<f64>()*dy_pm,"pmCapturedMass":pmmass.iter().sum::<f64>()*dy_pm,"cicCapturedVolume":cicvol.iter().sum::<f64>()*dy_cic,"cicCapturedMass":cicmass.iter().sum::<f64>()*dy_cic},
         "gradient":{"k":physical_k(&ks),"power":physical_p(&powers),"tangent":physical_p(&derivatives),"finiteDifference":physical_p(&fd),"relativeError":errs,"pmTangent":physical_p(&pmderivs),"parameter":"initial amplitude A at A=1, fixed epoch","finiteDifferenceStep":h},

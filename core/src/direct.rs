@@ -239,7 +239,8 @@ pub fn direct_spectrum(grid: &Grid, pos: &[f32], wv: Option<&[f32]>, nbins: usiz
     }
     let (mut k, mut p, mut nmv) = (Vec::new(), Vec::new(), Vec::new());
     for b in 0..nbins { if cnt[b] > 0.0 { k.push(ksum[b] / cnt[b]); p.push(psum[b] / cnt[b]); nmv.push(cnt[b]); } }
-    crate::spectra::Spectrum { k, p, nmodes: nmv }
+    let (fine_k, fine_p, fine_nmodes) = (k.clone(), p.clone(), nmv.clone());
+    crate::spectra::Spectrum { k, p, nmodes: nmv, fine_k, fine_p, fine_nmodes }
 }
 
 /// Type-1 NUFFT density of the refined map: unit-mass points at the fine-grid

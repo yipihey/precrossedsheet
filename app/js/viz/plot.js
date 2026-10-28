@@ -26,10 +26,152 @@ function el(tag, attrs, parent, text) {
 
 const fmt = (x) => (Math.round(x * 100) / 100).toString();
 
+const BIN_LADDER = [6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 120, 160, 200, 240, 320, 480, 640];
+
+/**
+ * Fritsch–Carlson monotone cubic Hermite (PCHIP) interpolation on strictly increasing knots (u, v).
+ * Guarantees no overshoot on any interval.
+ */
+export function pchipInterpolate(u, v, uQuery) {
+  const n = u.length;
+  if (n === 0) return [];
+  if (n === 1) return uQuery.map(() => v[0]);
+  if (n === 2) {
+    const h = u[1] - u[0] || 1;
+    const slope = (v[1] - v[0]) / h;
+    return uQuery.map((uq) => v[0] + slope * (uq - u[0]));
+  }
+  const h = new Float64Array(n - 1);
+  const delta = new Float64Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = u[i + 1] - u[i];
+    delta[i] = h[i] > 0 ? (v[i + 1] - v[i]) / h[i] : 0;
+  }
+  const d = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) {
+    if (delta[i - 1] * delta[i] <= 0) {
+      d[i] = 0;
+    } else {
+      const w1 = 2 * h[i] + h[i - 1];
+      const w2 = h[i] + 2 * h[i - 1];
+      d[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i]);
+    }
+  }
+  const endSlope = (h0, h1, del0, del1) => {
+    let s = ((2 * h0 + h1) * del0 - h0 * del1) / (h0 + h1 || 1);
+    if (s * del0 <= 0) return 0;
+    if (del0 * del1 <= 0 && Math.abs(s) > Math.abs(3 * del0)) return 3 * del0;
+    return s;
+  };
+  d[0] = endSlope(h[0], h[1], delta[0], delta[1]);
+  d[n - 1] = endSlope(h[n - 2], h[n - 3], delta[n - 2], delta[n - 3]);
+
+  const out = new Array(uQuery.length);
+  let seg = 0;
+  for (let q = 0; q < uQuery.length; q++) {
+    const uq = uQuery[q];
+    if (uq <= u[0]) { out[q] = v[0]; continue; }
+    if (uq >= u[n - 1]) { out[q] = v[n - 1]; continue; }
+    while (seg < n - 2 && uq > u[seg + 1]) seg++;
+    while (seg > 0 && uq < u[seg]) seg--;
+    const hi = h[seg];
+    if (!(hi > 0)) { out[q] = v[seg]; continue; }
+    const t = (uq - u[seg]) / hi;
+    const t2 = t * t, t3 = t2 * t;
+    const h00 = 2 * t3 - 3 * t2 + 1;
+    const h10 = t3 - 2 * t2 + t;
+    const h01 = -2 * t3 + 3 * t2;
+    const h11 = t3 - t2;
+    out[q] = h00 * v[seg] + h10 * hi * d[seg] + h01 * v[seg + 1] + h11 * hi * d[seg + 1];
+  }
+  return out;
+}
+
+/**
+ * General 1D curve resampler:
+ * - When targetBins < source length: weighted bin-averaging in x-axis space (reduces noise).
+ * - When targetBins > source length: monotone PCHIP interpolation in axis space (smooths jagged segments).
+ */
+export function resampleCurve(srcX, srcY, targetBins, opts = {}) {
+  const { xlog = false, ylog = false, weights = null } = opts;
+  const n = Math.min(srcX ? srcX.length : 0, srcY ? srcY.length : 0);
+  if (n < 2 || !Number.isFinite(targetBins) || targetBins < 2) return { x: srcX, y: srcY };
+  const tx = xlog ? Math.log10 : (v) => v;
+  const gx = xlog ? (u) => Math.pow(10, u) : (u) => u;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const x = Number(srcX[i]), y = Number(srcY[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || (xlog && x <= 0)) continue;
+    const w = weights && Number.isFinite(weights[i]) && weights[i] > 0 ? Number(weights[i]) : 1;
+    pts.push({ x, y, u: tx(x), w });
+  }
+  if (pts.length < 2) return { x: srcX, y: srcY };
+  pts.sort((a, b) => a.u - b.u);
+
+  const m = pts.length;
+  const nb = Math.max(2, Math.round(targetBins));
+  if (nb === m) {
+    return { x: pts.map((p) => p.x), y: pts.map((p) => p.y), weights: pts.map((p) => p.w) };
+  }
+
+  const uMin = pts[0].u, uMax = pts[m - 1].u;
+  if (!(uMax > uMin)) return { x: srcX, y: srcY };
+
+  if (nb < m) {
+    const du = (uMax - uMin) / nb;
+    const bx = [], by = [], bw = [];
+    const wSum = new Float64Array(nb);
+    const xSum = new Float64Array(nb);
+    const ySum = new Float64Array(nb);
+    for (let i = 0; i < m; i++) {
+      const p = pts[i];
+      let b = Math.floor((p.u - uMin) / du);
+      if (b < 0) b = 0;
+      if (b >= nb) b = nb - 1;
+      wSum[b] += p.w;
+      xSum[b] += p.w * p.x;
+      ySum[b] += p.w * p.y;
+    }
+    for (let b = 0; b < nb; b++) {
+      if (wSum[b] > 0) {
+        bx.push(xSum[b] / wSum[b]);
+        by.push(ySum[b] / wSum[b]);
+        bw.push(wSum[b]);
+      }
+    }
+    return bx.length >= 2 ? { x: bx, y: by, weights: bw } : { x: srcX, y: srcY };
+  }
+
+  // nb > m: monotone cubic Hermite (PCHIP) upsampling in axis space
+  const useLogY = ylog && pts.every((p) => p.y > 0);
+  const ty = useLogY ? Math.log10 : (v) => v;
+  const gy = useLogY ? (v) => Math.pow(10, v) : (v) => v;
+  const uKnots = [pts[0].u];
+  const vKnots = [ty(pts[0].y)];
+  for (let i = 1; i < m; i++) {
+    if (pts[i].u > uKnots[uKnots.length - 1] + 1e-12) {
+      uKnots.push(pts[i].u);
+      vKnots.push(ty(pts[i].y));
+    } else {
+      vKnots[vKnots.length - 1] = 0.5 * (vKnots[vKnots.length - 1] + ty(pts[i].y));
+    }
+  }
+  if (uKnots.length < 2) return { x: srcX, y: srcY };
+  const uQuery = new Array(nb);
+  for (let j = 0; j < nb; j++) {
+    uQuery[j] = uMin + (j / (nb - 1)) * (uMax - uMin);
+  }
+  const vQuery = pchipInterpolate(uKnots, vKnots, uQuery);
+  return {
+    x: uQuery.map(gx),
+    y: vQuery.map(gy),
+  };
+}
+
 export class LinePlot {
   /**
    * @param {HTMLElement} container
-   * @param {{width?:number, height?:number, margin?:{l?:number,r?:number,t?:number,b?:number}}} [opts]
+   * @param {{width?:number, height?:number, margin?:{l?:number,r?:number,t?:number,b?:number}, binLabel?:string, onBinsChange?:(bins:number|null)=>void}} [opts]
    */
   constructor(container, opts = {}) {
     this.container = container;
@@ -46,15 +188,15 @@ export class LinePlot {
     });
     container.appendChild(this.svg);
     // interactive view (overrides the caller's axes until reset): wheel = zoom, left-drag = pan (grab), middle-drag = box-zoom, double-click = reset,
-    // toolbar = lin/log toggles, pan/box toggle, and editable ranges
-    this.view = { xlim: null, ylim: null, xlog: null, ylog: null };
+    // toolbar = lin/log toggles, pan/box toggle, editable ranges, and point/bin count (- / N / +)
+    this.view = { xlim: null, ylim: null, xlog: null, ylog: null, bins: null };
     this._dragMode = 'pan';
     this._lastDefaults = null;
     this.interactive = opts.interactive !== false;
     if (this.interactive) this._buildTools();
   }
 
-  /** @param {{xlog?:boolean, ylog?:boolean, xlabel?:string, ylabel?:string, xlim?:number[], ylim?:number[], title?:string}} axes */
+  /** @param {{xlog?:boolean, ylog?:boolean, xlabel?:string, ylabel?:string, xlim?:number[], ylim?:number[], title?:string, bins?:number, minBins?:number, maxBins?:number, binLabel?:string}} axes */
   setAxes(axes) { this.axes = { ...this.axes, ...axes }; }
 
   /** Axes with the interactive overrides applied; a change of the caller's lin/log default drops the override of that axis. */
@@ -69,8 +211,62 @@ export class LinePlot {
     return { ...A, xlog: v.xlog ?? d.xlog, ylog: v.ylog ?? d.ylog, xlim: v.xlim ?? A.xlim, ylim: v.ylim ?? A.ylim };
   }
 
-  /** Forget zoom, pan and lin/log overrides. */
-  resetView() { this.view = { xlim: null, ylim: null, xlog: null, ylog: null }; this.draw(); }
+  /** Forget zoom, pan, lin/log and bin/point overrides. */
+  resetView() {
+    const hadBins = this.view.bins !== null;
+    this.view = { xlim: null, ylim: null, xlog: null, ylog: null, bins: null };
+    if (hadBins) this._notifyBinsChange(null);
+    this.draw();
+  }
+
+  _defaultBins() {
+    if (Number.isFinite(this.axes.bins) && this.axes.bins >= 2) return Math.round(this.axes.bins);
+    let best = 0;
+    for (const s of this.series) {
+      if (!s || s.noResample || !s.x) continue;
+      const len = Math.min(s.x.length, s.y ? s.y.length : s.x.length);
+      if (len > best) best = len;
+    }
+    return best || 64;
+  }
+
+  _activeBins() {
+    const b = this.view.bins ?? this.axes.bins;
+    return Number.isFinite(b) && b >= 2 ? Math.round(b) : this._defaultBins();
+  }
+
+  _notifyBinsChange(bins) {
+    const cb = this.axes.onBinsChange || this.opts.onBinsChange;
+    if (typeof cb === 'function') cb(bins);
+  }
+
+  setBins(nb, notify = true) {
+    const minB = this.axes.minBins || 4;
+    const maxB = this.axes.maxBins || 640;
+    if (nb === null || nb === undefined || !Number.isFinite(nb)) {
+      this.view.bins = null;
+    } else {
+      this.view.bins = Math.max(minB, Math.min(maxB, Math.round(nb)));
+    }
+    if (notify) this._notifyBinsChange(this.view.bins);
+    this.draw();
+  }
+
+  _stepBins(dir) {
+    const cur = this._activeBins();
+    const minB = this.axes.minBins || 4;
+    const maxB = this.axes.maxBins || 640;
+    const ladder = BIN_LADDER.filter((v) => v >= minB && v <= maxB);
+    let next = cur;
+    if (dir < 0) {
+      const lower = ladder.filter((v) => v < cur * 0.92);
+      next = lower.length ? lower[lower.length - 1] : Math.max(minB, Math.round(cur * 0.7));
+    } else {
+      const upper = ladder.filter((v) => v > cur * 1.08);
+      next = upper.length ? upper[0] : Math.min(maxB, Math.round(cur * 1.4));
+    }
+    this.setBins(next, true);
+  }
 
   // --- interaction ----------------------------------------------------------
 
@@ -88,19 +284,34 @@ export class LinePlot {
       b.addEventListener('click', () => this._toggleLog(key));
       const lo = mk('input', 'qd-pt-in', g); lo.type = 'text'; lo.inputMode = 'decimal'; lo.title = `${label} minimum`;
       mk('span', 'qd-pt-dash', g, '–');
-      const hi = mk('input', 'qd-pt-in', g); hi.type = 'text'; hi.inputMode = 'decimal'; hi.title = `${label} maximum`;
+      const hi = mk('input', 'qd-pt-in', g); hi.type = 'text'; hi.inputMode = 'decimal'; lo.title = `${label} minimum`; hi.title = `${label} maximum`;
       const apply = () => this._setRange(key, parseFloat(lo.value), parseFloat(hi.value));
       for (const inp of [lo, hi]) { inp.addEventListener('change', apply); inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { apply(); inp.blur(); } }); }
       return { b, lo, hi };
     };
     this._tx = axisTools('x', 'x');
     this._ty = axisTools('y', 'y');
+    const bg = mk('span', 'qd-pt-axis qd-pt-bins', bar);
+    const bl = mk('span', 'qd-pt-label', bg, this.axes.binLabel || this.opts.binLabel || 'pts');
+    const bMinus = mk('button', 'qd-pt-btn', bg, '−'); bMinus.type = 'button'; bMinus.title = 'Fewer bins / modes / points (reduce binning noise)';
+    bMinus.addEventListener('click', () => this._stepBins(-1));
+    const bIn = mk('input', 'qd-pt-in qd-pt-bin-in', bg); bIn.type = 'text'; bIn.inputMode = 'numeric'; bIn.title = 'Number of bins / modes / points plotted';
+    const applyBins = () => {
+      const v = parseInt(bIn.value, 10);
+      if (Number.isFinite(v) && v >= 2) this.setBins(v, true);
+      else this._syncTools();
+    };
+    bIn.addEventListener('change', applyBins);
+    bIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { applyBins(); bIn.blur(); } });
+    const bPlus = mk('button', 'qd-pt-btn', bg, '+'); bPlus.type = 'button'; bPlus.title = 'More bins / modes / points (refine to reduce jagged edges)';
+    bPlus.addEventListener('click', () => this._stepBins(1));
+    this._tbins = { group: bg, label: bl, minus: bMinus, input: bIn, plus: bPlus };
     const mb = this._modeBtn = mk('button', 'qd-pt-btn', bar, 'pan'); mb.type = 'button'; mb.title = 'Left-drag mode: Pan (grab) vs Box zoom window (Middle-drag or Shift+drag opens box zoom)';
     mb.addEventListener('click', () => {
       this._dragMode = this._dragMode === 'pan' ? 'box' : 'pan';
       mb.textContent = this._dragMode === 'pan' ? 'pan' : 'box zoom';
     });
-    const r = mk('button', 'qd-pt-btn qd-pt-reset', bar, 'reset'); r.type = 'button'; r.title = 'Reset zoom, ranges and scales';
+    const r = mk('button', 'qd-pt-btn qd-pt-reset', bar, 'reset'); r.type = 'button'; r.title = 'Reset zoom, ranges, scales and bin count';
     r.addEventListener('click', () => this.resetView());
     const ex = mk('span', 'qd-pt-export', bar);
     const bs = mk('button', 'qd-pt-btn', ex, 'svg'); bs.type = 'button'; bs.title = 'Download this plot as a standalone SVG file';
@@ -121,7 +332,13 @@ export class LinePlot {
     if (document.activeElement !== this._tx.hi) this._tx.hi.value = f(S.x1);
     if (document.activeElement !== this._ty.lo) this._ty.lo.value = f(S.y0);
     if (document.activeElement !== this._ty.hi) this._ty.hi.value = f(S.y1);
-    const changed = this.view.xlim || this.view.ylim || this.view.xlog !== null || this.view.ylog !== null;
+    if (this._tbins) {
+      this._tbins.label.textContent = A.binLabel || this.opts.binLabel || 'pts';
+      if (document.activeElement !== this._tbins.input) {
+        this._tbins.input.value = String(this._activeBins());
+      }
+    }
+    const changed = this.view.xlim || this.view.ylim || this.view.xlog !== null || this.view.ylog !== null || this.view.bins !== null;
     this.tools.classList.toggle('is-changed', !!changed);
   }
 
@@ -357,7 +574,7 @@ export class LinePlot {
    * otherwise long format `series,x,y` with one row per point. Numbers are written with full (shortest round-trip) precision.
    */
   toCSV() {
-    const S = this.series.filter((s) => s && s.x && s.y);
+    const S = this._drawSeries().filter((s) => s && s.x && s.y);
     const name = (s, k) => (s.label ? String(s.label) : `series${k + 1}`);
     const q = (t) => (/[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t);
     const num = (v) => String(v);
@@ -382,8 +599,30 @@ export class LinePlot {
 
   destroy() { this.svg.remove(); if (this.tools) this.tools.remove(); }
 
+  _resampleOne(s, targetBins, A) {
+    if (!s || !s.x || !s.y || s.noResample) return s;
+    const hasOverride = this.view.bins !== null || this.axes.bins !== undefined;
+    if (typeof s.resample === 'function') {
+      if (hasOverride || s.alwaysResample) {
+        const out = s.resample(targetBins, A);
+        if (out && out.x && out.y) return { ...s, x: out.x, y: out.y };
+      }
+      return s;
+    }
+    if (!hasOverride) return s;
+    const srcX = s.fineX || s.x;
+    const srcY = s.fineY || s.y;
+    const weights = s.fineWeights || s.weights || null;
+    const out = resampleCurve(srcX, srcY, targetBins, { xlog: A.xlog, ylog: A.ylog, weights });
+    return { ...s, x: out.x, y: out.y };
+  }
+
   // --- hooks overridden by WaterfallPlot ------------------------------------
-  _drawSeries() { return this.series; }
+  _drawSeries() {
+    const A = this._effAxes();
+    const targetBins = this._activeBins();
+    return this.series.map((s) => this._resampleOne(s, targetBins, A));
+  }
   _showYTicks() { return true; }
   _defaultMargin() { return {}; }
   _decorate() {}
@@ -592,11 +831,12 @@ export class WaterfallPlot extends LinePlot {
   }
 
   _drawSeries() {
-    const K = this.series.length;
+    const base = super._drawSeries();
+    const K = base.length;
     const off = this.offset ?? 0.6 * this._amplitude();
     this._off = off;
     const cm = COLORMAPS[this.colormap] || COLORMAPS.viridis;
-    return this.series.map((s, k) => {
+    return base.map((s, k) => {
       const c = cm(K > 1 ? 0.15 + 0.7 * k / (K - 1) : 0.5);
       const y = new Float64Array(s.y.length);
       for (let i = 0; i < y.length; i++) y[i] = s.y[i] + k * off;

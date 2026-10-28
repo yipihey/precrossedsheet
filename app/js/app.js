@@ -1,6 +1,6 @@
 import { coreRequest, decodeHash, encodeHash, executionPolicy, GRIDS, gridLimit, HASH_SCHEMA, normalizeState, STATE_VERSION, STEPS } from './state.js';
 import { PRESETS, presetState } from './presets.js';
-import { LinePlot } from './viz/plot.js';
+import { LinePlot, pchipInterpolate, resampleCurve } from './viz/plot.js';
 import { COLORMAPS } from './viz/colormaps.js';
 import { copyText, downloadBlob, flash } from './viz/download.js';
 import { buildCompactManifest, buildPublishedReplayFromResult, deleteReplayFromLibrary, listReplayLibrary, saveReplayToLibrary } from './replay.js';
@@ -28,8 +28,8 @@ function requiresExtendedLimits(state = S) {
 let extendedMode = requiresExtendedLimits(S), autoSaveToDisk = false, replayLibrary = [], activeReplaySourceId = 'packaged', overlayPackagedInReplay = true;
 void listReplayLibrary().then((items) => { replayLibrary = items; if (S.view === 'published') renderPublished(); });
 const densityViewOpts = { cmap: 'coolwarm', scale: 'log', vmin: 0.1, vmax: 10, interp: 'smooth' };
-const pdfViewOpts = { ordinate: 'linear' };
-const spectraViewOpts = { companion: 'ratio_sheet', filter: 'tophat', varianceOrdinate: 'sigma2' };
+const pdfViewOpts = { ordinate: 'linear', bins: null };
+const spectraViewOpts = { companion: 'ratio_sheet', filter: 'tophat', varianceOrdinate: 'sigma2', bins: null };
 const rsdViewOpts = { sheetMode: 'rsd_crossing', specMode: 'ratio', showSamples: true };
 const TRAJECTORIES = [
   { id: '1lpt', label: '1LPT', color: '#56B4E9' },
@@ -584,6 +584,7 @@ function resolveActiveSeries(d) {
     const dash = multiBoth ? em.dash : undefined;
     const width = em.width || 1.8;
     const cs = custom[key];
+    const sp = d?.spectra || {}, vs = d?.varianceScale || {}, pdf = d?.pdf || {};
     if (cs) {
       out.push({
         key,
@@ -598,17 +599,21 @@ function resolveActiveSeries(d) {
         rho: arr(cs.rho),
         massMean: cs.massMean,
         power: arr(cs.power),
+        counts: arr(cs.counts).length ? arr(cs.counts) : arr(sp.counts),
+        fineK: arr(cs.fineK).length ? arr(cs.fineK) : arr(sp.fineK),
+        finePower: arr(cs.finePower),
+        fineCounts: arr(cs.fineCounts).length ? arr(cs.fineCounts) : arr(sp.fineCounts),
         directShell: arr(cs.directShell),
         variance: cs.variance || {},
         pdf: cs.pdf || {},
       });
       return;
     }
-    const sp = d?.spectra || {}, vs = d?.varianceScale || {}, pdf = d?.pdf || {};
     if ((traj === ordTag || !Object.keys(custom).length) && est === 'p0' && traj !== 'pm') {
       out.push({
         key, fieldKey: 'legacy_sheet_p0', traj, est, label, shortLabel, color, dash, width,
         rho: arr(d?.rho), massMean: d?.diagnostics?.mass, power: arr(sp.sheet),
+        counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineSheet), fineCounts: arr(sp.fineCounts),
         directShell: arr(sp.directShell).length ? arr(sp.directShell) : arr(sp.direct),
         variance: { unsmoothed: vs.unsmoothed?.sheet, tophat: arr(vs.tophat?.sheet), gaussian: arr(vs.gaussian?.sheet) },
         pdf: { logrho: arr(pdf.logrho), dy: pdf.dy, volume: arr(pdf.volume), mass: arr(pdf.mass), variance: pdf.variance, capturedVolume: pdf.capturedVolume, capturedMass: pdf.capturedMass, summary: pdf.summary },
@@ -616,7 +621,9 @@ function resolveActiveSeries(d) {
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'p1' && traj !== 'pm') {
       out.push({
         key, fieldKey: 'legacy_sheet_p1', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.rhoP1), massMean: d?.diagnostics?.p1Mass, power: arr(sp.sheetP1), directShell: [],
+        rho: arr(d?.rhoP1), massMean: d?.diagnostics?.p1Mass, power: arr(sp.sheetP1),
+        counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineSheetP1), fineCounts: arr(sp.fineCounts),
+        directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.sheetP1, tophat: arr(vs.tophat?.sheetP1), gaussian: arr(vs.gaussian?.sheetP1) },
         pdf: { logrho: arr(pdf.p1Logrho || pdf.logrho), dy: pdf.p1Dy || pdf.dy, volume: arr(pdf.p1Volume), mass: arr(pdf.p1Mass), variance: pdf.p1Variance, capturedVolume: pdf.p1CapturedVolume, capturedMass: pdf.p1CapturedMass, summary: pdf.p1Summary },
       });
@@ -624,6 +631,7 @@ function resolveActiveSeries(d) {
       out.push({
         key, fieldKey: 'legacy_pm_p0', traj, est, label, shortLabel, color, dash, width,
         rho: arr(d?.pmRho), massMean: d?.diagnostics?.pmMass, power: arr(sp.pm),
+        counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.finePm), fineCounts: arr(sp.fineCounts),
         directShell: arr(sp.directShellPM).length ? arr(sp.directShellPM) : arr(sp.directPM),
         variance: { unsmoothed: vs.unsmoothed?.pm, tophat: arr(vs.tophat?.pm), gaussian: arr(vs.gaussian?.pm) },
         pdf: { logrho: arr(pdf.pmLogrho || pdf.logrho), dy: pdf.pmDy || pdf.dy, volume: arr(pdf.pmVolume), mass: arr(pdf.pmMass), variance: pdf.pmVariance, capturedVolume: pdf.pmCapturedVolume, capturedMass: pdf.pmCapturedMass, summary: pdf.pmSummary },
@@ -631,14 +639,18 @@ function resolveActiveSeries(d) {
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'cic') {
       out.push({
         key, fieldKey: 'legacy_cic', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.cicRho), massMean: d?.diagnostics?.cicMass, power: arr(sp.cic), directShell: [],
+        rho: arr(d?.cicRho), massMean: d?.diagnostics?.cicMass, power: arr(sp.cic),
+        counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineCic), fineCounts: arr(sp.fineCounts),
+        directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.cic, tophat: arr(vs.tophat?.cic), gaussian: arr(vs.gaussian?.cic) },
         pdf: { logrho: arr(pdf.cicLogrho || pdf.logrho), dy: pdf.cicDy || pdf.dy, volume: arr(pdf.cicVolume), mass: arr(pdf.cicMass), variance: pdf.cicVariance, capturedVolume: pdf.cicCapturedVolume, capturedMass: pdf.cicCapturedMass, summary: pdf.cicSummary },
       });
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'tsc') {
       out.push({
         key, fieldKey: 'legacy_tsc', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.tscRho), massMean: d?.diagnostics?.tscMass, power: arr(sp.tsc), directShell: [],
+        rho: arr(d?.tscRho), massMean: d?.diagnostics?.tscMass, power: arr(sp.tsc),
+        counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineTsc), fineCounts: arr(sp.fineCounts),
+        directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.tsc, tophat: arr(vs.tophat?.tsc), gaussian: arr(vs.gaussian?.tsc) },
         pdf: { volume: [], mass: [], variance: null, capturedVolume: null, capturedMass: null, summary: null },
       });
@@ -770,11 +782,12 @@ function densityColor(t){
 }
 function plotHost(parent){return $('div','plot-host',parent);}
 function addPlot(parent,title,x,seriesDefs,axes,d) {
-  const box=$('section','plot-panel',parent);$('h4','',box,title); const host=plotHost(box), plot=new LinePlot(host,{width:720,height:390,interactive:true});
-  const xs=arr(x); if(!xs.length){$('p','panel-note',box,'This run did not return data for this chart.');return;}
+  const box=$('section','plot-panel',parent);$('h4','',box,title); const host=plotHost(box), plot=new LinePlot(host,{width:720,height:390,interactive:true,binLabel:axes.binLabel,onBinsChange:axes.onBinsChange});
+  const xs=arr(x); if(!xs.length){$('p','panel-note',box,'This run did not return data for this chart.');return null;}
   const series=[]; for(const def of seriesDefs){const ys=arr(d?.[def.key] ?? d?.spectra?.[def.key] ?? d?.pdf?.[def.key] ?? d?.gradient?.[def.key]);const sx=arr(def.xkey?(d?.[def.xkey]??d?.spectra?.[def.xkey]??d?.gradient?.[def.xkey]):xs);if(ys.length&&sx.length)series.push({...def,x:sx.slice(0,Math.min(sx.length,ys.length)),y:ys.slice(0,Math.min(sx.length,ys.length)),label:def.label});}
-  if(!series.length){$('p','panel-note',box,'The selected output did not include the requested curves.');return;}
+  if(!series.length){$('p','panel-note',box,'The selected output did not include the requested curves.');return null;}
   plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);plot.draw();
+  return plot;
 }
 function sheetPositiveRange(arrays) {
   let lo = Infinity, hi = 0;
@@ -789,11 +802,79 @@ function sheetPositiveRange(arrays) {
   }
   return Number.isFinite(lo) && hi > 0 ? [lo, hi] : null;
 }
+function rebinPowerSeries(kArr, pArr, countsArr, fineKArr, finePArr, fineCountsArr, targetBins) {
+  const defK = arr(kArr).map(Number);
+  const defP = arr(pArr).map(Number);
+  const fK = arr(fineKArr).length ? arr(fineKArr).map(Number) : defK;
+  const fP = arr(finePArr).length ? arr(finePArr).map(Number) : defP;
+  const fC = arr(fineCountsArr).length
+    ? arr(fineCountsArr).map(Number)
+    : arr(countsArr).length
+      ? arr(countsArr).map(Number)
+      : null;
+  if (!Number.isFinite(targetBins) || targetBins <= 0 || targetBins === defK.length) {
+    return { x: defK, y: defP };
+  }
+  return resampleCurve(fK, fP, targetBins, { xlog: true, ylog: true, weights: fC });
+}
+
 function renderSpectra(d) {
-  const p=panel('Power spectrum comparison','The primary chart compares isotropically binned FFT power spectra P(k) in physical units for all selected Trajectory × Estimator pairs, with the y-axis minimum anchored to the measured spectra rather than the Gaussian-damped linear input tail. The second chart provides an interactive spectral diagnostic (relative estimator ratio, nonlinear transfer vs realized linear modes, dimensionless power Δ²(k), or shell-averaged mesh-free exact simplex Fourier modes).');
+  const p=panel('Power spectrum comparison','The primary chart compares isotropically binned FFT power spectra P(k) in physical units for all selected Trajectory × Estimator pairs, with the y-axis minimum anchored to the measured spectra rather than the Gaussian-damped linear input tail. Use the modes (− / N / +) control in the panel bar or plot toolbar to coarsen k-shells (reducing sample-variance noise) or refine up to 256 fine shells (resolving BAO wiggles and high-k roll-off).');
   const sp=d.spectra||{};
   const ks=arr(sp.k);
+  const fineK=arr(sp.fineK);
+  const fineCounts=arr(sp.fineCounts);
+  const defaultKBins=ks.length||24;
+  const activeKBins=spectraViewOpts.bins||defaultKBins;
   const activeSeries=resolveActiveSeries(d).filter(s=>s.power.length>0);
+
+  const topBar=$('div','published-controls',p);
+  const compWrap=$('label','published-select',topBar);$('span','',compWrap,'Companion spectral diagnostic');
+  const compSel=$('select','lab-select',compWrap);
+  const refSeries=activeSeries.find(s=>s.key==='4lpt:p0')||activeSeries.find(s=>s.est==='p0')||activeSeries[0];
+  const refPower=refSeries?refSeries.power:arr(sp.sheet);
+  const refFinePower=refSeries&&arr(refSeries.finePower).length?refSeries.finePower:arr(sp.fineSheet);
+  const refName=refSeries?refSeries.shortLabel:'LPT (P₀)';
+  const companionModes=[
+    ['ratio_sheet',`Relative estimator ratio  P(k) / P_${refName}(k)`],
+    ['transfer_realized','Nonlinear mode transfer  P(k) / P_lin,realized(k)'],
+    ['dimensionless','Dimensionless power  Δ²(k) = C_d k^d P(k)'],
+    ['direct_simplex','Mesh-free exact simplex Fourier spectrum vs isotropic FFT'],
+  ];
+  for(const [v,t] of companionModes){const o=$('option','',compSel,t);o.value=v;}
+  compSel.value=spectraViewOpts.companion;
+  compSel.addEventListener('change',()=>{spectraViewOpts.companion=compSel.value;render();});
+
+  const kBinWrap=$('label','published-select',topBar);$('span','',kBinWrap,'k-shells / modes');
+  const kBinRow=$('span','qd-pt-axis',kBinWrap);
+  const kMinus=$('button','qd-btn',kBinRow,'−');kMinus.type='button';kMinus.style.padding='0.1rem 0.45rem';kMinus.title='Coarsen k-shells (fewer bins, lower noise)';
+  const kInput=$('input','lab-number',kBinRow);kInput.type='number';kInput.min='6';kInput.max='320';kInput.step='4';kInput.style.width='4.5rem';kInput.value=String(activeKBins);
+  const kPlus=$('button','qd-btn',kBinRow,'+');kPlus.type='button';kPlus.style.padding='0.1rem 0.45rem';kPlus.title='Refine k-shells (more bins, up to 256 native shells)';
+  const kAuto=$('button','qd-btn',kBinRow,`Auto (${defaultKBins})`);kAuto.type='button';kAuto.style.padding='0.1rem 0.5rem';
+
+  const specPlots=[];
+  const syncSpecBins=(nb,sourcePlot=null)=>{
+    spectraViewOpts.bins=nb;
+    kInput.value=String(nb||defaultKBins);
+    for(const pl of specPlots){
+      if(pl&&pl!==sourcePlot)pl.setBins(nb,false);
+    }
+  };
+  kMinus.addEventListener('click',()=>{if(specPlots[0])specPlots[0]._stepBins(-1);});
+  kPlus.addEventListener('click',()=>{if(specPlots[0])specPlots[0]._stepBins(1);});
+  kInput.addEventListener('change',()=>{
+    const v=parseInt(kInput.value,10);
+    if(Number.isFinite(v)&&v>=4){
+      if(specPlots[0])specPlots[0].setBins(v,true);
+      else{spectraViewOpts.bins=v;render();}
+    }
+  });
+  kAuto.addEventListener('click',()=>{
+    spectraViewOpts.bins=null;
+    kInput.value=String(defaultKBins);
+    for(const pl of specPlots)if(pl)pl.setBins(null,false);
+  });
+
   const pkData={
     k:ks,
     realizedK:arr(sp.realizedK),
@@ -806,28 +887,57 @@ function renderSpectra(d) {
   const allBounds=sheetPositiveRange([...activeSeries.map(s=>s.power),sp.realized,sp.linear]);
   const pkYlim=sheetBounds&&allBounds?[sheetBounds[0]*0.45,Math.max(sheetBounds[1],allBounds[1])*2.2]:undefined;
   const pkDefs=[
-    ...activeSeries.map(s=>({key:s.fieldKey,label:s.label,color:s.color,dash:s.dash,width:s.width})),
-    {key:'realized',xkey:'realizedK',label:'Linear input, this realization',color:'#7f8c8d',dash:'2 3',width:1.4},
-    {key:'linear',xkey:'linearK',label:'Linear input, ensemble mean',color:'#34495e',dash:'5 3',width:1.5},
+    ...activeSeries.map(s=>({
+      key:s.fieldKey,
+      label:s.label,
+      color:s.color,
+      dash:s.dash,
+      width:s.width,
+      resample:(nb)=>rebinPowerSeries(ks,s.power,s.counts,s.fineK,s.finePower,s.fineCounts,nb),
+    })),
+    {
+      key:'realized',
+      xkey:'realizedK',
+      label:'Linear input, this realization',
+      color:'#7f8c8d',
+      dash:'2 3',
+      width:1.4,
+      resample:(nb)=>rebinPowerSeries(sp.realizedK,sp.realized,sp.realizedCounts,sp.fineRealizedK,sp.fineRealized,sp.fineRealizedCounts,nb),
+    },
+    {
+      key:'linear',
+      xkey:'linearK',
+      label:'Linear input, ensemble mean',
+      color:'#34495e',
+      dash:'5 3',
+      width:1.5,
+      fineX:arr(sp.fineLinearK).length?arr(sp.fineLinearK):arr(sp.linearK),
+      fineY:arr(sp.fineLinear).length?arr(sp.fineLinear):arr(sp.linear),
+    },
   ];
-  addPlot(p,'Isotropic FFT-bin power P(k)',ks,pkDefs,{xlabel:'k [h/Mpc]',ylabel:`P(k) [(Mpc/h)^${S.dim}]`,xlog:true,ylog:true,ylim:pkYlim},pkData);
+  const pMain=addPlot(p,'Isotropic FFT-bin power P(k)',ks,pkDefs,{xlabel:'k [h/Mpc]',ylabel:`P(k) [(Mpc/h)^${S.dim}]`,xlog:true,ylog:true,ylim:pkYlim,binLabel:'modes',bins:spectraViewOpts.bins?? undefined,minBins:6,maxBins:320,onBinsChange:(nb)=>syncSpecBins(nb,pMain)},pkData);
+  if(pMain)specPlots.push(pMain);
 
-  const refSeries=activeSeries.find(s=>s.key==='4lpt:p0')||activeSeries.find(s=>s.est==='p0')||activeSeries[0];
-  const refPower=refSeries?refSeries.power:arr(sp.sheet);
-  const refName=refSeries?refSeries.shortLabel:'LPT (P₀)';
-
-  const bar=$('div','published-controls',p);
-  const wrap=$('label','published-select',bar);$('span','',wrap,'Companion spectral diagnostic');
-  const sel=$('select','lab-select',wrap);
-  const companionModes=[
-    ['ratio_sheet',`Relative estimator ratio  P(k) / P_${refName}(k)`],
-    ['transfer_realized','Nonlinear mode transfer  P(k) / P_lin,realized(k)'],
-    ['dimensionless','Dimensionless power  Δ²(k) = C_d k^d P(k)'],
-    ['direct_simplex','Mesh-free exact simplex Fourier spectrum vs isotropic FFT'],
-  ];
-  for(const [v,t] of companionModes){const o=$('option','',sel,t);o.value=v;}
-  sel.value=spectraViewOpts.companion;
-  sel.addEventListener('change',()=>{spectraViewOpts.companion=sel.value;render();});
+  const pairRatioResample=(s,denomK,denomP,denomC,denomFineK,denomFineP,denomFineC)=>(nb)=>{
+    const numCurve=rebinPowerSeries(ks,s.power,s.counts,s.fineK,s.finePower,s.fineCounts,nb);
+    const denCurve=rebinPowerSeries(denomK,denomP,denomC,denomFineK,denomFineP,denomFineC,nb);
+    if(!numCurve.x.length||!denCurve.x.length)return {x:[],y:[]};
+    if(numCurve.x.length===denCurve.x.length){
+      return {
+        x:numCurve.x,
+        y:numCurve.y.map((v,i)=>denCurve.y[i]>1e-30?v/denCurve.y[i]:NaN),
+      };
+    }
+    const denInterp=pchipInterpolate(
+      denCurve.x.map(v=>Math.log10(Math.max(1e-30,v))),
+      denCurve.y,
+      numCurve.x.map(v=>Math.log10(Math.max(1e-30,v)))
+    );
+    return {
+      x:numCurve.x,
+      y:numCurve.y.map((v,i)=>denInterp[i]>1e-30?v/denInterp[i]:NaN),
+    };
+  };
 
   if(spectraViewOpts.companion==='ratio_sheet'){
     const ratioToSheet=(vals)=>arr(vals).map((v,i)=>{const denom=Number(refPower[i]);return denom>1e-30?Number(v)/denom:NaN;});
@@ -839,8 +949,12 @@ function renderSpectra(d) {
       color:s.color,
       dash:s.dash,
       width:s.width,
+      resample:s===refSeries
+        ?(nb)=>{const c=rebinPowerSeries(ks,s.power,s.counts,s.fineK,s.finePower,s.fineCounts,nb);return {x:c.x,y:c.x.map(()=>1)};}
+        :pairRatioResample(s,ks,refPower,sp.counts,fineK,refFinePower,fineCounts),
     }));
-    addPlot(p,`Spectral ratio relative to ${refName}: P(k) / P_${refName}(k)`,ks,ratioDefs,{xlabel:'k [h/Mpc]',ylabel:`P(k) / P_${refName}(k)`,xlog:true,ylog:false},ratioData);
+    const pComp=addPlot(p,`Spectral ratio relative to ${refName}: P(k) / P_${refName}(k)`,ks,ratioDefs,{xlabel:'k [h/Mpc]',ylabel:`P(k) / P_${refName}(k)`,xlog:true,ylog:false,binLabel:'modes',bins:spectraViewOpts.bins?? undefined,minBins:6,maxBins:320,onBinsChange:(nb)=>syncSpecBins(nb,pComp)},ratioData);
+    if(pComp)specPlots.push(pComp);
     $('p','panel-note',p,`Dividing by ${refName} isolates how the selected trajectories (1–4LPT, PM) and density estimators (P₀, P₁, NGP, CIC, TSC) compare across scale.`);
   } else if(spectraViewOpts.companion==='transfer_realized'){
     const rK=arr(sp.realizedK),rP=arr(sp.realized);
@@ -850,10 +964,20 @@ function renderSpectra(d) {
     const trData={k:baseK,unit:baseK.map(()=>1)};
     for(const s of activeSeries)trData[s.fieldKey]=ratioToRealized(s.power);
     const trDefs=[
-      ...activeSeries.map(s=>({key:s.fieldKey,label:s.label,color:s.color,dash:s.dash,width:s.width})),
-      {key:'unit',label:rP.length?'Linear realization ≡ 1':`${refName} ≡ 1`,color:'#7f8c8d',dash:'2 3',width:1.3},
+      ...activeSeries.map(s=>({
+        key:s.fieldKey,
+        label:s.label,
+        color:s.color,
+        dash:s.dash,
+        width:s.width,
+        resample:rP.length
+          ?pairRatioResample(s,sp.realizedK,sp.realized,sp.realizedCounts,sp.fineRealizedK,sp.fineRealized,sp.fineRealizedCounts)
+          :pairRatioResample(s,ks,refPower,sp.counts,fineK,refFinePower,fineCounts),
+      })),
+      {key:'unit',label:rP.length?'Linear realization ≡ 1':`${refName} ≡ 1`,color:'#7f8c8d',dash:'2 3',width:1.3,noResample:true},
     ];
-    addPlot(p,rP.length?'Nonlinear mode transfer relative to realized linear modes: P(k) / P_lin,realized(k)':`Ratio relative to ${refName} (deterministic wave run)`,baseK,trDefs,{xlabel:'k [h/Mpc]',ylabel:rP.length?'P(k) / [D(a)² |δ₀(k)|²]':'P(k) / P_ref(k)',xlog:true,ylog:true},trData);
+    const pComp=addPlot(p,rP.length?'Nonlinear mode transfer relative to realized linear modes: P(k) / P_lin,realized(k)':`Ratio relative to ${refName} (deterministic wave run)`,baseK,trDefs,{xlabel:'k [h/Mpc]',ylabel:rP.length?'P(k) / [D(a)² |δ₀(k)|²]':'P(k) / P_ref(k)',xlog:true,ylog:true,binLabel:'modes',bins:spectraViewOpts.bins?? undefined,minBins:6,maxBins:320,onBinsChange:(nb)=>syncSpecBins(nb,pComp)},trData);
+    if(pComp)specPlots.push(pComp);
     $('p','panel-note',p,'Because “Linear input, this realization” uses the exact random phases δ₀(k) of the run, dividing by D(a)²|δ₀(k)|² cancels cosmic variance on large scales and exposes nonlinear mode coupling into high-k modes above the initial smoothing scale.');
   } else if(spectraViewOpts.companion==='dimensionless'){
     const dim=Number(d.dim||S.dim);
@@ -872,10 +996,46 @@ function renderSpectra(d) {
       d2Data[s.fieldKey]=arrD2;
       d2SeriesArrays.push(arrD2);
     }
+    const d2Defs=[
+      ...activeSeries.map(s=>({
+        key:s.fieldKey,
+        label:s.label,
+        color:s.color,
+        dash:s.dash,
+        width:s.width,
+        resample:(nb)=>{
+          const c=rebinPowerSeries(ks,s.power,s.counts,s.fineK,s.finePower,s.fineCounts,nb);
+          return {x:c.x,y:toDelta2(c.y,c.x)};
+        },
+      })),
+      {
+        key:'realized',
+        xkey:'realizedK',
+        label:'Linear input, this realization',
+        color:'#7f8c8d',
+        dash:'2 3',
+        width:1.4,
+        resample:(nb)=>{
+          const c=rebinPowerSeries(sp.realizedK,sp.realized,sp.realizedCounts,sp.fineRealizedK,sp.fineRealized,sp.fineRealizedCounts,nb);
+          return {x:c.x,y:toDelta2(c.y,c.x)};
+        },
+      },
+      {
+        key:'linear',
+        xkey:'linearK',
+        label:'Linear input, ensemble mean',
+        color:'#34495e',
+        dash:'5 3',
+        width:1.5,
+        fineX:arr(sp.fineLinearK).length?arr(sp.fineLinearK):arr(sp.linearK),
+        fineY:toDelta2(arr(sp.fineLinear).length?arr(sp.fineLinear):arr(sp.linear),arr(sp.fineLinearK).length?arr(sp.fineLinearK):arr(sp.linearK)),
+      },
+    ];
     const d2SheetBounds=sheetPositiveRange(d2SeriesArrays);
     const d2AllBounds=sheetPositiveRange([...d2SeriesArrays,d2Data.realized,d2Data.linear]);
     const d2Ylim=d2SheetBounds&&d2AllBounds?[d2SheetBounds[0]*0.45,Math.max(d2SheetBounds[1],d2AllBounds[1])*2.2]:undefined;
-    addPlot(p,`Dimensionless power spectrum Δ²(k) in ${dim}D`,ks,pkDefs,{xlabel:'k [h/Mpc]',ylabel:'Δ²(k)  [variance per ln k]',xlog:true,ylog:true,ylim:d2Ylim},d2Data);
+    const pComp=addPlot(p,`Dimensionless power spectrum Δ²(k) in ${dim}D`,ks,d2Defs,{xlabel:'k [h/Mpc]',ylabel:'Δ²(k)  [variance per ln k]',xlog:true,ylog:true,ylim:d2Ylim,binLabel:'modes',bins:spectraViewOpts.bins?? undefined,minBins:6,maxBins:320,onBinsChange:(nb)=>syncSpecBins(nb,pComp)},d2Data);
+    if(pComp)specPlots.push(pComp);
     $('p','panel-note',p,`Δ²(k) measures the contribution to the real-space variance per logarithmic wavenumber interval d ln k. Its integral over ln k weighted by W²(kR) yields the smoothed variance σ²(R) shown in the panel below.`);
   } else {
     const useShell=arr(sp.directShellK).length>0;
@@ -1063,49 +1223,150 @@ function pdfOrdinateMeta(mode) {
     ylim: undefined,
   };
 }
-function transformPdfOrdinate(arrVals, sRhoAxis, sDy, mode) {
-  const vals = arr(arrVals).map(Number);
-  if (!vals.length) return [];
-  if (mode === 'log10') return vals;
-  if (mode === 'linear') {
-    const sFactor = Math.pow(10, sDy / 2) - Math.pow(10, -sDy / 2);
-    return vals.map((v, i) => {
-      const r = sRhoAxis[i] || 1;
-      return (v * sDy) / Math.max(1e-30, r * sFactor);
-    });
+function buildPdfSeriesCurve(pdfObj, weightKey, mode, targetBins, fallbackLogrho = []) {
+  const fine = pdfObj?.summary?.finePdf;
+  const hasFine = fine && arr(fine[weightKey]).length > 0 && arr(fine.logrho).length > 0;
+  const baseLogrho = (arr(pdfObj?.logrho).length ? arr(pdfObj.logrho) : arr(fallbackLogrho)).map(Number);
+  const baseVals = arr(pdfObj?.[weightKey]).map(Number);
+  const baseDy = Number(pdfObj?.dy) > 0
+    ? Number(pdfObj.dy)
+    : (baseLogrho.length > 1 ? Math.abs(baseLogrho[1] - baseLogrho[0]) : 3.6 / 80);
+
+  const srcLogrho = hasFine ? arr(fine.logrho).map(Number) : baseLogrho;
+  const srcVals = hasFine ? arr(fine[weightKey]).map(Number) : baseVals;
+  const srcDy = hasFine && Number(fine.dy) > 0
+    ? Number(fine.dy)
+    : (srcLogrho.length > 1 ? Math.abs(srcLogrho[1] - srcLogrho[0]) : baseDy);
+
+  if (!srcLogrho.length || !srcVals.length) return { x: [], y: [] };
+
+  if (mode === 'cdf' || mode === 'peaked_cdf') {
+    const probs = srcVals.map((v) => Math.max(0, (Number.isFinite(v) ? v : 0) * srcDy));
+    let tot = 0, firstIdx = -1, lastIdx = -1;
+    for (let i = 0; i < probs.length; i++) {
+      if (probs[i] > 0) {
+        if (firstIdx < 0) firstIdx = i;
+        lastIdx = i;
+        tot += probs[i];
+      }
+    }
+    if (!(tot > 0) || firstIdx < 0) {
+      return { x: baseLogrho.map((y) => Math.pow(10, y)), y: baseLogrho.map(() => NaN) };
+    }
+    const uMin = srcLogrho[firstIdx] - 0.5 * srcDy;
+    const uMax = srcLogrho[lastIdx] + 0.5 * srcDy;
+    const uKnots = [uMin];
+    const fKnots = [0];
+    let cum = 0;
+    let yMed = 0.5 * (uMin + uMax);
+    let foundMed = false;
+    for (let i = firstIdx; i <= lastIdx; i++) {
+      const p = probs[i];
+      const fPrev = cum / tot;
+      cum += p;
+      const fNext = Math.min(1, cum / tot);
+      const uLeft = srcLogrho[i] - 0.5 * srcDy;
+      const uRight = uLeft + srcDy;
+      if (!foundMed && fNext >= 0.5) {
+        const frac = fNext > fPrev ? (0.5 - fPrev) / (fNext - fPrev) : 0.5;
+        yMed = uLeft + Math.max(0, Math.min(1, frac)) * srcDy;
+        foundMed = true;
+      }
+      if (p > 0 || i === lastIdx) {
+        uKnots.push(uRight);
+        fKnots.push(fNext);
+      }
+    }
+    const nb = Math.max(8, Math.round(Number.isFinite(targetBins) && targetBins >= 4 ? targetBins : 160));
+    const uQuery = [];
+    for (let j = 0; j < nb; j++) {
+      uQuery.push(uMin + (j / (nb - 1)) * (uMax - uMin));
+    }
+    if (mode === 'peaked_cdf' && foundMed) {
+      let near = false;
+      for (let j = 0; j < uQuery.length; j++) {
+        if (Math.abs(uQuery[j] - yMed) < 1e-7) { uQuery[j] = yMed; near = true; break; }
+      }
+      if (!near) {
+        uQuery.push(yMed);
+        uQuery.sort((a, b) => a - b);
+      }
+    }
+    const fVals = pchipInterpolate(uKnots, fKnots, uQuery);
+    const outX = new Array(uQuery.length);
+    const outY = new Array(uQuery.length);
+    for (let j = 0; j < uQuery.length; j++) {
+      const u = uQuery[j];
+      outX[j] = Math.pow(10, u);
+      const f = Math.max(0, Math.min(1, fVals[j]));
+      if (mode === 'cdf') {
+        outY[j] = f;
+      } else if (foundMed && Math.abs(u - yMed) < 1e-9) {
+        outY[j] = 0.5;
+      } else {
+        outY[j] = Math.max(1e-30, Math.min(f, 1 - f));
+      }
+    }
+    return { x: outX, y: outY };
   }
-  const probs = vals.map((v) => Math.max(0, (Number.isFinite(v) ? v : 0) * sDy));
-  let tot = 0;
-  let firstIdx = -1;
-  let lastIdx = -1;
-  for (let i = 0; i < probs.length; i++) {
-    if (probs[i] > 0) {
-      if (firstIdx < 0) firstIdx = i;
-      lastIdx = i;
-      tot += probs[i];
+
+  const defCount = baseLogrho.length || 80;
+  const nb = Math.max(6, Math.round(Number.isFinite(targetBins) && targetBins >= 4 ? targetBins : defCount));
+  if (nb === defCount && baseVals.length === defCount) {
+    const outX = baseLogrho.map((y) => Math.pow(10, y));
+    if (mode === 'log10') return { x: outX, y: baseVals };
+    const sFactor = Math.pow(10, baseDy / 2) - Math.pow(10, -baseDy / 2);
+    return {
+      x: outX,
+      y: baseVals.map((v, i) => (v * baseDy) / Math.max(1e-30, outX[i] * sFactor)),
+    };
+  }
+
+  const m = Math.min(srcLogrho.length, srcVals.length);
+  const rebinCount = Math.min(nb, m);
+  const yLo = srcLogrho[0] - 0.5 * srcDy;
+  const yHi = srcLogrho[m - 1] + 0.5 * srcDy;
+  const dstDy = (yHi - yLo) / rebinCount;
+  const dstProb = new Float64Array(rebinCount);
+  for (let i = 0; i < m; i++) {
+    const p = Math.max(0, (Number(srcVals[i]) || 0) * srcDy);
+    if (!(p > 0)) continue;
+    const a = srcLogrho[i] - 0.5 * srcDy;
+    const b = a + srcDy;
+    const j0 = Math.max(0, Math.floor((a - yLo) / dstDy));
+    const j1 = Math.min(rebinCount - 1, Math.floor((b - 1e-14 - yLo) / dstDy));
+    for (let j = j0; j <= j1; j++) {
+      const c = yLo + j * dstDy;
+      const d = c + dstDy;
+      const overlap = Math.max(0, Math.min(b, d) - Math.max(a, c));
+      dstProb[j] += p * (overlap / srcDy);
     }
   }
-  if (!(tot > 0) || firstIdx < 0) return vals.map(() => NaN);
-  const out = new Array(probs.length).fill(NaN);
-  let cumBefore = 0;
-  for (let i = firstIdx; i <= lastIdx; i++) {
-    const p = probs[i];
-    if (mode === 'cdf') {
-      out[i] = (cumBefore + p) / tot;
-    } else {
-      const fLe = (cumBefore + 0.5 * p) / tot;
-      const fGe = Math.max(0, 1 - fLe);
-      out[i] = Math.max(1e-30, Math.min(fLe, fGe));
-    }
-    cumBefore += p;
+  const outX = new Array(rebinCount);
+  const outY = new Array(rebinCount);
+  const sFactor = Math.pow(10, dstDy / 2) - Math.pow(10, -dstDy / 2);
+  for (let j = 0; j < rebinCount; j++) {
+    const yCenter = yLo + (j + 0.5) * dstDy;
+    const rho = Math.pow(10, yCenter);
+    outX[j] = rho;
+    const p = dstProb[j];
+    outY[j] = mode === 'log10' ? p / dstDy : p / Math.max(1e-30, rho * sFactor);
   }
-  return out;
+  if (nb > m) {
+    return resampleCurve(outX, outY, nb, { xlog: true, ylog: true });
+  }
+  return { x: outX, y: outY };
 }
+
 function renderPdfs(d) {
   const activeSeries=resolveActiveSeries(d).filter(s=>arr(s.pdf?.volume).length>0);
-  const p=panel('Density probability distributions',`Comparing probability distributions (PDF, CDF, and peaked CDF) for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄. Continuous P₀ and P₁ sheet distributions are always evaluated directly from the Lagrangian simplices (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) without grid deposition, extending smoothly across deep voids and high-density caustics; only the grid-based particle estimators (NGP, CIC, TSC) are limited in density range by the Eulerian grid and zero-particle starvation. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
+  const p=panel('Density probability distributions',`Comparing probability distributions (PDF, CDF, and peaked CDF) for all selected Trajectory × Estimator pairs as a function of ρ/ρ̄. Continuous P₀ and P₁ sheet distributions are always evaluated directly from the Lagrangian simplices (intervals in 1D, triangles in 2D, Kuhn tetrahedra in 3D) up to 640 native bins without grid deposition, extending smoothly across deep voids and high-density caustics; only the grid-based particle estimators (NGP, CIC, TSC) are limited in density range by the Eulerian grid and zero-particle starvation. Primary weighting: ${S.weight}. Observation filter R/L = ${num(S.smoothing,4)}. Captured integrals are reported below.`);
   const logrho=arr(d.pdf?.logrho);
   const rhoAxis=logrho.map(y=>Math.pow(10,Number(y)));
+  const isCdfMode=pdfViewOpts.ordinate==='cdf'||pdfViewOpts.ordinate==='peaked_cdf';
+  const defaultPdfBins=isCdfMode?160:80;
+  const activePdfBins=pdfViewOpts.bins||defaultPdfBins;
+
   const bar=$('div','published-controls',p);
   const wrap=$('label','published-select',bar);$('span','',wrap,'PDF ordinate');
   const sel=$('select','lab-select',wrap);
@@ -1117,27 +1378,77 @@ function renderPdfs(d) {
   ]){const o=$('option','',sel,t);o.value=v;}
   sel.value=pdfViewOpts.ordinate;
   sel.addEventListener('change',()=>{pdfViewOpts.ordinate=sel.value;render();});
-  $('p','panel-note',p,`Direct simplex evaluation active: P₀ and P₁ sheet distributions and quantiles are accumulated directly over all Lagrangian simplices (using exact Jacobian density 1/|J_T| for P₀ and analytical nodal vertex Jacobians 1/|J(q_i)| for P₁) without depositing onto an Eulerian mesh. Grid-based particle estimators (NGP, CIC, TSC) are deposited onto their Eulerian grid${S.mesh>S.n?` (at their natural ${S.n}^${S.dim} particle spacing so isolated particles do not create artificial sub-cell spikes)`:''}.`);
+
+  const binWrap=$('label','published-select',bar);$('span','',binWrap,isCdfMode?'Curve points / quantiles':'Histogram bins');
+  const binRow=$('span','qd-pt-axis',binWrap);
+  const bMinus=$('button','qd-btn',binRow,'−');bMinus.type='button';bMinus.style.padding='0.1rem 0.45rem';bMinus.title='Fewer bins / points (reduce binning noise)';
+  const bInput=$('input','lab-number',binRow);bInput.type='number';bInput.min='8';bInput.max='640';bInput.step='8';bInput.style.width='4.5rem';bInput.value=String(activePdfBins);
+  const bPlus=$('button','qd-btn',binRow,'+');bPlus.type='button';bPlus.style.padding='0.1rem 0.45rem';bPlus.title='More bins / points (up to 640 exact simplex bins)';
+  const bAuto=$('button','qd-btn',binRow,`Auto (${defaultPdfBins})`);bAuto.type='button';bAuto.style.padding='0.1rem 0.5rem';
+
+  const pdfPlots=[];
+  const syncPdfBins=(nb,sourcePlot=null)=>{
+    pdfViewOpts.bins=nb;
+    bInput.value=String(nb||defaultPdfBins);
+    for(const pl of pdfPlots){
+      if(pl&&pl!==sourcePlot)pl.setBins(nb,false);
+    }
+  };
+  bMinus.addEventListener('click',()=>{if(pdfPlots[0])pdfPlots[0]._stepBins(-1);});
+  bPlus.addEventListener('click',()=>{if(pdfPlots[0])pdfPlots[0]._stepBins(1);});
+  bInput.addEventListener('change',()=>{
+    const v=parseInt(bInput.value,10);
+    if(Number.isFinite(v)&&v>=6){
+      if(pdfPlots[0])pdfPlots[0].setBins(v,true);
+      else{pdfViewOpts.bins=v;render();}
+    }
+  });
+  bAuto.addEventListener('click',()=>{
+    pdfViewOpts.bins=null;
+    bInput.value=String(defaultPdfBins);
+    for(const pl of pdfPlots)if(pl)pl.setBins(null,false);
+  });
+
+  $('p','panel-note',p,`Direct simplex evaluation active: P₀ and P₁ sheet distributions and quantiles are accumulated directly over all Lagrangian simplices (using exact Jacobian density 1/|J_T| for P₀ and analytical nodal vertex Jacobians 1/|J(q_i)| for P₁) at up to 640 logarithmic bins without depositing onto an Eulerian mesh. Use the bins (− / N / +) controls above or under each chart to refine or coarsen the binning.`);
   const pdfData={rhoAxis};
   const volumeDefs=[],massDefs=[];
   for(const s of activeSeries){
-    const sLogrho=arr(s.pdf?.logrho).length?arr(s.pdf.logrho):logrho;
-    const sRhoAxis=sLogrho.map(y=>Math.pow(10,Number(y)));
-    const sDy=Number(s.pdf?.dy)>0?Number(s.pdf.dy):(sLogrho.length>1?Math.abs(Number(sLogrho[1])-Number(sLogrho[0])):3.6/80);
-    const xKey=`${s.fieldKey}_x`,vKey=`${s.fieldKey}_vol`,mKey=`${s.fieldKey}_mass`;
-    pdfData[xKey]=sRhoAxis;
-    pdfData[vKey]=transformPdfOrdinate(s.pdf.volume,sRhoAxis,sDy,pdfViewOpts.ordinate);
-    pdfData[mKey]=transformPdfOrdinate(s.pdf.mass,sRhoAxis,sDy,pdfViewOpts.ordinate);
-    volumeDefs.push({key:vKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
-    massDefs.push({key:mKey,xkey:xKey,label:s.label,color:s.color,dash:s.dash,width:s.width});
+    const volCurve=buildPdfSeriesCurve(s.pdf,'volume',pdfViewOpts.ordinate,activePdfBins,logrho);
+    const massCurve=buildPdfSeriesCurve(s.pdf,'mass',pdfViewOpts.ordinate,activePdfBins,logrho);
+    const vxKey=`${s.fieldKey}_vx`,vKey=`${s.fieldKey}_vol`,mxKey=`${s.fieldKey}_mx`,mKey=`${s.fieldKey}_mass`;
+    pdfData[vxKey]=volCurve.x;
+    pdfData[vKey]=volCurve.y;
+    pdfData[mxKey]=massCurve.x;
+    pdfData[mKey]=massCurve.y;
+    volumeDefs.push({
+      key:vKey,
+      xkey:vxKey,
+      label:s.label,
+      color:s.color,
+      dash:s.dash,
+      width:s.width,
+      resample:(nb)=>buildPdfSeriesCurve(s.pdf,'volume',pdfViewOpts.ordinate,nb,logrho),
+    });
+    massDefs.push({
+      key:mKey,
+      xkey:mxKey,
+      label:s.label,
+      color:s.color,
+      dash:s.dash,
+      width:s.width,
+      resample:(nb)=>buildPdfSeriesCurve(s.pdf,'mass',pdfViewOpts.ordinate,nb,logrho),
+    });
   }
   const ordMeta=pdfOrdinateMeta(pdfViewOpts.ordinate);
+  const binLabel=isCdfMode?'pts':'bins';
   if(S.weight==='mass'){
-    addPlot(p,`PRIMARY · mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
-    addPlot(p,`Volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+    const p1=addPlot(p,`PRIMARY · mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim,binLabel,bins:activePdfBins,minBins:8,maxBins:640,onBinsChange:(nb)=>syncPdfBins(nb,p1)},pdfData);
+    const p2=addPlot(p,`Volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim,binLabel,bins:activePdfBins,minBins:8,maxBins:640,onBinsChange:(nb)=>syncPdfBins(nb,p2)},pdfData);
+    if(p1)pdfPlots.push(p1);if(p2)pdfPlots.push(p2);
   } else {
-    addPlot(p,`PRIMARY · volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
-    addPlot(p,`Mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim},pdfData);
+    const p1=addPlot(p,`PRIMARY · volume-weighted ${ordMeta.shortKind}`,rhoAxis,volumeDefs,{xlabel:'ρ / ρ̄',ylabel:`volume-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim,binLabel,bins:activePdfBins,minBins:8,maxBins:640,onBinsChange:(nb)=>syncPdfBins(nb,p1)},pdfData);
+    const p2=addPlot(p,`Mass-weighted ${ordMeta.shortKind}`,rhoAxis,massDefs,{xlabel:'ρ / ρ̄',ylabel:`mass-weighted ${ordMeta.yLabelSuffix}`,xlog:true,ylog:ordMeta.ylog,ylim:ordMeta.ylim,binLabel,bins:activePdfBins,minBins:8,maxBins:640,onBinsChange:(nb)=>syncPdfBins(nb,p2)},pdfData);
+    if(p1)pdfPlots.push(p1);if(p2)pdfPlots.push(p2);
   }
   renderPdfSummaries(p,d.pdf||{},activeSeries);
 }
@@ -1486,6 +1797,8 @@ function renderRsd(d) {
   const pdfPlotData={};
   const pdfDefs=[];
   const weightKey=S.weight==='mass'?'mass':'volume';
+  const isRsdCdf=pdfViewOpts.ordinate==='cdf'||pdfViewOpts.ordinate==='peaked_cdf';
+  const rsdPdfBins=pdfViewOpts.bins||(isRsdCdf?160:80);
   for(const [k,label,color,dash] of [
     ['real','Real-space P₀ simplices (1/|J_T|)','#34495e','5 3'],
     ['rsdSheet','Redshifted P₀ simplices (1/|J_{s,T}|)','#D55E00',undefined],
@@ -1493,13 +1806,18 @@ function renderRsd(d) {
   ]){
     const obj=rpdf[k];
     if(!obj)continue;
-    const lr=arr(obj.logrho);
-    const rhoAx=lr.map(y=>Math.pow(10,Number(y)));
-    const sDy=Number(obj.dy)>0?Number(obj.dy):3.6/80;
-    const vals=transformPdfOrdinate(obj[weightKey],rhoAx,sDy,pdfViewOpts.ordinate);
-    pdfPlotData[`${k}_x`]=rhoAx;
-    pdfPlotData[`${k}_y`]=vals;
-    pdfDefs.push({key:`${k}_y`,xkey:`${k}_x`,label,color,dash,width:2.0});
+    const curve=buildPdfSeriesCurve(obj,weightKey,pdfViewOpts.ordinate,rsdPdfBins,obj.logrho);
+    pdfPlotData[`${k}_x`]=curve.x;
+    pdfPlotData[`${k}_y`]=curve.y;
+    pdfDefs.push({
+      key:`${k}_y`,
+      xkey:`${k}_x`,
+      label,
+      color,
+      dash,
+      width:2.0,
+      resample:(nb)=>buildPdfSeriesCurve(obj,weightKey,pdfViewOpts.ordinate,nb,obj.logrho),
+    });
   }
   const rsdOrdMeta=pdfOrdinateMeta(pdfViewOpts.ordinate);
   addPlot(
@@ -1507,7 +1825,7 @@ function renderRsd(d) {
     `${S.weight==='mass'?'Mass':'Volume'}-weighted density ${rsdOrdMeta.shortKind}: Real-space simplices vs Redshifted simplices vs Velocity-gradient Gaussians`,
     pdfPlotData.rsdSheet_x||[],
     pdfDefs,
-    {xlabel:'ρ / ρ̄',ylabel:`${S.weight}-weighted ${rsdOrdMeta.yLabelSuffix}`,xlog:true,ylog:rsdOrdMeta.ylog,ylim:rsdOrdMeta.ylim},
+    {xlabel:'ρ / ρ̄',ylabel:`${S.weight}-weighted ${rsdOrdMeta.yLabelSuffix}`,xlog:true,ylog:rsdOrdMeta.ylog,ylim:rsdOrdMeta.ylim,binLabel:isRsdCdf?'pts':'bins',bins:rsdPdfBins,minBins:8,maxBins:640,onBinsChange:(nb)=>{pdfViewOpts.bins=nb;}},
     pdfPlotData
   );
 

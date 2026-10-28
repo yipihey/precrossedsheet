@@ -54,9 +54,25 @@ Hopf–Cole Cosmology book (https://github.com/yipihey/hopf-cole-cosmology).
 
 ## Adding a lab panel or plot
 
-- `new LinePlot(host, {width, height})`, `setAxes`, `setSeries`,
-  `setMarkers`, `draw()`; zoom, pan, lin/log, ranges, SVG and CSV export come
-  for free. Keep plots theme-aware: `currentColor`, no hard-coded backgrounds.
+- `new LinePlot(host, {width, height, binLabel, onBinsChange})`, `setAxes`, `setSeries`,
+  `setMarkers`, `draw()`; wheel zoom, left-drag pan (grab), middle-drag (or Shift+drag)
+  box-zoom window, lin/log toggles, editable ranges, interactive resolution/binning
+  controls (`pts`/`bins`/`modes`: `−` / `N` / `+`), and SVG/CSV export come for free.
+  Keep plots theme-aware: `currentColor`, no hard-coded backgrounds.
+- **Interactive binning & point density (`LinePlot`)**: Every `LinePlot` toolbar
+  includes a `−` / count / `+` resolution control (`binLabel: 'bins' | 'modes' | 'pts'`,
+  configurable via `setAxes({bins, minBins, maxBins, binLabel, onBinsChange})`):
+  - By default, any `(x, y)` series responds automatically: decreasing the count
+    coarsens via weighted bin-averaging in axis space (reducing binning/sample-variance
+    noise), while increasing the count refines via Fritsch–Carlson monotone cubic
+    Hermite (`pchipInterpolate` / `resampleCurve`) interpolation in axis space
+    (eliminating jagged polygonal segments when zoomed in, with zero overshoot).
+  - For histograms, PDFs, CDFs, or shell-averaged power spectra $P(k)$, attach
+    either fine backing arrays (`fineX`, `fineY`, `fineWeights` such as Fourier
+    mode counts $N_m$) or a custom `resample: (targetBins, axes) => ({x, y})`
+    callback (e.g. exact probability-conserving histogram rebinning or cumulative
+    integration with exact median apex insertion for peaked CDFs). Set
+    `noResample: true` on reference markers that should remain fixed.
 - Every new control gets one short hash key in `state.js`; defaults are not
   written to the hash.
 - Heavy work runs off the UI path; panels are marked stale while recomputing.

@@ -302,10 +302,31 @@ pub fn density_summary(rho: &[f32], raw_mass: &[f32], probabilities: &[f64]) -> 
         }
         rho[*sorted.last().unwrap()] as f64
     };
+    const FINE_GRID_BINS: usize = 320;
+    let (f_lo, f_hi) = (-1.8, 1.8);
+    let f_dy = (f_hi - f_lo) / FINE_GRID_BINS as f64;
+    let mut f_pv = vec![0.0_f64; FINE_GRID_BINS];
+    let mut f_pm = vec![0.0_f64; FINE_GRID_BINS];
+    let tot_m = total.max(1e-30);
+    for (&r, &w) in rho.iter().zip(raw_mass) {
+        if r <= 0.0 {
+            continue;
+        }
+        let y = (r as f64).log10();
+        let b = ((y - f_lo) / f_dy).floor() as isize;
+        if b >= 0 && (b as usize) < FINE_GRID_BINS {
+            f_pv[b as usize] += 1.0 / (count * f_dy);
+            f_pm[b as usize] += (w as f64) / (tot_m * f_dy);
+        }
+    }
+    let f_logrho: Vec<f64> = (0..FINE_GRID_BINS)
+        .map(|b| f_lo + (b as f64 + 0.5) * f_dy)
+        .collect();
     serde_json::json!({"mean":mean,"variance":variance,"S3":s3,"S4":s4,
         "probabilities":probabilities,
         "volumeQuantiles":probabilities.iter().map(|&p|quantile(p,false)).collect::<Vec<_>>(),
-        "massQuantiles":probabilities.iter().map(|&p|quantile(p,true)).collect::<Vec<_>>()})
+        "massQuantiles":probabilities.iter().map(|&p|quantile(p,true)).collect::<Vec<_>>(),
+        "finePdf":{"logrho":f_logrho,"dy":f_dy,"volume":f_pv,"mass":f_pm}})
 }
 
 /// Compute the continuous sheet volume-weighted and mass-weighted log10(rho)
@@ -458,6 +479,11 @@ pub fn simplex_density_pdf_and_summary(
     };
     let dy = (hi - lo) / bins as f64;
 
+    const FINE_BINS: usize = 640;
+    let fine_dy = (hi - lo) / FINE_BINS as f64;
+    let mut fine_pv = vec![0.0_f64; FINE_BINS];
+    let mut fine_pm = vec![0.0_f64; FINE_BINS];
+
     const CDF_BINS: usize = 8192;
     let cdf_lo = (min_y - 1e-4).min(lo);
     let cdf_hi = (max_y + 1e-4).max(hi).max(cdf_lo + 1e-3);
@@ -489,6 +515,11 @@ pub fn simplex_density_pdf_and_summary(
             if b >= 0 && (b as usize) < bins {
                 pv[b as usize] += v / (total_vol * dy);
                 pm[b as usize] += m / (total_mass * dy);
+            }
+            let fb = ((y - lo) / fine_dy).floor() as isize;
+            if fb >= 0 && (fb as usize) < FINE_BINS {
+                fine_pv[fb as usize] += v / (total_vol * fine_dy);
+                fine_pm[fb as usize] += m / (total_mass * fine_dy);
             }
             let cb = (((y - cdf_lo) / cdf_dy).floor() as isize).clamp(0, CDF_BINS as isize - 1) as usize;
             cdf_v[cb] += v;
@@ -573,6 +604,9 @@ pub fn simplex_density_pdf_and_summary(
         10.0_f64.powf(max_y)
     };
 
+    let fine_logrho: Vec<f64> = (0..FINE_BINS)
+        .map(|b| lo + (b as f64 + 0.5) * fine_dy)
+        .collect();
     let summary = serde_json::json!({
         "mean": mean,
         "variance": variance,
@@ -581,6 +615,12 @@ pub fn simplex_density_pdf_and_summary(
         "probabilities": probabilities,
         "volumeQuantiles": probabilities.iter().map(|&p| quantile_from_cdf(p, false)).collect::<Vec<_>>(),
         "massQuantiles": probabilities.iter().map(|&p| quantile_from_cdf(p, true)).collect::<Vec<_>>(),
+        "finePdf": {
+            "logrho": fine_logrho,
+            "dy": fine_dy,
+            "volume": fine_pv,
+            "mass": fine_pm,
+        },
     });
     let logrho: Vec<f64> = (0..bins).map(|b| lo + (b as f64 + 0.5) * dy).collect();
     (logrho, pv, pm, mean, variance, dy, summary)
