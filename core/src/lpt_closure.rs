@@ -507,6 +507,68 @@ pub fn cubic_incremental_fft_count(dim: usize, opts: CubicClosureOpts) -> usize 
     long + trans
 }
 
+/// Assemble one merged EdS term from real-space div + curl sources via Helmholtz.
+fn helmholtz_term_from_sources(
+    template: &Lpt,
+    eng: &mut FftEngine,
+    order: usize,
+    label: &str,
+    div: &[f64],
+    curl: &[Vec<f64>],
+    include_curl: bool,
+    keep_tensors: bool,
+) -> Term {
+    let dim = template.grid.dim;
+    let n = template.grid.size;
+    let shat = eng.forward_real(div);
+    let psihat_l = template.solve_longitudinal(&shat);
+    let mut psi = Vec::with_capacity(dim);
+    for a in 0..dim {
+        psi.push(eng.inverse_to_real_f32(psihat_l[a].clone()));
+    }
+    let mut m = if keep_tensors {
+        Some(spectral_gradients(eng, &template.grid, &psihat_l))
+    } else {
+        None
+    };
+    let mut curl_f32 = vec![];
+    if include_curl && !curl.is_empty() {
+        let that: Vec<Vec<C64>> = curl.iter().map(|c| eng.forward_real(c)).collect();
+        let psihat_t = template.solve_transverse(&that);
+        for a in 0..dim {
+            let pt = eng.inverse_to_real_f32(psihat_t[a].clone());
+            for i in 0..n {
+                psi[a][i] += pt[i];
+            }
+        }
+        if keep_tensors {
+            let mt = spectral_gradients(eng, &template.grid, &psihat_t);
+            if let Some(ref mut mref) = m {
+                for c in 0..dim * dim {
+                    for i in 0..n {
+                        mref[c][i] += mt[c][i];
+                    }
+                }
+            }
+        }
+        curl_f32 = curl
+            .iter()
+            .map(|c| c.iter().map(|&v| v as f32).collect())
+            .collect();
+    }
+    Term {
+        spec: TermSpec {
+            order,
+            parents: Parents::Mu2(0, 0),
+            label: label.into(),
+        },
+        psi,
+        m,
+        div: div.iter().map(|&v| v as f32).collect(),
+        curl: curl_f32,
+    }
+}
+
 /// Extend an EdS merged 2LPT solution with the explicit cubic closure C₃.
 ///
 /// Requires `lpt2.order >= 2`, EdS cosmology, and gradient tensors on terms 0 and 1.
@@ -550,58 +612,16 @@ pub fn eds_extend_cubic(
         }
     }
 
-    // Longitudinal Helmholtz on the combined cubic divergence.
-    let shat = eng.forward_real(&div);
-    let psihat_l = lpt2.solve_longitudinal(&shat);
-    let mut psi = Vec::with_capacity(dim);
-    for a in 0..dim {
-        psi.push(eng.inverse_to_real_f32(psihat_l[a].clone()));
-    }
-    let mut m = if opts.keep_tensors {
-        Some(spectral_gradients(eng, &lpt2.grid, &psihat_l))
-    } else {
-        None
-    };
-
-    // Transverse Helmholtz; add into the same cubic displacement.
-    let mut curl_f32 = vec![];
-    if opts.include_curl {
-        let that: Vec<Vec<C64>> = curl.iter().map(|c| eng.forward_real(c)).collect();
-        let psihat_t = lpt2.solve_transverse(&that);
-        for a in 0..dim {
-            let pt = eng.inverse_to_real_f32(psihat_t[a].clone());
-            for i in 0..n {
-                psi[a][i] += pt[i];
-            }
-        }
-        if opts.keep_tensors {
-            let mt = spectral_gradients(eng, &lpt2.grid, &psihat_t);
-            if let Some(ref mut mref) = m {
-                for c in 0..dim * dim {
-                    for i in 0..n {
-                        mref[c][i] += mt[c][i];
-                    }
-                }
-            }
-        }
-        curl_f32 = curl
-            .iter()
-            .map(|c| c.iter().map(|&v| v as f32).collect())
-            .collect();
-    }
-
-    let term3 = Term {
-        spec: TermSpec {
-            order: 3,
-            parents: Parents::Mu2(0, 1),
-            label: "3:C3".into(),
-        },
-        psi,
-        m,
-        div: div.iter().map(|&v| v as f32).collect(),
-        curl: curl_f32,
-    };
-
+    let term3 = helmholtz_term_from_sources(
+        lpt2,
+        eng,
+        3,
+        "3:C3",
+        &div,
+        &curl,
+        opts.include_curl,
+        opts.keep_tensors,
+    );
     let mut terms: Vec<Term> = lpt2.terms.iter().take(2).map(clone_term).collect();
     terms.push(term3);
     Ok(Lpt {
@@ -614,6 +634,307 @@ pub fn eds_extend_cubic(
         },
         cosmo: lpt2.cosmo,
     })
+}
+
+/// Ablation switches for the explicit EdS quartic closure C₄.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuarticClosureOpts {
+    /// (−14/11) μ₂(M¹, M³)
+    pub include_mu2_13: bool,
+    /// (−17/33) μ₂(M², M²)
+    pub include_mu2_22: bool,
+    /// (−13/11) μ₃(M¹, M¹, M²) — 3D only
+    pub include_mu3_112: bool,
+    /// (1/2) curl(M¹, M³)
+    pub include_curl: bool,
+    pub keep_tensors: bool,
+}
+
+impl Default for QuarticClosureOpts {
+    fn default() -> Self {
+        Self {
+            include_mu2_13: true,
+            include_mu2_22: true,
+            include_mu3_112: true,
+            include_curl: true,
+            keep_tensors: true,
+        }
+    }
+}
+
+impl QuarticClosureOpts {
+    pub fn full() -> Self {
+        Self::default()
+    }
+    pub fn no_mu2_13() -> Self {
+        Self {
+            include_mu2_13: false,
+            ..Self::default()
+        }
+    }
+    pub fn no_mu2_22() -> Self {
+        Self {
+            include_mu2_22: false,
+            ..Self::default()
+        }
+    }
+    pub fn no_mu3_112() -> Self {
+        Self {
+            include_mu3_112: false,
+            ..Self::default()
+        }
+    }
+    pub fn no_curl() -> Self {
+        Self {
+            include_curl: false,
+            ..Self::default()
+        }
+    }
+}
+
+/// Exact EdS quartic longitudinal source from merged M¹…M³:
+/// ∇·Ψ⁽⁴⁾ = (−14/11)μ₂(M¹,M³) + (−17/33)μ₂(M²,M²) + (−13/11)μ₃(M¹,M¹,M²).
+pub fn eds_div4_from_merged(m1: &[f64], m2: &[f64], m3: &[f64], dim: usize) -> f64 {
+    let mut s = -14.0 / 11.0 * mu2(m1, m3, dim) - 17.0 / 33.0 * mu2(m2, m2, dim);
+    if dim >= 3 {
+        s -= 13.0 / 11.0 * mu3(m1, m1, m2, dim);
+    }
+    s
+}
+
+/// Exact EdS quartic transverse source: (∇×Ψ⁽⁴⁾)_i = (1/2) curl(M¹, M³).
+pub fn eds_curl4_from_merged(m1: &[f64], m3: &[f64], dim: usize, component: usize) -> f64 {
+    0.5 * curl_product(m1, m3, dim, component)
+}
+
+/// Pointwise EdS quartic sources with optional ablations.
+pub fn eds_quartic_sources(
+    m1: &[f64],
+    m2: &[f64],
+    m3: &[f64],
+    dim: usize,
+    opts: QuarticClosureOpts,
+) -> (f64, Vec<f64>) {
+    let mut div = 0.0;
+    if opts.include_mu2_13 {
+        div += -14.0 / 11.0 * mu2(m1, m3, dim);
+    }
+    if opts.include_mu2_22 {
+        div += -17.0 / 33.0 * mu2(m2, m2, dim);
+    }
+    if opts.include_mu3_112 && dim >= 3 {
+        div += -13.0 / 11.0 * mu3(m1, m1, m2, dim);
+    }
+    let ncurl = if dim == 2 { 1 } else if dim >= 3 { 3 } else { 0 };
+    let mut curl = vec![0.0; ncurl];
+    if opts.include_curl {
+        for c in 0..ncurl {
+            curl[c] = eds_curl4_from_merged(m1, m3, dim, c);
+        }
+    }
+    (div, curl)
+}
+
+/// Product-rule tangents of EdS quartic sources.
+pub fn eds_quartic_source_jvp(
+    m1: &[f64],
+    m2: &[f64],
+    m3: &[f64],
+    dm1: &[f64],
+    dm2: &[f64],
+    dm3: &[f64],
+    dim: usize,
+    opts: QuarticClosureOpts,
+) -> (f64, Vec<f64>) {
+    let mut ddiv = 0.0;
+    if opts.include_mu2_13 {
+        ddiv += -14.0 / 11.0 * (mu2(dm1, m3, dim) + mu2(m1, dm3, dim));
+    }
+    if opts.include_mu2_22 {
+        ddiv += -17.0 / 33.0 * (mu2(dm2, m2, dim) + mu2(m2, dm2, dim));
+    }
+    if opts.include_mu3_112 && dim >= 3 {
+        // d μ₃(M1,M1,M2) = 2 μ₃(dM1,M1,M2) + μ₃(M1,M1,dM2)
+        ddiv += -13.0 / 11.0
+            * (2.0 * mu3(dm1, m1, m2, dim) + mu3(m1, m1, dm2, dim));
+    }
+    let ncurl = if dim == 2 { 1 } else if dim >= 3 { 3 } else { 0 };
+    let mut dcurl = vec![0.0; ncurl];
+    if opts.include_curl {
+        for c in 0..ncurl {
+            dcurl[c] = 0.5
+                * (curl_product(dm1, m3, dim, c) + curl_product(m1, dm3, dim, c));
+        }
+    }
+    (ddiv, dcurl)
+}
+
+pub fn quartic_incremental_fft_count(dim: usize, opts: QuarticClosureOpts) -> usize {
+    cubic_incremental_fft_count(
+        dim,
+        CubicClosureOpts {
+            include_mu3: true,
+            include_curl: opts.include_curl,
+            keep_tensors: opts.keep_tensors,
+        },
+    )
+}
+
+/// Extend an EdS merged ≤3LPT solution with the explicit quartic closure C₄.
+///
+/// Requires order ≥ 3 with tensors on M¹, M², M³. Builds
+/// `div⁴ = (−14/11)μ₂(M¹,M³)+(−17/33)μ₂(M²,M²)+(−13/11)μ₃(M¹,M¹,M²)` and
+/// `curl⁴ = (1/2)curl(M¹,M³)`, then exact spectral Helmholtz.
+pub fn eds_extend_quartic(
+    lpt3: &Lpt,
+    eng: &mut FftEngine,
+    opts: QuarticClosureOpts,
+) -> Result<Lpt, String> {
+    if lpt3.order < 3 || lpt3.terms.len() < 3 {
+        return Err("eds_extend_quartic needs merged order >= 3".into());
+    }
+    if !lpt3.growth.is_eds() || !lpt3.cosmo.is_eds() {
+        return Err("eds_extend_quartic is EdS-only".into());
+    }
+    for t in 0..3 {
+        if lpt3.terms[t].m.is_none() {
+            return Err(format!("keep_tensors required on order-{} term", t + 1));
+        }
+    }
+    let dim = lpt3.grid.dim;
+    if dim < 2 {
+        return Err("quartic closure targets 2D/3D".into());
+    }
+    let n = lpt3.grid.size;
+    let ncurl = if dim == 2 { 1 } else { 3 };
+    let mut div = vec![0.0f64; n];
+    let mut curl = vec![vec![0.0f64; n]; ncurl];
+    let mut m1 = vec![0.0; 9];
+    let mut m2 = vec![0.0; 9];
+    let mut m3 = vec![0.0; 9];
+    for i in 0..n {
+        tensor_slice(&lpt3.terms[0], i, dim, &mut m1);
+        tensor_slice(&lpt3.terms[1], i, dim, &mut m2);
+        tensor_slice(&lpt3.terms[2], i, dim, &mut m3);
+        let (d, c) = eds_quartic_sources(
+            &m1[..dim * dim],
+            &m2[..dim * dim],
+            &m3[..dim * dim],
+            dim,
+            opts,
+        );
+        div[i] = d;
+        for (k, ck) in c.iter().enumerate() {
+            curl[k][i] = *ck;
+        }
+    }
+    let term4 = helmholtz_term_from_sources(
+        lpt3,
+        eng,
+        4,
+        "4:C4",
+        &div,
+        &curl,
+        opts.include_curl,
+        opts.keep_tensors,
+    );
+    let mut terms: Vec<Term> = lpt3.terms.iter().take(3).map(clone_term).collect();
+    terms.push(term4);
+    Ok(Lpt {
+        grid: lpt3.grid.clone(),
+        order: 4,
+        terms,
+        growth: Growth::Eds {
+            coef: vec![1.0, 1.0, 1.0, 1.0],
+            orders: vec![1, 2, 3, 4],
+        },
+        cosmo: lpt3.cosmo,
+    })
+}
+
+/// Compare merged order-`n` spatial term (`terms[n-1]`) between two EdS LPTs.
+pub fn compare_order_term(
+    reference: &Lpt,
+    candidate: &Lpt,
+    order: usize,
+    d: f64,
+) -> Result<CubicParityReport, String> {
+    if order < 1 {
+        return Err("order >= 1".into());
+    }
+    let idx = order - 1;
+    if reference.terms.len() <= idx || candidate.terms.len() <= idx {
+        return Err(format!("need merged term for order {order}"));
+    }
+    let dim = reference.grid.dim;
+    let n = reference.grid.size;
+    let mut rel_psi: f64 = 0.0;
+    let mut max_psi: f64 = 0.0;
+    for a in 0..dim {
+        rel_psi = rel_psi.max(field_rel_rms(
+            &candidate.terms[idx].psi[a],
+            &reference.terms[idx].psi[a],
+        ));
+        max_psi = max_psi.max(field_max_abs_diff(
+            &candidate.terms[idx].psi[a],
+            &reference.terms[idx].psi[a],
+        ));
+    }
+    let rel_div = field_rel_rms(&candidate.terms[idx].div, &reference.terms[idx].div);
+    let mut rel_curl: f64 = 0.0;
+    let nc = reference.terms[idx]
+        .curl
+        .len()
+        .max(candidate.terms[idx].curl.len());
+    for c in 0..nc {
+        let z = vec![0.0f32; n];
+        let a = candidate.terms[idx].curl.get(c).unwrap_or(&z);
+        let b = reference.terms[idx].curl.get(c).unwrap_or(&z);
+        rel_curl = rel_curl.max(field_rel_rms(a, b));
+    }
+    let mut rel_m: f64 = 0.0;
+    if let (Some(ma), Some(mb)) = (&candidate.terms[idx].m, &reference.terms[idx].m) {
+        for c in 0..dim * dim {
+            rel_m = rel_m.max(field_rel_rms(&ma[c], &mb[c]));
+        }
+    }
+    let mut xref = vec![0.0f32; n * dim];
+    let mut xcan = vec![0.0f32; n * dim];
+    reference.positions(d, order, &mut xref);
+    candidate.positions(d, order, &mut xcan);
+    Ok(CubicParityReport {
+        rel_rms_psi3: rel_psi,
+        max_abs_psi3: max_psi,
+        rel_rms_div3: rel_div,
+        rel_rms_curl3: rel_curl,
+        rel_rms_m3: rel_m,
+        rel_rms_x_at_d: field_rel_rms(&xcan, &xref),
+        d_compare: d,
+    })
+}
+
+/// λ-homogeneity for an arbitrary-order displacement term: Ψⁿ[λδ]/λⁿ ≈ Ψⁿ[δ].
+pub fn psi_order_homogeneity_rel(
+    psi_unit: &[Vec<f32>],
+    psi_scaled: &[Vec<f32>],
+    lambda: f64,
+    order: i32,
+) -> f64 {
+    let scale = lambda.powi(order);
+    let mut num = 0.0;
+    let mut den = 0.0;
+    for (a, b) in psi_unit.iter().zip(psi_scaled.iter()) {
+        for (u, s) in a.iter().zip(b.iter()) {
+            let e = *s as f64 / scale - *u as f64;
+            num += e * e;
+            den += (*u as f64) * (*u as f64);
+        }
+    }
+    if den > 0.0 {
+        (num / den).sqrt()
+    } else {
+        0.0
+    }
 }
 
 fn field_rel_rms(a: &[f32], b: &[f32]) -> f64 {
@@ -651,51 +972,7 @@ pub struct CubicParityReport {
 }
 
 pub fn compare_cubic_terms(reference: &Lpt, candidate: &Lpt, d: f64) -> Result<CubicParityReport, String> {
-    if reference.terms.len() < 3 || candidate.terms.len() < 3 {
-        return Err("need order-3 merged terms".into());
-    }
-    let dim = reference.grid.dim;
-    let n = reference.grid.size;
-    let mut rel_psi: f64 = 0.0;
-    let mut max_psi: f64 = 0.0;
-    for a in 0..dim {
-        rel_psi = rel_psi.max(field_rel_rms(
-            &candidate.terms[2].psi[a],
-            &reference.terms[2].psi[a],
-        ));
-        max_psi = max_psi.max(field_max_abs_diff(
-            &candidate.terms[2].psi[a],
-            &reference.terms[2].psi[a],
-        ));
-    }
-    let rel_div = field_rel_rms(&candidate.terms[2].div, &reference.terms[2].div);
-    let mut rel_curl: f64 = 0.0;
-    let nc = reference.terms[2].curl.len().max(candidate.terms[2].curl.len());
-    for c in 0..nc {
-        let z = vec![0.0f32; n];
-        let a = candidate.terms[2].curl.get(c).unwrap_or(&z);
-        let b = reference.terms[2].curl.get(c).unwrap_or(&z);
-        rel_curl = rel_curl.max(field_rel_rms(a, b));
-    }
-    let mut rel_m: f64 = 0.0;
-    if let (Some(ma), Some(mb)) = (&candidate.terms[2].m, &reference.terms[2].m) {
-        for c in 0..dim * dim {
-            rel_m = rel_m.max(field_rel_rms(&ma[c], &mb[c]));
-        }
-    }
-    let mut xref = vec![0.0f32; n * dim];
-    let mut xcan = vec![0.0f32; n * dim];
-    reference.positions(d, 3, &mut xref);
-    candidate.positions(d, 3, &mut xcan);
-    Ok(CubicParityReport {
-        rel_rms_psi3: rel_psi,
-        max_abs_psi3: max_psi,
-        rel_rms_div3: rel_div,
-        rel_rms_curl3: rel_curl,
-        rel_rms_m3: rel_m,
-        rel_rms_x_at_d: field_rel_rms(&xcan, &xref),
-        d_compare: d,
-    })
+    compare_order_term(reference, candidate, 3, d)
 }
 
 /// λ-homogeneity: rms(Ψ³[λδ]/λ³ − Ψ³[δ]) / rms(Ψ³[δ]).
@@ -766,17 +1043,28 @@ pub fn ablation_vs_reference(
     label: &'static str,
     d: f64,
 ) -> AblationReport {
+    ablation_vs_reference_order(reference, candidate, label, d, 3)
+}
+
+pub fn ablation_vs_reference_order(
+    reference: &Lpt,
+    candidate: &Lpt,
+    label: &'static str,
+    d: f64,
+    order: usize,
+) -> AblationReport {
     let dim = reference.grid.dim;
     let n = reference.grid.size;
+    let idx = order - 1;
     let mut rel_psi: f64 = 0.0;
     for a in 0..dim {
         rel_psi = rel_psi.max(field_rel_rms(
-            &candidate.terms[2].psi[a],
-            &reference.terms[2].psi[a],
+            &candidate.terms[idx].psi[a],
+            &reference.terms[idx].psi[a],
         ));
     }
-    let mref = reference.displacement_gradient(d, 3);
-    let mcan = candidate.displacement_gradient(d, 3);
+    let mref = reference.displacement_gradient(d, order);
+    let mcan = candidate.displacement_gradient(d, order);
     let mut rel_m: f64 = 0.0;
     for c in 0..dim * dim {
         let a: Vec<f32> = mcan[c].iter().map(|&v| v as f32).collect();
@@ -785,13 +1073,13 @@ pub fn ablation_vs_reference(
     }
     let mut jref = vec![0.0; n];
     let mut jcan = vec![0.0; n];
-    reference.jacobian(d, 3, &mut jref);
-    candidate.jacobian(d, 3, &mut jcan);
+    reference.jacobian(d, order, &mut jref);
+    candidate.jacobian(d, order, &mut jcan);
     let jref_f: Vec<f32> = jref.iter().map(|&v| v as f32).collect();
     let jcan_f: Vec<f32> = jcan.iter().map(|&v| v as f32).collect();
     let rel_j = field_rel_rms(&jcan_f, &jref_f);
-    let cref = crossing_report(reference, 3);
-    let ccan = crossing_report(candidate, 3);
+    let cref = crossing_report(reference, order);
+    let ccan = crossing_report(candidate, order);
     let rel_d = if cref.d_cross.is_finite() && cref.d_cross > 0.0 {
         (ccan.d_cross - cref.d_cross).abs() / cref.d_cross
     } else {
@@ -925,5 +1213,102 @@ mod tests {
         let scaled = eds_extend_cubic(&lpt2s, &mut c2.eng, CubicClosureOpts::full()).unwrap();
         let rel = psi3_homogeneity_rel(&full.terms[2].psi, &scaled.terms[2].psi, lambda);
         assert!(rel < 1e-5, "homogeneity residual {rel}");
+    }
+
+    #[test]
+    fn eds_4lpt_coefs_match_merged_form() {
+        let nodes = dependency_nodes(4, 3);
+        assert_eq!(nodes.len(), 13);
+        // Unmerged order-4 EdS coefs pinned to exact rationals.
+        assert!((nodes[5].eds_coef + 20.0 / 33.0).abs() < 1e-12);
+        assert!((nodes[6].eds_coef - 14.0 / 33.0).abs() < 1e-12);
+        assert!((nodes[7].eds_coef - 6.0 / 33.0).abs() < 1e-12);
+        assert!((nodes[8].eds_coef + 51.0 / 539.0).abs() < 1e-12);
+        assert!((nodes[9].eds_coef - 39.0 / 77.0).abs() < 1e-12);
+        assert!((nodes[10].eds_coef - 5.0 / 21.0).abs() < 1e-12);
+        assert!((nodes[11].eds_coef + 1.0 / 6.0).abs() < 1e-12);
+        assert!((nodes[12].eds_coef + 1.0 / 14.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn eds_extend_quartic_matches_native_4lpt() {
+        let mut c = Cosmo::new(3, 24, 1.0);
+        c.keep_tensors = Some(true);
+        c.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.08, 7, 1.0);
+        c.build_lpt(4);
+        let native = clone_lpt(c.lpt_ref());
+
+        let mut c3 = Cosmo::new(3, 24, 1.0);
+        c3.keep_tensors = Some(true);
+        c3.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.08, 7, 1.0);
+        c3.build_lpt(3);
+        let lpt3 = clone_lpt(c3.lpt_ref());
+        let built = eds_extend_quartic(&lpt3, &mut c3.eng, QuarticClosureOpts::full()).unwrap();
+        let parity = compare_order_term(&native, &built, 4, 0.35).unwrap();
+        assert!(parity.rel_rms_psi3 < 1e-5, "Ψ⁴ {}", parity.rel_rms_psi3);
+        assert!(parity.rel_rms_div3 < 1e-5, "div⁴ {}", parity.rel_rms_div3);
+        assert!(parity.rel_rms_curl3 < 1e-5, "curl⁴ {}", parity.rel_rms_curl3);
+        assert!(parity.rel_rms_x_at_d < 1e-5, "x {}", parity.rel_rms_x_at_d);
+
+        // Chain 2→C₃→C₄
+        let mut c2 = Cosmo::new(3, 24, 1.0);
+        c2.keep_tensors = Some(true);
+        c2.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.08, 7, 1.0);
+        c2.build_lpt(2);
+        let l2 = clone_lpt(c2.lpt_ref());
+        let via_c3 = eds_extend_cubic(&l2, &mut c2.eng, CubicClosureOpts::full()).unwrap();
+        let via_c4 = eds_extend_quartic(&via_c3, &mut c2.eng, QuarticClosureOpts::full()).unwrap();
+        let parity2 = compare_order_term(&native, &via_c4, 4, 0.35).unwrap();
+        assert!(parity2.rel_rms_psi3 < 1e-5, "2+C3+C4 Ψ⁴ {}", parity2.rel_rms_psi3);
+    }
+
+    #[test]
+    fn eds_extend_quartic_homogeneity_lambda4() {
+        let mut c = Cosmo::new(3, 20, 1.0);
+        c.keep_tensors = Some(true);
+        c.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.1, 5, 1.0);
+        c.build_lpt(3);
+        let l3 = clone_lpt(c.lpt_ref());
+        let full = eds_extend_quartic(&l3, &mut c.eng, QuarticClosureOpts::full()).unwrap();
+
+        let lambda = 1.5f64;
+        let mut c2 = Cosmo::new(3, 20, 1.0);
+        c2.keep_tensors = Some(true);
+        c2.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.1, 5, 1.0);
+        for v in c2.delta0_hat.iter_mut() {
+            *v *= lambda;
+        }
+        c2.lpt = None;
+        c2.build_lpt(3);
+        let l3s = clone_lpt(c2.lpt_ref());
+        let scaled = eds_extend_quartic(&l3s, &mut c2.eng, QuarticClosureOpts::full()).unwrap();
+        let rel = psi_order_homogeneity_rel(&full.terms[3].psi, &scaled.terms[3].psi, lambda, 4);
+        assert!(rel < 1e-5, "λ⁴ homogeneity {rel}");
+    }
+
+    #[test]
+    fn quartic_source_matches_native_div_curl() {
+        let mut c = Cosmo::new(3, 24, 1.0);
+        c.keep_tensors = Some(true);
+        c.set_ic_gaussian(PkShape::PowerLaw { n: -1.0 }, 0.08, 11, 1.0);
+        c.build_lpt(4);
+        let l = c.lpt_ref();
+        let dim = 3;
+        let mut num = 0.0;
+        let mut den = 0.0;
+        let mut m1 = vec![0.0; 9];
+        let mut m2 = vec![0.0; 9];
+        let mut m3 = vec![0.0; 9];
+        for i in 0..l.grid.size {
+            tensor_slice(&l.terms[0], i, dim, &mut m1);
+            tensor_slice(&l.terms[1], i, dim, &mut m2);
+            tensor_slice(&l.terms[2], i, dim, &mut m3);
+            let pred = eds_div4_from_merged(&m1, &m2, &m3, dim);
+            let ex = l.terms[3].div[i] as f64;
+            num += (pred - ex) * (pred - ex);
+            den += ex * ex;
+        }
+        let rel = (num / den).sqrt();
+        assert!(rel < 5e-6, "div⁴ basis residual {rel}");
     }
 }
