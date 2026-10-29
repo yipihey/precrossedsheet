@@ -3,6 +3,7 @@ import { PRESETS, presetState } from './presets.js';
 import { LinePlot, pchipInterpolate, resampleCurve } from './viz/plot.js';
 import { COLORMAPS } from './viz/colormaps.js';
 import { copyText, downloadBlob, flash } from './viz/download.js';
+import { attachK3DExportBar, disposeAllK3DInstances, mountK3DDensityScene, mountK3DRsdScene, mountK3DSheetScene } from './viz/k3d.js';
 import { buildCompactManifest, buildPublishedReplayFromResult, deleteReplayFromLibrary, listReplayLibrary, saveReplayToLibrary } from './replay.js';
 
 function fragmentVersion(hash){const entry=String(hash||'').replace(/^#/,'').split('&').find(p=>p.startsWith('v='));return entry?entry.slice(2):null;}
@@ -27,10 +28,11 @@ function requiresExtendedLimits(state = S) {
 }
 let extendedMode = requiresExtendedLimits(S), autoSaveToDisk = false, replayLibrary = [], activeReplaySourceId = 'packaged', overlayPackagedInReplay = true;
 void listReplayLibrary().then((items) => { replayLibrary = items; if (S.view === 'published') renderPublished(); });
-const densityViewOpts = { cmap: 'coolwarm', scale: 'log', vmin: 0.1, vmax: 10, interp: 'smooth' };
+const densityViewOpts = { cmap: 'coolwarm', scale: 'log', vmin: 0.1, vmax: 10, interp: 'smooth', k3dLayout: 'off', k3dPrimary: null, k3dCompare: 'none', k3dMode3D: 'volume_iso', k3dIsoLevel: 2.5, k3dRenderer: 'simple', k3dDepthPeels: 4 };
+const sheetViewOpts = { engine: 'canvas', zMode: 'v_los', colorMode: 'log_rho', cmap: 'coolwarm', opacity: 0.82, showWireframe: true, showVectors: false, showPmOverlay: false, sliceMode3D: 'tri_planes', sliceIndex3D: 0.5, renderer: 'simple', depthPeels: 4 };
 const pdfViewOpts = { ordinate: 'linear', bins: null };
 const spectraViewOpts = { companion: 'ratio_sheet', filter: 'tophat', varianceOrdinate: 'sigma2', bins: null };
-const rsdViewOpts = { sheetMode: 'rsd_crossing', specMode: 'ratio', showSamples: true };
+const rsdViewOpts = { engine: 'canvas', sheetMode: 'rsd_crossing', specMode: 'ratio', showSamples: true, showVectors: true, showVolume: false, renderer: 'simple', depthPeels: 4 };
 const TRAJECTORIES = [
   { id: '1lpt', label: '1LPT', color: '#56B4E9' },
   { id: '2lpt', label: '2LPT', color: '#E69F00' },
@@ -503,7 +505,7 @@ function explain() {
 function setNotice(text, kind = '') { notice.textContent = text; notice.className = `lab-notice ${kind}`; }
 function num(v, digits = 3) { return v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toPrecision(digits); }
 function arr(a) { return ArrayBuffer.isView(a) ? a : Array.isArray(a) ? a : []; }
-function clearHost() { viewHost.replaceChildren(); diagnostics.replaceChildren(); backendMeta.replaceChildren(); }
+function clearHost() { disposeAllK3DInstances(); viewHost.replaceChildren(); diagnostics.replaceChildren(); backendMeta.replaceChildren(); }
 function panel(title, description = '') { const p = $('section', 'result-panel', viewHost); $('h3', '', p, title); if (current?.guard?.ok===false) $('p','post-crossing-note',p,'Post-crossing diagnostic. The map has lost positive orientation; the plotted density and perturbative fields are not a single-stream prediction.');if (description) $('p', 'panel-note', p, description); return p; }
 function addPngButton(canvas, name) { const b = $('button', 'export-button', canvas.parentElement, 'Save PNG'); b.type = 'button'; b.setAttribute('aria-label', `Save ${name} image as PNG`); b.addEventListener('click', () => canvas.toBlob((blob) => { if (blob) { downloadBlob(blob, `${name}.png`); flash(b, 'Saved'); } })); }
 function canvasFor(parent, label, wide = false) { const c = $('canvas', `lab-canvas${wide ? ' canvas-wide' : ''}`, parent); c.width = 960; c.height = wide ? 560 : 680; c.setAttribute('role', 'img'); c.setAttribute('aria-label', label); return c; }
@@ -535,6 +537,65 @@ function project3(x,y,z,rotation,tilt,scale,cx,cy) { const a=rotation*Math.PI/18
 function renderSheet(d) {
   const dimension=Number(d.dim||S.dim),caption=dimension===1?'A curve in position–velocity space: x horizontally and dx/da vertically.':dimension===2?'A triangulated sheet in the x₀–x₁ position plane, with equal scales on both spatial axes.': 'An orthographic position projection of the 3D Lagrangian sheet in the full six-dimensional (x,v) phase space. Spatial axes use a common scale; drag or use controls to rotate.';
   const p=panel(dimension===1?'One-dimensional phase-space curve':dimension===2?'Two-dimensional triangulated position sheet':'Three-dimensional tetrahedral position-sheet projection', `Coordinates are fractions of the ${num(S.boxSize,5)} Mpc/h periodic box. ${caption}`);
+
+  const bar=$('div','published-controls sheet-display-controls',p);
+  const addSel=(label,opts,val,onChange)=>{const wrap=$('label','published-select',bar);$('span','',wrap,label);const s=$('select','lab-select',wrap);for(const [v,t] of opts){const o=$('option','',s,t);o.value=v;}s.value=String(val);s.addEventListener('change',()=>onChange(s.value));return s;};
+  addSel('Viewport',[['canvas','2D Canvas Projection'],['k3d','3D Interactive K3D WebGL']],sheetViewOpts.engine,(v)=>{sheetViewOpts.engine=v;render();});
+
+  if (sheetViewOpts.engine === 'k3d') {
+    if (dimension === 2) {
+      addSel('3rd Axis (Z)', [
+        ['v_los', 'Line-of-sight velocity v_∥'],
+        ['v_mag', 'Velocity speed |v|'],
+        ['log_rho', 'Sheet density log₁₀(ρ/ρ̄)'],
+        ['jacobian', 'Vertex Jacobian J_T'],
+        ['flat', 'Flat x₀–x₁ plane (Z = 0)'],
+      ], sheetViewOpts.zMode, (v) => { sheetViewOpts.zMode = v; render(); });
+    } else if (dimension === 3) {
+      addSel('3D Sheet Surfaces', [
+        ['tri_planes', '3 Orthogonal Lagrangian Planes (q₀, q₁, q₂ = 0.5)'],
+        ['multi_stack', 'Multi-Plane Stack (4 parallel q₂ sheets)'],
+        ['single_plane', 'Single Slice Plane (adjustable q₂)'],
+        ['caustic_only', 'Shell-Crossed / High-Compression Simplices Only'],
+      ], sheetViewOpts.sliceMode3D, (v) => { sheetViewOpts.sliceMode3D = v; render(); });
+      if (sheetViewOpts.sliceMode3D === 'single_plane') {
+        const slWrap = $('label', 'published-select', bar);
+        $('span', '', slWrap, `Slice q₂/L = ${Number(sheetViewOpts.sliceIndex3D).toFixed(2)}`);
+        const sl = $('input', '', slWrap);
+        sl.type = 'range'; sl.min = '0.05'; sl.max = '0.95'; sl.step = '0.05'; sl.value = String(sheetViewOpts.sliceIndex3D);
+        sl.addEventListener('change', () => { sheetViewOpts.sliceIndex3D = Number(sl.value); render(); });
+      }
+    }
+    addSel('Surface Color', [
+      ['log_rho', 'Log Density log₁₀(ρ_T / ρ̄)'],
+      ['jacobian', 'Simplex Jacobian det(∂x/∂q)'],
+      ['stream', 'Caustic Highlight (J_T ≤ 0 crimson)'],
+      ['v_los', 'Velocity v_∥'],
+      ['disp', 'Displacement |Ψ(q)|'],
+    ], sheetViewOpts.colorMode, (v) => { sheetViewOpts.colorMode = v; render(); });
+    addSel('Colormap', [['coolwarm','Coolwarm'],['viridis','Viridis'],['magma','Magma'],['inferno','Inferno'],['ylgnbu','Blue–Grey–Yellow'],['rdbu','RdBu']], sheetViewOpts.cmap, (v) => { sheetViewOpts.cmap = v; render(); });
+    addSel('Opacity', [['1','1.0 (Opaque)'],['0.82','0.82 (Translucent)'],['0.6','0.60 (Multi-stream X-ray)'],['0.38','0.38 (Ghost sheet)']], String(sheetViewOpts.opacity), (v) => { sheetViewOpts.opacity = Number(v); render(); });
+    addSel('K3D Renderer', [['simple','Standard WebGL2 + Depth Peeling'],['advanced','Advanced EdL / GI'],['cinematic','Cinematic Raytracer']], sheetViewOpts.renderer, (v) => { sheetViewOpts.renderer = v; render(); });
+    addSel('Overlays', [
+      ['wire', 'Lagrangian wireframe ON'],
+      ['wire_vec', 'Wireframe + Velocity vectors v(q)'],
+      ['wire_pm', 'Wireframe + PM trajectory overlay'],
+      ['none', 'Smooth surface only'],
+    ], sheetViewOpts.showVectors ? 'wire_vec' : sheetViewOpts.showPmOverlay ? 'wire_pm' : sheetViewOpts.showWireframe ? 'wire' : 'none', (v) => {
+      sheetViewOpts.showWireframe = v !== 'none';
+      sheetViewOpts.showVectors = v === 'wire_vec';
+      sheetViewOpts.showPmOverlay = v === 'wire_pm';
+      render();
+    });
+
+    let activeK3D = null;
+    attachK3DExportBar(bar, () => activeK3D, `k3d-sheet-${dimension}d`);
+    const wrap = $('div', 'k3d-viewport-wrap', p);
+    const host = $('div', 'k3d-viewport-host', wrap);
+    void mountK3DSheetScene(host, d, S, sheetViewOpts).then((res) => { activeK3D = res?.instance || null; });
+    return;
+  }
+
   const alt=dimension===1?'One-dimensional phase-space curve with position x and velocity dx/da':dimension===2?'Triangulated two-dimensional Lagrangian sheet in the x0–x1 position plane with equal spatial-axis scales':'Rotatable, equal-scale orthographic position projection of the three-dimensional Lagrangian sheet embedded in six-dimensional phase space';
   const c=canvasFor(p,alt,true);
   const draw=()=>paintCanvas(c,(ctx,W,H)=>{
@@ -597,6 +658,7 @@ function resolveActiveSeries(d) {
         dash,
         width,
         rho: arr(cs.rho),
+        rho3d: arr(cs.rho3d),
         massMean: cs.massMean,
         power: arr(cs.power),
         counts: arr(cs.counts).length ? arr(cs.counts) : arr(sp.counts),
@@ -612,7 +674,7 @@ function resolveActiveSeries(d) {
     if ((traj === ordTag || !Object.keys(custom).length) && est === 'p0' && traj !== 'pm') {
       out.push({
         key, fieldKey: 'legacy_sheet_p0', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.rho), massMean: d?.diagnostics?.mass, power: arr(sp.sheet),
+        rho: arr(d?.rho), rho3d: arr(d?.rho3d), massMean: d?.diagnostics?.mass, power: arr(sp.sheet),
         counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineSheet), fineCounts: arr(sp.fineCounts),
         directShell: arr(sp.directShell).length ? arr(sp.directShell) : arr(sp.direct),
         variance: { unsmoothed: vs.unsmoothed?.sheet, tophat: arr(vs.tophat?.sheet), gaussian: arr(vs.gaussian?.sheet) },
@@ -621,7 +683,7 @@ function resolveActiveSeries(d) {
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'p1' && traj !== 'pm') {
       out.push({
         key, fieldKey: 'legacy_sheet_p1', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.rhoP1), massMean: d?.diagnostics?.p1Mass, power: arr(sp.sheetP1),
+        rho: arr(d?.rhoP1), rho3d: arr(d?.rhoP13d), massMean: d?.diagnostics?.p1Mass, power: arr(sp.sheetP1),
         counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineSheetP1), fineCounts: arr(sp.fineCounts),
         directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.sheetP1, tophat: arr(vs.tophat?.sheetP1), gaussian: arr(vs.gaussian?.sheetP1) },
@@ -630,7 +692,7 @@ function resolveActiveSeries(d) {
     } else if (traj === 'pm' && est === 'p0') {
       out.push({
         key, fieldKey: 'legacy_pm_p0', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.pmRho), massMean: d?.diagnostics?.pmMass, power: arr(sp.pm),
+        rho: arr(d?.pmRho), rho3d: arr(d?.pmRho3d), massMean: d?.diagnostics?.pmMass, power: arr(sp.pm),
         counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.finePm), fineCounts: arr(sp.fineCounts),
         directShell: arr(sp.directShellPM).length ? arr(sp.directShellPM) : arr(sp.directPM),
         variance: { unsmoothed: vs.unsmoothed?.pm, tophat: arr(vs.tophat?.pm), gaussian: arr(vs.gaussian?.pm) },
@@ -639,7 +701,7 @@ function resolveActiveSeries(d) {
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'cic') {
       out.push({
         key, fieldKey: 'legacy_cic', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.cicRho), massMean: d?.diagnostics?.cicMass, power: arr(sp.cic),
+        rho: arr(d?.cicRho), rho3d: arr(d?.cicRho3d), massMean: d?.diagnostics?.cicMass, power: arr(sp.cic),
         counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineCic), fineCounts: arr(sp.fineCounts),
         directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.cic, tophat: arr(vs.tophat?.cic), gaussian: arr(vs.gaussian?.cic) },
@@ -648,7 +710,7 @@ function resolveActiveSeries(d) {
     } else if ((traj === ordTag || !Object.keys(custom).length) && est === 'tsc') {
       out.push({
         key, fieldKey: 'legacy_tsc', traj, est, label, shortLabel, color, dash, width,
-        rho: arr(d?.tscRho), massMean: d?.diagnostics?.tscMass, power: arr(sp.tsc),
+        rho: arr(d?.tscRho), rho3d: arr(d?.tscRho3d), massMean: d?.diagnostics?.tscMass, power: arr(sp.tsc),
         counts: arr(sp.counts), fineK: arr(sp.fineK), finePower: arr(sp.fineTsc), fineCounts: arr(sp.fineCounts),
         directShell: [],
         variance: { unsmoothed: vs.unsmoothed?.tsc, tophat: arr(vs.tophat?.tsc), gaussian: arr(vs.gaussian?.tsc) },
@@ -673,6 +735,11 @@ function renderDensity(d) {
 
   const bar=$('div','published-controls density-display-controls',p);
   const addSel=(label,opts,val,onChange)=>{const wrap=$('label','published-select',bar);$('span','',wrap,label);const s=$('select','lab-select',wrap);for(const [v,t] of opts){const o=$('option','',s,t);o.value=v;}s.value=val;s.addEventListener('change',()=>onChange(s.value));return s;};
+  addSel('3D K3D Explorer', [
+    ['off', '2D Maps Only'],
+    ['split', '2D Maps + 3D K3D Viewport'],
+    ['k3d_only', '3D K3D Viewport Only'],
+  ], densityViewOpts.k3dLayout, (v) => { densityViewOpts.k3dLayout = v; render(); });
   addSel('Colormap',[['coolwarm','Coolwarm (ρ/ρ̄ = 1 neutral)'],['viridis','Viridis'],['ylgnbu','Blue–Grey–Yellow (paper)'],['magma','Magma'],['inferno','Inferno'],['rdbu','RdBu'],['blueorange','Blue–Orange'],['gray','Grayscale']],densityViewOpts.cmap,(v)=>{densityViewOpts.cmap=v;render();});
   addSel('Color scale',[['log','Logarithmic (log₁₀ ρ / ρ̄)'],['linear','Linear (ρ / ρ̄)']],densityViewOpts.scale,(v)=>{densityViewOpts.scale=v;if(v==='log'&&!(densityViewOpts.vmin>0))densityViewOpts.vmin=0.1;render();});
   addSel('Rendering',[['smooth','Smooth (bilinear)'],['pixel','Crisp mesh cells']],densityViewOpts.interp,(v)=>{densityViewOpts.interp=v;render();});
@@ -684,10 +751,58 @@ function renderDensity(d) {
   const resetBtn=$('button','qd-btn',bar,'Auto (field range)');resetBtn.type='button';resetBtn.style.alignSelf='end';
   resetBtn.addEventListener('click',()=>{densityViewOpts.vmin=null;densityViewOpts.vmax=null;render();});
 
-  const maps=$('div','density-pair',p);
-  for(const s of activeSeries){
-    if(s.rho.length){
-      drawDensityMap(maps,s.label,s.rho,`Observed density for ${s.label}`,dim,mesh,`density-${s.key.replace(':','-')}`,effMin,effMax,mean);
+  if (densityViewOpts.k3dLayout !== 'off' && activeSeries.length) {
+    const k3dBar = $('div', 'published-controls k3d-controls', p);
+    const addKSel = (label, opts, val, onChange) => {
+      const wrap = $('label', 'published-select', k3dBar);
+      $('span', '', wrap, label);
+      const s = $('select', 'lab-select', wrap);
+      for (const [v, t] of opts) { const o = $('option', '', s, t); o.value = v; }
+      s.value = String(val);
+      s.addEventListener('change', () => onChange(s.value));
+      return s;
+    };
+    const seriesOpts = activeSeries.map((s) => [s.key, s.label]);
+    const primKey = activeSeries.some((s) => s.key === densityViewOpts.k3dPrimary) ? densityViewOpts.k3dPrimary : activeSeries[0].key;
+    densityViewOpts.k3dPrimary = primKey;
+    addKSel('Primary 3D Field', seriesOpts, primKey, (v) => { densityViewOpts.k3dPrimary = v; render(); });
+    addKSel('Comparison Overlay', [['none', 'None (single field)'], ...seriesOpts.filter(([k]) => k !== primKey)], densityViewOpts.k3dCompare, (v) => { densityViewOpts.k3dCompare = v; render(); });
+    if (dim === 3) {
+      addKSel('3D Representation', [
+        ['volume_iso', 'Direct Volume Raycasting + Isosurface'],
+        ['volume', 'Direct Volume Raycasting Only'],
+        ['isosurface', 'Dual Isosurfaces (Filament + Void)'],
+        ['slices', '3-Axis Orthogonal Volume Slices'],
+        ['mip', 'Maximum Intensity Projection (MIP)'],
+      ], densityViewOpts.k3dMode3D, (v) => { densityViewOpts.k3dMode3D = v; render(); });
+      const isoWrap = $('label', 'published-select', k3dBar);
+      $('span', '', isoWrap, 'Isosurface ρ/ρ̄');
+      const isoInp = $('input', 'lab-number', isoWrap);
+      isoInp.type = 'number'; isoInp.step = '0.5'; isoInp.style.width = '5.5rem'; isoInp.value = String(densityViewOpts.k3dIsoLevel);
+      isoInp.addEventListener('change', () => { const v = parseFloat(isoInp.value); if (Number.isFinite(v) && v > 0) { densityViewOpts.k3dIsoLevel = v; render(); } });
+    }
+    addKSel('K3D Renderer', [['simple', 'Standard WebGL2 + Depth Peeling'], ['advanced', 'Advanced EdL / GI'], ['cinematic', 'Cinematic Raytracer']], densityViewOpts.k3dRenderer, (v) => { densityViewOpts.k3dRenderer = v; render(); });
+
+    let activeK3D = null;
+    attachK3DExportBar(k3dBar, () => activeK3D, `k3d-density-${dim}d`);
+    const wrap = $('div', 'k3d-viewport-wrap', p);
+    const host = $('div', 'k3d-viewport-host', wrap);
+    void mountK3DDensityScene(host, d, activeSeries, S, { ...densityViewOpts, vmin: effMin, vmax: effMax }, {
+      primaryKey: densityViewOpts.k3dPrimary,
+      compareKey: densityViewOpts.k3dCompare,
+      mode3D: densityViewOpts.k3dMode3D,
+      isoLevel: densityViewOpts.k3dIsoLevel,
+      renderer: densityViewOpts.k3dRenderer,
+      depthPeels: densityViewOpts.k3dDepthPeels,
+    }).then((res) => { activeK3D = res?.instance || null; });
+  }
+
+  if (densityViewOpts.k3dLayout !== 'k3d_only') {
+    const maps=$('div','density-pair',p);
+    for(const s of activeSeries){
+      if(s.rho.length){
+        drawDensityMap(maps,s.label,s.rho,`Observed density for ${s.label}`,dim,mesh,`density-${s.key.replace(':','-')}`,effMin,effMax,mean);
+      }
     }
   }
   const withRho=activeSeries.filter(s=>s.rho.length>0);
@@ -1581,6 +1696,12 @@ function renderRsd(d) {
   }
 
   const sheetBar=$('div','published-controls',pSheet);
+  const engWrap=$('label','published-select',sheetBar);$('span','',engWrap,'Viewport');
+  const engSel=$('select','lab-select',engWrap);
+  for(const [v,t] of [['canvas','2D Canvas Projection'],['k3d','3D Interactive K3D WebGL']]){const o=$('option','',engSel,t);o.value=v;}
+  engSel.value=rsdViewOpts.engine;
+  engSel.addEventListener('change',()=>{rsdViewOpts.engine=engSel.value;render();});
+
   const modeWrap=$('label','published-select',sheetBar);$('span','',modeWrap,'Sheet view');
   const modeSel=$('select','lab-select',modeWrap);
   for(const [v,t] of [
@@ -1597,126 +1718,153 @@ function renderRsd(d) {
   sampSel.value=rsdViewOpts.showSamples?'1':'0';
   sampSel.addEventListener('change',()=>{rsdViewOpts.showSamples=sampSel.value==='1';render();});
 
-  const wf=rsd.wireframe||{};
-  const cSheet=canvasFor(pSheet,'Redshifted phase-space sheet and velocity-gradient Gaussian samples',true);
-  const drawRsdSheet=()=>paintCanvas(cSheet,(ctx,W,H)=>{
-    const nw=Number(wf.n||0),xr=arr(wf.xReal),xs=arr(wf.xRsd),uLos=arr(wf.uLos),jr=arr(wf.jReal),js=arr(wf.jRsd),samps=arr(wf.gaussSamples);
-    const ink=getComputedStyle(cSheet).color;
-    if(!nw||!xs.length){ctx.fillStyle=ink;ctx.fillText('Redshifted wireframe was not returned.',32,40);return;}
-    const idx=(i,j=0,k=0)=>dim===1?i:dim===2?i*nw+j:(i*nw+j)*nw+k;
-    const get=(a,id,axis)=>Number(a[id*dim+axis]??0);
-    const pad=56,plotW=W-2*pad,plotH=H-2*pad;
+  if (rsdViewOpts.engine === 'k3d') {
+    const vecWrap = $('label', 'published-select', sheetBar); $('span', '', vecWrap, 'RSD Displacement Vectors');
+    const vecSel = $('select', 'lab-select', vecWrap);
+    for (const [v, t] of [['1', 'Show s − x = u_∥ n̂ vectors'], ['0', 'Hide vectors']]) { const o = $('option', '', vecSel, t); o.value = v; }
+    vecSel.value = rsdViewOpts.showVectors ? '1' : '0';
+    vecSel.addEventListener('change', () => { rsdViewOpts.showVectors = vecSel.value === '1'; render(); });
 
-    if(dim===1){
-      let miny=Infinity,maxy=-Infinity;
-      for(let i=0;i<nw;i++){
-        const u=Number(uLos[i]||0);
-        miny=Math.min(miny,u);maxy=Math.max(maxy,u);
-      }
-      if(!(maxy>miny)){miny-=0.05;maxy+=0.05;}
-      const mapXY=(xVal,uVal)=>[pad+((xVal%1+1)%1)*plotW,H-pad-(uVal-miny)*plotH/(maxy-miny)];
-      // Real-space curve (x, u_los) vs Redshifted curve (s, u_los)
-      ctx.lineWidth=1.8;
-      ctx.strokeStyle='#0072B2';
-      ctx.beginPath();
-      for(let i=0;i<nw;i++){
-        const [px,py]=mapXY(get(xr,i,0),Number(uLos[i]||0));
-        if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xr,i,0)-get(xr,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
-      }
-      ctx.stroke();
-      ctx.strokeStyle='#D55E00';
-      ctx.beginPath();
-      for(let i=0;i<nw;i++){
-        const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
-        if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xs,i,0)-get(xs,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
-      }
-      ctx.stroke();
-      for(let i=0;i<nw;i++){
-        const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
-        const crossed=Number(js[i])<=0;
-        ctx.fillStyle=crossed?'#c0392b':'#D55E00';
-        ctx.beginPath();ctx.arc(px,py,crossed?3.2:2.1,0,Math.PI*2);ctx.fill();
-      }
-      ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
-      ctx.fillText('position x/L (blue) and redshift coordinate s/L = x/L + u_∥ (orange; crimson where J_{s,T} ≤ 0)',W/2,H-14);
-      ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);ctx.fillText('LOS velocity displacement u_∥ = v_∥ / (a H L)',0,0);ctx.restore();ctx.textAlign='start';
-      return;
+    if (dim === 3) {
+      const volWrap = $('label', 'published-select', sheetBar); $('span', '', volWrap, '3D RSD Density Volume');
+      const volSel = $('select', 'lab-select', volWrap);
+      for (const [v, t] of [['0', 'Sheet + Vectors Only'], ['1', 'Overlay 3D RSD Volume Raycasting']]) { const o = $('option', '', volSel, t); o.value = v; }
+      volSel.value = rsdViewOpts.showVolume ? '1' : '0';
+      volSel.addEventListener('change', () => { rsdViewOpts.showVolume = volSel.value === '1'; render(); });
     }
 
-    const side=Math.min(plotW,plotH),cx=W/2,cy=H/2;
-    const proj=(arrPos,id)=>{
-      if(dim===2)return [cx+(get(arrPos,id,0)-0.5)*side,cy-(get(arrPos,id,1)-0.5)*side];
-      return project3(get(arrPos,id,0)-0.5,get(arrPos,id,1)-0.5,get(arrPos,id,2)-0.5,S.rotate,S.tilt,side*0.82,cx,cy);
-    };
-    const drawEdge=(arrPos,a,b)=>{
-      let d2=0;for(let k=0;k<dim;k++){const df=get(arrPos,a,k)-get(arrPos,b,k);d2+=df*df;}
-      if(d2>0.2)return;
-      const [x1,y1]=proj(arrPos,a),[x2,y2]=proj(arrPos,b);
-      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
-    };
+    let activeK3D = null;
+    attachK3DExportBar(sheetBar, () => activeK3D, `k3d-rsd-${dim}d`);
+    const wrap = $('div', 'k3d-viewport-wrap', pSheet);
+    const host = $('div', 'k3d-viewport-host', wrap);
+    void mountK3DRsdScene(host, d, S, rsdViewOpts, densityViewOpts, {
+      showVectors: rsdViewOpts.showVectors,
+      showVolume: rsdViewOpts.showVolume,
+      renderer: rsdViewOpts.renderer,
+      depthPeels: rsdViewOpts.depthPeels,
+    }).then((res) => { activeK3D = res?.instance || null; });
+  } else {
+    const wf=rsd.wireframe||{};
+    const cSheet=canvasFor(pSheet,'Redshifted phase-space sheet and velocity-gradient Gaussian samples',true);
+    const drawRsdSheet=()=>paintCanvas(cSheet,(ctx,W,H)=>{
+      const nw=Number(wf.n||0),xr=arr(wf.xReal),xs=arr(wf.xRsd),uLos=arr(wf.uLos),jr=arr(wf.jReal),js=arr(wf.jRsd),samps=arr(wf.gaussSamples);
+      const ink=getComputedStyle(cSheet).color;
+      if(!nw||!xs.length){ctx.fillStyle=ink;ctx.fillText('Redshifted wireframe was not returned.',32,40);return;}
+      const idx=(i,j=0,k=0)=>dim===1?i:dim===2?i*nw+j:(i*nw+j)*nw+k;
+      const get=(a,id,axis)=>Number(a[id*dim+axis]??0);
+      const pad=56,plotW=W-2*pad,plotH=H-2*pad;
 
-    if(rsdViewOpts.showSamples&&samps.length>=dim){
-      ctx.fillStyle='rgba(0, 158, 115, 0.36)';
-      const nPts=Math.floor(samps.length/dim);
-      for(let p=0;p<nPts;p++){
-        let px,py;
-        if(dim===2){px=cx+(Number(samps[p*2])-0.5)*side;py=cy-(Number(samps[p*2+1])-0.5)*side;}
-        else{[px,py]=project3(Number(samps[p*3])-0.5,Number(samps[p*3+1])-0.5,Number(samps[p*3+2])-0.5,S.rotate,S.tilt,side*0.82,cx,cy);}
-        ctx.beginPath();ctx.arc(px,py,1.6,0,Math.PI*2);ctx.fill();
+      if(dim===1){
+        let miny=Infinity,maxy=-Infinity;
+        for(let i=0;i<nw;i++){
+          const u=Number(uLos[i]||0);
+          miny=Math.min(miny,u);maxy=Math.max(maxy,u);
+        }
+        if(!(maxy>miny)){miny-=0.05;maxy+=0.05;}
+        const mapXY=(xVal,uVal)=>[pad+((xVal%1+1)%1)*plotW,H-pad-(uVal-miny)*plotH/(maxy-miny)];
+        // Real-space curve (x, u_los) vs Redshifted curve (s, u_los)
+        ctx.lineWidth=1.8;
+        ctx.strokeStyle='#0072B2';
+        ctx.beginPath();
+        for(let i=0;i<nw;i++){
+          const [px,py]=mapXY(get(xr,i,0),Number(uLos[i]||0));
+          if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xr,i,0)-get(xr,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
+        }
+        ctx.stroke();
+        ctx.strokeStyle='#D55E00';
+        ctx.beginPath();
+        for(let i=0;i<nw;i++){
+          const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
+          if(i===0)ctx.moveTo(px,py);else if(Math.abs(get(xs,i,0)-get(xs,i-1,0))<0.4)ctx.lineTo(px,py);else ctx.moveTo(px,py);
+        }
+        ctx.stroke();
+        for(let i=0;i<nw;i++){
+          const [px,py]=mapXY(get(xs,i,0),Number(uLos[i]||0));
+          const crossed=Number(js[i])<=0;
+          ctx.fillStyle=crossed?'#c0392b':'#D55E00';
+          ctx.beginPath();ctx.arc(px,py,crossed?3.2:2.1,0,Math.PI*2);ctx.fill();
+        }
+        ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
+        ctx.fillText('position x/L (blue) and redshift coordinate s/L = x/L + u_∥ (orange; crimson where J_{s,T} ≤ 0)',W/2,H-14);
+        ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);ctx.fillText('LOS velocity displacement u_∥ = v_∥ / (a H L)',0,0);ctx.restore();ctx.textAlign='start';
+        return;
       }
-    }
 
-    if(rsdViewOpts.sheetMode==='overlay'){
-      ctx.strokeStyle='rgba(0, 114, 178, 0.38)';ctx.lineWidth=0.9;
+      const side=Math.min(plotW,plotH),cx=W/2,cy=H/2;
+      const proj=(arrPos,id)=>{
+        if(dim===2)return [cx+(get(arrPos,id,0)-0.5)*side,cy-(get(arrPos,id,1)-0.5)*side];
+        return project3(get(arrPos,id,0)-0.5,get(arrPos,id,1)-0.5,get(arrPos,id,2)-0.5,S.rotate,S.tilt,side*0.82,cx,cy);
+      };
+      const drawEdge=(arrPos,a,b)=>{
+        let d2=0;for(let k=0;k<dim;k++){const df=get(arrPos,a,k)-get(arrPos,b,k);d2+=df*df;}
+        if(d2>0.2)return;
+        const [x1,y1]=proj(arrPos,a),[x2,y2]=proj(arrPos,b);
+        ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      };
+
+      if(rsdViewOpts.showSamples&&samps.length>=dim){
+        ctx.fillStyle='rgba(0, 158, 115, 0.36)';
+        const nPts=Math.floor(samps.length/dim);
+        for(let p=0;p<nPts;p++){
+          let px,py;
+          if(dim===2){px=cx+(Number(samps[p*2])-0.5)*side;py=cy-(Number(samps[p*2+1])-0.5)*side;}
+          else{[px,py]=project3(Number(samps[p*3])-0.5,Number(samps[p*3+1])-0.5,Number(samps[p*3+2])-0.5,S.rotate,S.tilt,side*0.82,cx,cy);}
+          ctx.beginPath();ctx.arc(px,py,1.6,0,Math.PI*2);ctx.fill();
+        }
+      }
+
+      if(rsdViewOpts.sheetMode==='overlay'){
+        ctx.strokeStyle='rgba(0, 114, 178, 0.38)';ctx.lineWidth=0.9;
+        if(dim===2){
+          for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++){
+            const a=idx(i,j),b=idx(i+1,j),c=idx(i,j+1),e=idx(i+1,j+1);
+            drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,e);
+          }
+        }else{
+          for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++)for(let k=0;k+1<nw;k++){
+            const a=idx(i,j,k),b=idx(i+1,j,k),c=idx(i,j+1,k),dd=idx(i,j,k+1);
+            drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,dd);
+          }
+        }
+      }
+
+      // Draw Redshifted Sheet edges
       if(dim===2){
         for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++){
           const a=idx(i,j),b=idx(i+1,j),c=idx(i,j+1),e=idx(i+1,j+1);
-          drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,e);
+          const minJ=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[e]));
+          if(rsdViewOpts.sheetMode==='real_vs_rsd_j'){
+            const ratio=Number(js[a])/Math.max(1e-3,Math.abs(Number(jr[a])));
+            ctx.strokeStyle=ratio<=0?'#c0392b':ratio<0.6?'#d55e00':ratio<1.1?'#0072b2':'#56b4e9';
+            ctx.lineWidth=ratio<=0?1.5:1.0;
+          }else if(rsdViewOpts.sheetMode==='overlay'){
+            ctx.strokeStyle=minJ<=0?'rgba(192, 57, 43, 0.85)':'rgba(213, 94, 0, 0.72)';
+            ctx.lineWidth=minJ<=0?1.4:1.0;
+          }else{
+            ctx.strokeStyle=minJ<=0?'rgba(204, 37, 41, 0.9)':'rgba(0, 114, 178, 0.62)';
+            ctx.lineWidth=minJ<=0?1.55:0.95;
+          }
+          drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,e);drawEdge(xs,b,e);drawEdge(xs,c,e);
         }
       }else{
         for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++)for(let k=0;k+1<nw;k++){
           const a=idx(i,j,k),b=idx(i+1,j,k),c=idx(i,j+1,k),dd=idx(i,j,k+1);
-          drawEdge(xr,a,b);drawEdge(xr,a,c);drawEdge(xr,a,dd);
+          const crossed=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[dd]))<=0;
+          ctx.strokeStyle=crossed?'rgba(204, 37, 41, 0.78)':'rgba(0, 114, 178, 0.32)';
+          ctx.lineWidth=crossed?1.2:0.65;
+          drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,dd);
         }
       }
-    }
 
-    // Draw Redshifted Sheet edges
-    if(dim===2){
-      for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++){
-        const a=idx(i,j),b=idx(i+1,j),c=idx(i,j+1),e=idx(i+1,j+1);
-        const minJ=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[e]));
-        if(rsdViewOpts.sheetMode==='real_vs_rsd_j'){
-          const ratio=Number(js[a])/Math.max(1e-3,Math.abs(Number(jr[a])));
-          ctx.strokeStyle=ratio<=0?'#c0392b':ratio<0.6?'#d55e00':ratio<1.1?'#0072b2':'#56b4e9';
-          ctx.lineWidth=ratio<=0?1.5:1.0;
-        }else if(rsdViewOpts.sheetMode==='overlay'){
-          ctx.strokeStyle=minJ<=0?'rgba(192, 57, 43, 0.85)':'rgba(213, 94, 0, 0.72)';
-          ctx.lineWidth=minJ<=0?1.4:1.0;
-        }else{
-          ctx.strokeStyle=minJ<=0?'rgba(204, 37, 41, 0.9)':'rgba(0, 114, 178, 0.62)';
-          ctx.lineWidth=minJ<=0?1.55:0.95;
-        }
-        drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,e);drawEdge(xs,b,e);drawEdge(xs,c,e);
-      }
-    }else{
-      for(let i=0;i+1<nw;i++)for(let j=0;j+1<nw;j++)for(let k=0;k+1<nw;k++){
-        const a=idx(i,j,k),b=idx(i+1,j,k),c=idx(i,j+1,k),dd=idx(i,j,k+1);
-        const crossed=Math.min(Number(js[a]),Number(js[b]),Number(js[c]),Number(js[dd]))<=0;
-        ctx.strokeStyle=crossed?'rgba(204, 37, 41, 0.78)':'rgba(0, 114, 178, 0.32)';
-        ctx.lineWidth=crossed?1.2:0.65;
-        drawEdge(xs,a,b);drawEdge(xs,a,c);drawEdge(xs,a,dd);
-      }
-    }
-
-    ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
-    ctx.fillText(dim===2?'transverse x₀/L  (blue = single-stream J_{s,T}>0, crimson = RSD shell-crossed J_{s,T}≤0, green dots = simplex Gaussian samples)':'orthographic horizontal / L  (crimson = RSD shell-crossed simplices J_{s,T}≤0)',W/2,H-14);
-    ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);
-    ctx.fillText(dim===2?'line-of-sight redshift coordinate s₁/L = x₁/L + v₁/(aHL)':'line-of-sight projection s/L',0,0);
-    ctx.restore();ctx.textAlign='start';
-  });
-  drawRsdSheet();
-  addPngButton(cSheet,'redshifted-phase-space-sheet');
+      ctx.fillStyle=ink;ctx.font='14px system-ui';ctx.textAlign='center';
+      ctx.fillText(dim===2?'transverse x₀/L  (blue = single-stream J_{s,T}>0, crimson = RSD shell-crossed J_{s,T}≤0, green dots = simplex Gaussian samples)':'orthographic horizontal / L  (crimson = RSD shell-crossed simplices J_{s,T}≤0)',W/2,H-14);
+      ctx.save();ctx.translate(18,H/2);ctx.rotate(-Math.PI/2);
+      ctx.fillText(dim===2?'line-of-sight redshift coordinate s₁/L = x₁/L + v₁/(aHL)':'line-of-sight projection s/L',0,0);
+      ctx.restore();ctx.textAlign='start';
+    });
+    drawRsdSheet();
+    addPngButton(cSheet,'redshifted-phase-space-sheet');
+  }
 
   // Panel 2: Spatial Maps (Real Space, Exact Redshifted Sheet, Simplex Velocity-Gradient Gaussian Field, Sampled Field)
   const pMaps=panel(

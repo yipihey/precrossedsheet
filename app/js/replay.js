@@ -73,7 +73,7 @@ function compactDensityField(rhoLike, dim, mesh) {
     }
     return { slice: out, stats, sliceMesh: side, isSlice2d: true };
   }
-  // dim === 3: extract central x2 = floor(n/2) plane (or if already a 2D slice, keep it)
+  // dim === 3: extract central x2 = floor(n/2) plane (plus a compact 3D volume up to 32^3 for K3D)
   const n3 = Math.round(Math.cbrt(len));
   if (n3 * n3 * n3 === len) {
     const kMid = Math.floor(n3 / 2);
@@ -88,7 +88,22 @@ function compactDensityField(rhoLike, dim, mesh) {
         out[i * side + j] = roundNum(rhoLike[(ii * n3 + jj) * n3 + kMid], 5);
       }
     }
-    return { slice: out, stats, sliceMesh: side, isSlice2d: true };
+    const maxVolSide = 32;
+    const volStride = n3 > maxVolSide ? Math.ceil(n3 / maxVolSide) : 1;
+    const volSide = Math.floor(n3 / volStride);
+    const volume3d = new Array(volSide * volSide * volSide);
+    let p = 0;
+    for (let i = 0; i < volSide; i++) {
+      const ii = i * volStride;
+      for (let j = 0; j < volSide; j++) {
+        const jj = j * volStride;
+        for (let k = 0; k < volSide; k++) {
+          const kk = k * volStride;
+          volume3d[p++] = roundNum(rhoLike[(ii * n3 + jj) * n3 + kk], 4);
+        }
+      }
+    }
+    return { slice: out, stats, sliceMesh: side, isSlice2d: true, volume3d, volume3dMesh: volSide };
   }
   const n2 = Math.round(Math.sqrt(len));
   if (n2 * n2 === len) {
@@ -472,6 +487,8 @@ export function buildCompactManifest({ state, request, result, execution, build,
       customSeriesOut[k] = {
         massMean: roundNum(entry.massMean, 7),
         rho: cRho.slice,
+        rho3d: cRho.volume3d || undefined,
+        volume3dMesh: cRho.volume3dMesh || undefined,
         sliceMesh: cRho.sliceMesh,
         power: toCompactNumberArray(entry.power, 6),
         counts: toCompactNumberArray(entry.counts, 4),
@@ -489,16 +506,25 @@ export function buildCompactManifest({ state, request, result, execution, build,
   if (result?.rsd) {
     const rsdMesh = Number(result.rsd.mesh || mesh);
     const maps = result.rsd.maps || {};
+    const mReal = compactDensityField(maps.realRho, dim, rsdMesh);
+    const mSheet = compactDensityField(maps.rsdSheetRho, dim, rsdMesh);
+    const mGauss = compactDensityField(maps.rsdGaussRho, dim, rsdMesh);
+    const mSamp = compactDensityField(maps.rsdSampledRho, dim, rsdMesh);
     rsdOut = {
       losAxis: result.rsd.losAxis,
       mesh: rsdMesh,
       summary: normalizeJsonValue(result.rsd.summary),
       wireframe: normalizeJsonValue(result.rsd.wireframe),
       maps: {
-        realRho: compactDensityField(maps.realRho, dim, rsdMesh).slice,
-        rsdSheetRho: compactDensityField(maps.rsdSheetRho, dim, rsdMesh).slice,
-        rsdGaussRho: compactDensityField(maps.rsdGaussRho, dim, rsdMesh).slice,
-        rsdSampledRho: compactDensityField(maps.rsdSampledRho, dim, rsdMesh).slice,
+        realRho: mReal.slice,
+        rsdSheetRho: mSheet.slice,
+        rsdGaussRho: mGauss.slice,
+        rsdSampledRho: mSamp.slice,
+        realRho3d: mReal.volume3d || undefined,
+        rsdSheetRho3d: mSheet.volume3d || undefined,
+        rsdGaussRho3d: mGauss.volume3d || undefined,
+        rsdSampledRho3d: mSamp.volume3d || undefined,
+        volume3dMesh: mSheet.volume3dMesh || undefined,
       },
       spectra: normalizeJsonValue(result.rsd.spectra),
       pdf: normalizeJsonValue(result.rsd.pdf),
@@ -513,6 +539,7 @@ export function buildCompactManifest({ state, request, result, execution, build,
     sheetN: xComp.sheetN,
     mesh,
     sliceMesh: rhoComp.sliceMesh,
+    volume3dMesh: rhoComp.volume3dMesh || undefined,
     forceMesh: result?.forceMesh ?? state?.forceMesh,
     a: result?.a,
     aStart: result?.aStart,
@@ -535,6 +562,11 @@ export function buildCompactManifest({ state, request, result, execution, build,
     pmRho: pmRhoComp.slice,
     cicRho: cicRhoComp.slice,
     tscRho: tscRhoComp.slice,
+    rho3d: rhoComp.volume3d || undefined,
+    rhoP13d: rhoP1Comp.volume3d || undefined,
+    pmRho3d: pmRhoComp.volume3d || undefined,
+    cicRho3d: cicRhoComp.volume3d || undefined,
+    tscRho3d: tscRhoComp.volume3d || undefined,
     densitySliceStats,
     spectra: normalizeJsonValue(result?.spectra),
     varianceScale: normalizeJsonValue(result?.varianceScale),
