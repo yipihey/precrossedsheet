@@ -13,6 +13,7 @@ pub mod growth;
 pub mod hopfcole;
 pub mod ics;
 pub mod lpt;
+pub mod lpt_closure;
 pub mod nbody;
 pub mod tangent;
 pub mod observables;
