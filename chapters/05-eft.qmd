@@ -1,0 +1,79 @@
+---
+title: "UV Response, Sound Speed, and Lagrangian Counterterms"
+---
+
+## Why Small Scales Feed Large Scales {#sec-eft-counterterms}
+
+The first formulations of the Effective Field Theory of Large Scale Structure (EFTofLSS) make a precise claim: modes below a cutoff $\Lambda$ are not simply discarded. Their gravitational influence on the long-wavelength fluid is reorganized into a finite set of local operators whose leading coefficient is an effective sound speed $c_s^2$ [@carrasco2012; @porto2014]. In Eulerian language the counterterm density is proportional to $\nabla^2\delta$; in the one-loop power spectrum it appears as
+
+$$
+P_{\rm EFT}(k) = P_{\rm tree}(k) + P_{22}(k) + P_{13}(k) - 2\,c_s^2\,k^2\,P_{\rm lin}(k) + \cdots.
+$$ {#eq-eft-power-counterterm}
+
+Lagrangian-space EFT (LEFT) organizes the same physics as a multipole expansion of extended objects on the initial sheet [@porto2014; @schmidt2021]. The operators absorb ultraviolet (UV) sensitivity of long-wavelength observables to short-distance dynamics, including the back-reaction of modes that have already shell-crossed.
+
+This chapter is a **draft laboratory section**. It does not replace a calibrated one-loop LEFT pipeline. Instead it uses the pre-crossed sheet machinery already in the report—the four LPT solutions of @sec-lpt and the exact P1 deposit of @sec-meshing—to make the UV→IR response measurable and to show how a single sound-speed fit connects two Lagrangian smoothings.
+
+## Dual Gaussian Smoothings as a Lagrangian Cutoff Pair {#sec-eft-dual-filters}
+
+Our laboratory never applies an Eulerian sharp-$k$ cutoff after displacement. Ultraviolet content is controlled by the Gaussian initial filter $R_f$ that multiplies the linear power by $e^{-k^2 R_f^2}$ (@sec-cosmology). Two radii of the **same seeded realization** therefore share long-wavelength phases and differ only in the band of modes between them:
+
+* **UV filter $R_{\rm UV}$.** Chosen so that about one percent of Kuhn tetrahedra are inverted at $a=1$. On the draft $32^3$ laboratory volume with seed $7$, $R_{\rm UV}=5\,h^{-1}\mathrm{Mpc}$ yields an inverted-element fraction $\approx 0.99\%$ at 4LPT{{< test dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit "∼1% UV tetrahedra" >}}.
+* **IR filter $R_{\rm IR}$.** Chosen so that the continuum linear RMS satisfies $\sigma_{\rm IR}\approx\sigma_{\rm UV}/3$. The matching radius is $R_{\rm IR}\approx 17.2\,h^{-1}\mathrm{Mpc}$ for the default Planck-like parameters{{< test ir_filter_matches_one_third_linear_sigma "σ_IR = σ_UV/3" >}}.
+
+The IR sheet is essentially uncrossed. The UV sheet is still mostly single-stream, but it carries the nonlinear response of the intermediate band that the IR filter removed. That band is precisely what an EFT counterterm is designed to encode.
+
+## Exact P1 Spectra for 1LPT–4LPT {#sec-eft-p1-spectra}
+
+For each filter and each order $n=1,\ldots,4$ the laboratory:
+
+1. Builds the nLPT displacement at the chosen epoch (@sec-lpt).
+2. Deposits the sheet with the **exact P1** estimator (piecewise-linear vertex Jacobians) onto a fine Eulerian mesh, typically $N_e=2N_q$.
+3. Measures the isotropic FFT power spectrum $P_n(k;R_f)$ in physical units.
+
+P1 is preferred here because it suppresses the high-$k$ facet floor of P0 while remaining a conservative, shot-noise-free sheet deposit (@sec-meshing). No particle CIC/TSC spectrum enters the fit: the comparison isolates Lagrangian UV content, not estimator discreteness.
+
+## Fitting the Sound Speed {#sec-eft-fit}
+
+Write $P_{\rm UV}(k)$ and $P_{\rm IR}(k)$ for a fixed LPT order. On large scales the leading cutoff response is absorbed by the same operator that appears in @eq-eft-power-counterterm:
+
+$$
+P_{\rm UV}(k)\;\approx\;P_{\rm IR}(k) - 2\,c_s^2\,k^2\,P_{\rm lin}^{\rm IR}(k),
+$$ {#eq-dual-smoothing-cs2}
+
+where $P_{\rm lin}^{\rm IR}$ is the realized linear power of the IR-filtered seed at the output epoch. A mode-count-weighted least-squares fit of @eq-dual-smoothing-cs2 over $0<k\le k_{\rm max}$ recovers $c_s^2$ in $(h^{-1}\mathrm{Mpc})^2${{< src eft::fit_sound_speed >}}. On synthetic spectra the solver returns an injected coefficient to machine precision{{< test sound_speed_fit_recovers_injected_counterterm "injected cₛ² recovery" >}}.
+
+Two interpretive remarks connect the laboratory to the classical papers:
+
+1. **Sign.** Extra UV modes typically *increase* nonlinear power relative to the IR sheet at intermediate $k$, so the fitted $c_s^2$ in @eq-dual-smoothing-cs2 is negative when the UV run is treated as the more complete theory. In the standard SPT-versus-$N$-body calibration the same operator often carries the opposite role (reducing one-loop SPT toward the simulation). Both are cutoff-matching statements; only the reference theory changes.
+2. **Higher derivatives.** A pure $k^2$ template cannot absorb the full band between $R_{\rm UV}$ and $R_{\rm IR}$. Residuals in the draft fit diagnose the size of $k^4$ and stochastic operators that a production LEFT analysis would float next [@carrasco2012; @porto2014].
+
+## How the Two Approaches Meet {#sec-eft-dictionary}
+
+| Laboratory sheet construction | EFTofLSS / LEFT |
+|---|---|
+| Gaussian $R_f$ on initial modes | Cutoff $\Lambda\sim 1/R_f$ on the Wilsonian fluid |
+| Exact $1+\delta=1/J$ on tetrahedra | Density operators expanded about long-wavelength fields |
+| Dual $R_{\rm UV},R_{\rm IR}$ difference | Explicit UV sensitivity of $P(k)$ to short modes |
+| Fit of @eq-dual-smoothing-cs2 | Measurement of $c_s^2(\Lambda)$ from cutoff variation |
+| 4LPT + P1 on a fine mesh | High-order LEFT forward model before stochastic terms |
+
+The pre-crossed sheet therefore does not *replace* the counterterm: it **computes the deterministic infrared backbone** that LEFT parameterizes. Once $R_f$ is large enough that $J>0$ almost everywhere, 4LPT plus exact deposition already carries voids, filaments, and BAO through the nonlinear map (@sec-validation). Modes removed by a safer filter—or genuine multi-stream / baryonic physics below $R_f$—re-enter as the local operators whose leading piece is the sound speed studied here.
+
+::: {.callout-tip title="Try it: dual-smoothing sound-speed laboratory"}
+Open the counterterms view on the draft $32^3\to 64^3$ P1 experiment. Inspect inverted fractions, $P_{\rm UV}/P_{\rm IR}$, and the fitted $c_s^2$ across 1LPT–4LPT. Set `Rir=-1` to keep $\sigma_{\rm IR}=\sigma_{\rm UV}/3$ automatically.
+
+{{< lab "v=3&view=counterterms&dim=3&n=32&mesh=64&force=32&ic=gaussian&cutoff=4&a=1&epoch=scaleFactor&order=4&Ruv=5&Rir=-1&kFit=0.08&smoothing=0&L=300&seed=7" "Open the EFT counterterms experiment" >}}
+:::
+
+## Key Takeaways
+
+1. Small-scale modes back-react on large-scale power; EFTofLSS encodes that response in $c_s^2$ and higher operators.
+2. Two Lagrangian Gaussian filters of one seed give a concrete, shot-noise-free measurement of that response with 1–4LPT and exact P1 deposits.
+3. Fitting @eq-dual-smoothing-cs2 recovers the leading counterterm and makes the dictionary between $R_f$ and $\Lambda$ operational inside the laboratory.
+
+### Exercises
+
+1. **Cutoff dictionary.** Using $W_G(k)=\mathrm{e}^{-k^2 R_f^2/2}$, show that the half-power wavenumber of the filtered *power* is $k_{1/2}=(\ln 2)^{1/2}/R_f$. Compare $1/R_{\rm UV}$ and $1/R_{\rm IR}$ for the default laboratory pair.
+2. **Fit algebra.** Starting from @eq-dual-smoothing-cs2, derive the normal equation $c_s^2=\sum_i w_i k_i^2 y_i/\sum_i w_i k_i^4$ with $y_i=-(P_{\rm UV}-P_{\rm IR})_i/(2P_{\rm lin,i})$.
+3. **Order dependence.** In the laboratory, compare fitted $c_s^2$ at 1LPT and 4LPT at fixed filters. Which part of the UV→IR difference is dynamical (LPT order) rather than a change of linear variance?

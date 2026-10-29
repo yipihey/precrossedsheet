@@ -1240,6 +1240,33 @@ pub fn lab_run(request: &str) -> String {
     crate::laboratory::run_json(request)
 }
 
+/// Dual-smoothing P1 sheet power spectra (orders 1–4) with a sound-speed fit.
+/// Pass `ir_smoothing < 0` to auto-match σ_IR ≈ σ_UV / 3.
+#[wasm_bindgen]
+pub fn eft_counterterms_run(
+    request: &str,
+    uv_smoothing: f64,
+    ir_smoothing: f64,
+    k_max: f64,
+) -> String {
+    let req: crate::laboratory::LabRequest = match serde_json::from_str(request) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({"error": format!("Invalid laboratory request: {e}")})
+                .to_string()
+        }
+    };
+    let ir = if ir_smoothing < 0. {
+        None
+    } else {
+        Some(ir_smoothing)
+    };
+    match crate::eft::run_dual_smoothing_counterterms(&req, uv_smoothing, ir, k_max) {
+        Ok(v) => v.to_string(),
+        Err(e) => serde_json::json!({"error": e}).to_string(),
+    }
+}
+
 /// Initial Fourier modes and raw recursion descriptors for optional GPU nLPT.
 #[wasm_bindgen]
 pub struct GpuLptSeed {

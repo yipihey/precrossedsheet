@@ -322,3 +322,20 @@ page hash (`sheet=f_N_M`). Quantities quoted in the introduction come from the
 native runner (requests in `scripts/render_intro_figures.py`), the archived
 DiscoDJ.jl sheet study (its README at the cited commit), and the widget test.
 Numbers were recomputed in this container; browser timings are not quoted.
+
+## 2026-10-29 — draft EFT dual-smoothing counterterm laboratory
+
+User request: a Quarto/laboratory draft studying how small-scale modes influence
+large-scale power via the sound-speed counterterm, using 1–4LPT, two Gaussian
+IC smoothings (∼1% inverted tetrahedra vs ∼⅓ the linear σ), fine-grid exact P1
+deposits, and a fit to the usual −2 cₛ² k² P_lin LEFT/EFTofLSS operator.
+
+Implementation:
+- `core/src/eft.rs` fits cₛ², matches σ_IR/σ_UV, runs dual-smoothing P1 spectra.
+- Default UV radius R_UV=5 Mpc/h on the 32³/64³ draft volume (seed 7) yields
+  ∼1% inverted Kuhn tetrahedra at a=1; R_IR auto-matches continuum σ/3
+  (≈17.2 Mpc/h). Convention P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR with cₛ² in
+  (Mpc/h)²; no PM trajectory enters this path.
+- Lab view `counterterms` (schema keys Ruv, Rir, kFit; Rir=-1 means auto).
+- Chapter `chapters/05-eft.qmd` is explicitly a draft pedagogical section with
+  provenance tests; it does not claim a production LEFT calibration.

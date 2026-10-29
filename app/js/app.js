@@ -62,9 +62,10 @@ function saveSelectedEstimators() {
 const root = document.querySelector('#lab'), status = document.querySelector('#run-state');
 const VIEWS = [
   ['sheet', 'Phase-space sheet'], ['density', 'Density'], ['spectra', 'Power spectra'],
-  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['rsd', 'Redshift space (RSD)'], ['gradient', 'Differentiability'], ['published', 'Published replay'],
+  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['rsd', 'Redshift space (RSD)'], ['gradient', 'Differentiability'],
+  ['counterterms', 'EFT counterterms'], ['published', 'Published replay'],
 ];
-const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', rsd: '../chapters/05-rsd.html#sec-rsd', gradient: '../chapters/06-inference.html#sec-inference', published: '../chapters/07-lab.html#sec-lab' };
+const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', rsd: '../chapters/05-rsd.html#sec-rsd', gradient: '../chapters/06-inference.html#sec-inference', counterterms: '../chapters/05-eft.html#sec-eft-counterterms', published: '../chapters/07-lab.html#sec-lab' };
 const $ = (tag, cls, parent, value) => { const e = document.createElement(tag); if (cls) e.className = cls; if (value != null) e.textContent = value; parent.append(e); return e; };
 const row = (parent, cls = '') => $('div', `lab-control ${cls}`, parent);
 
@@ -334,11 +335,15 @@ numberControl('h','Reduced Hubble parameter h',.4,1,.001,'H₀ = 100 h km s⁻¹
 numberControl('ns','Primordial spectral index ns',.8,1.2,.001,'Tilt of the primordial scalar spectrum.');
 numberControl('sigma8','Linear amplitude σ₈',.1,1.5,.001,'Gaussian ICs are normalized to this RMS before initial filtering and cutoff. Deterministic mode benchmarks use fixed amplitudes independent of σ₈.');
 numberControl('boxSize','Periodic box length L (Mpc/h)',50,2000,1,'Physical comoving box length. Coordinates in the sheet output are fractions of L.');
-numberControl('initialSmoothing','Initial-condition smoothing Rini (Mpc/h)',0,200,.1,'Gaussian initial power smoothing, separate from the observation smoothing below.');
+numberControl('initialSmoothing','Initial-condition smoothing Rini (Mpc/h)',0,200,.1,'Gaussian initial power smoothing, separate from the observation smoothing below. In the counterterms view the dual filters Ruv/Rir replace this single radius.');
 selectControl('ic', 'Initial conditions', [['waves','Deterministic modes'],['gaussian','Gaussian ΛCDM field']], 'Gaussian initial conditions draw mode-keyed random phases from the selected Eisenstein–Hu linear spectrum.');
 selectControl('transfer', 'Linear transfer function', [['smooth','EH98 no-wiggle (smooth)'],['bao','EH98 with BAO wiggles']], 'Used only by Gaussian initial conditions. The full Eisenstein–Hu fit adds the baryon acoustic oscillations and Silk damping; the smooth fit keeps only the broad baryon suppression. The power view overlays the filtered linear input spectrum.');
 numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed seed, used only by Gaussian initial conditions.');
-selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
+selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction. The counterterms view always compares orders 1–4 together.');
+activeControlGroup=controlSection('EFT dual-smoothing filters');
+numberControl('uvSmoothing','UV filter Ruv (Mpc/h)',0,200,.1,'Gaussian IC radius for the UV (mildly crossed) sheet. Default 5 Mpc/h targets ∼1% inverted tetrahedra at a=1 on the 32³ draft laboratory volume.');
+numberControl('irSmoothing','IR filter Rir (Mpc/h); −1 = auto σ/3',-1,200,.1,'Safer Gaussian IC radius. Set to −1 to auto-match continuum linear σ_IR ≈ σ_UV/3.');
+numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wavenumber retained when fitting P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR.');
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of √a-spaced canonical KDK time steps for the deconvolved TSC particle-mesh trajectory (≥ 64 recommended).');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Eulerian grid resolution used to deposit density, compute PDFs, and evaluate FFT power spectra.');
@@ -411,6 +416,16 @@ function run() {
   if (S.view === 'published') { retireWorker(); activeKey=''; current = null; execution=null; exportJsonButton.disabled=true; loadPublished(); return; }
   const key = physicsKey();
   if (lastResultKey === key && lastResult && !lastResult.error) {
+    if (S.view === 'counterterms' || lastResult.kind === 'eftCounterterms') {
+      cancelObsoleteForCachedResult();
+      current = lastResult;
+      execution = current.execution || null;
+      computedFor = key;
+      exportJsonButton.disabled = false;
+      status.textContent = 'Ready';
+      render();
+      return;
+    }
     const missing = selectedEstimators.filter(k => !lastResult.customSeries?.[k]);
     const pmNeededNow = missing.some(k => k.startsWith('pm:')) && !lastResult._pmComputed;
     if (missing.length === 0) {
@@ -432,6 +447,20 @@ function run() {
     }
   }
   const isExt = Boolean(extendedMode || requiresExtendedLimits(S));
+  if (S.view === 'counterterms') {
+    const job = {
+      key,
+      eftCounterterms: true,
+      estimatorsOnly: false,
+      allEstimators: [],
+      state: { ...S },
+      request: { ...coreRequest(S), ic: 'gaussian', estimators: [], extended: isExt },
+      policy: executionPolicy({ ...S, backend: 'cpu' }),
+    };
+    if (activeRequestId != null) { pendingRun = job; cancelActiveRun(); return; }
+    dispatchRun(job);
+    return;
+  }
   const job={key,estimatorsOnly:false,allEstimators:[...selectedEstimators],state:{...S},request:{...coreRequest(S),estimators:selectedEstimators,extended:isExt},policy:executionPolicy(S)};
   if(activeRequestId!=null){pendingRun=job;cancelActiveRun();return;}
   dispatchRun(job);
@@ -439,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261028d',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261029eft',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -479,7 +508,7 @@ function ensureWorker(){
   worker.onerror=(event)=>{clearTimeout(cancelTimer);cancelTimer=0;worker?.terminate();worker=null;activeRequestId=null;activePhase='';activeKey='';computedFor='';current={error:event.message||'Could not start the numerical worker.'};status.textContent='Run failed';render();};
   return worker;
 }
-function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;if(!job.estimatorsOnly)execution=null;exportJsonButton.disabled=true;status.textContent=job.estimatorsOnly?'Updating estimators…':'Preparing…';notice.textContent=job.estimatorsOnly?'Depositing newly selected trajectory/estimator fields from retained particle positions.':'Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,estimatorsOnly:Boolean(job.estimatorsOnly),allEstimators:job.allEstimators||null,state:job.request,policy:job.policy});}
+function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;if(!job.estimatorsOnly)execution=null;exportJsonButton.disabled=true;status.textContent=job.estimatorsOnly?'Updating estimators…':(job.eftCounterterms?'Fitting counterterms…':'Preparing…');notice.textContent=job.estimatorsOnly?'Depositing newly selected trajectory/estimator fields from retained particle positions.':(job.eftCounterterms?'Running dual-smoothing 1–4LPT P₁ sheet spectra and fitting the sound-speed counterterm.':'Preparing the ΛCDM trajectories and observations in a background worker.');w.postMessage({type:'run',requestId:id,key:job.key,estimatorsOnly:Boolean(job.estimatorsOnly),eftCounterterms:Boolean(job.eftCounterterms),allEstimators:job.allEstimators||null,state:job.request,policy:job.policy});}
 function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;worker.postMessage({type:'cancel',requestId:id});status.textContent='Updating calculation…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},8000);}
 function cancelObsoleteForCachedResult(){pendingRun=null;if(activeRequestId!=null&&worker){const id=activeRequestId;activeRequestId=null;activePhase='';activeKey='';clearTimeout(cancelTimer);cancelTimer=0;worker.postMessage({type:'cancel',requestId:id});}}
 function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
@@ -499,6 +528,7 @@ function explain() {
     rsd: 'Map the phase-space sheet into redshift space s = x + (v_∥ / aH) n̂ along the line of sight. Compare the exact redshifted simplicial sheet (which shell-crosses in redshift space wherever ∂_∥ v_∥ < −aH) with a simplex velocity-gradient Gaussian packet construction that fits a d-dimensional Gaussian to each simplex using the exact velocity divergence and velocity-gradient tensor across the simplex.',
     gradient: 'Compare the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch against a finite difference. This does not differentiate clipped or deposited density.',
     published: 'This panel replays packaged reference data. These curves retain the original simulation conditions and estimator conventions; the live laboratory runs the independently specified cosmology and resolution.',
+    counterterms: 'Dual Gaussian initial filters of the same seed: a UV radius near ∼1% inverted simplices and an IR radius with ∼⅓ the linear σ. Exact P₁ sheet deposits on the fine mesh yield P(k) for 1–4LPT; the leading counterterm −2 cₛ² k² P_lin absorbs the large-scale difference.',
   };
   viewHelp.textContent = messages[S.view];
 }
@@ -510,10 +540,16 @@ function panel(title, description = '') { const p = $('section', 'result-panel',
 function addPngButton(canvas, name) { const b = $('button', 'export-button', canvas.parentElement, 'Save PNG'); b.type = 'button'; b.setAttribute('aria-label', `Save ${name} image as PNG`); b.addEventListener('click', () => canvas.toBlob((blob) => { if (blob) { downloadBlob(blob, `${name}.png`); flash(b, 'Saved'); } })); }
 function canvasFor(parent, label, wide = false) { const c = $('canvas', `lab-canvas${wide ? ' canvas-wide' : ''}`, parent); c.width = 960; c.height = wide ? 560 : 680; c.setAttribute('role', 'img'); c.setAttribute('aria-label', label); return c; }
 function paintCanvas(c, draw) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); ctx.fillStyle = getComputedStyle(c).backgroundColor; ctx.fillRect(0,0,c.width,c.height); draw(ctx,c.width,c.height); }
-function hasScientificOutput(d){return Boolean(d&&(d.q||d.x||d.rho||d.spectra||d.pdf||d.gradient));}
+function hasScientificOutput(d){return Boolean(d&&(d.q||d.x||d.rho||d.spectra||d.pdf||d.gradient||d.kind==='eftCounterterms'||d.orders));}
 function guarded() {
   if (current?.error || current?.errorMessage) { setNotice(`The numerical worker could not complete this run: ${current.error || current.errorMessage}`, 'error'); return false; }
   if (!current) { setNotice('Waiting for the calculation to finish.'); return false; }
+  if (current.kind === 'eftCounterterms' || S.view === 'counterterms') {
+    const o4 = Array.isArray(current.orders) ? current.orders.find((o) => Number(o.order) === 4) : null;
+    const inv = o4?.uv?.invertedElementFraction;
+    setNotice(`Dual-smoothing counterterm draft: UV inverted fraction ${num(inv,4)}; IR auto/manual filter reported in the panel. Inverted elements are retained with positive stream mass.`, inv > 0 ? 'guard' : 'success');
+    return hasScientificOutput(current);
+  }
   if (current.guard?.ok === false) { const why = current.guard.reason || 'A simplex changed orientation.'; setNotice(`Post-crossing diagnostic: ${why} Minimum LPT vertex Jacobian: ${num(current.guard.minimumJacobian,4)}. Outputs are shown with caution; they no longer represent an everywhere one-to-one single-stream map.`, 'guard'); return hasScientificOutput(current); }
   if (current.error) { setNotice(current.error, 'error'); return false; }
   setNotice('Resolved LPT vertex and simplex orientations remained positive throughout the evolution.', 'success'); return true;
@@ -530,6 +566,7 @@ function render() {
   else if (S.view === 'pdf') renderPdfs(current);
   else if (S.view === 'rsd') renderRsd(current);
   else if (S.view === 'gradient') renderGradient(current);
+  else if (S.view === 'counterterms') renderCounterterms(current);
   showDiagnostics(current);
   renderTheory();
 }
@@ -2062,6 +2099,83 @@ function renderRsd(d) {
   }
 }
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the exact sheet-LPT tangent.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM-sheet tangent'}],{xlabel:'k [h/Mpc]',ylabel:`P₀ and ∂P₀/∂A [(Mpc/h)^${S.dim}]`,xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}
+function renderCounterterms(d) {
+  const filters = d.filters || {};
+  const orders = Array.isArray(d.orders) ? d.orders : [];
+  const p = panel(
+    'Lagrangian UV response and the sound-speed counterterm',
+    `Exact P₁ sheet deposits for 1–4LPT at two Gaussian IC filters of the same seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Fit window k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc under P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR. See the draft chapter for how this connects to LEFT / EFTofLSS.`,
+  );
+  if (!orders.length) {
+    $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
+    return;
+  }
+  const table = $('table', 'estimator-matrix-table', p);
+  const head = $('tr', '', table);
+  for (const h of ['Order', 'Inverted UV', 'Inverted IR', 'cₛ² [(Mpc/h)²]', 'Fit bins', 'Residual RMS']) {
+    $('th', '', head, h);
+  }
+  const colors = { 1: '#4C78A8', 2: '#F58518', 3: '#54A24B', 4: '#E45756' };
+  for (const entry of orders) {
+    const tr = $('tr', '', table);
+    const fit = entry.fit || {};
+    $('td', '', tr, `${entry.order}LPT`);
+    $('td', '', tr, num(entry.uv?.invertedElementFraction, 4));
+    $('td', '', tr, num(entry.ir?.invertedElementFraction, 4));
+    $('td', '', tr, num(fit.cs2, 5));
+    $('td', '', tr, String(fit.nBins ?? '—'));
+    $('td', '', tr, num(fit.residualRms, 4));
+  }
+  const o4 = orders.find((o) => Number(o.order) === 4) || orders[orders.length - 1];
+  const k = arr(o4.ir?.k);
+  const pkData = { k };
+  const seriesDefs = [];
+  for (const entry of orders) {
+    const ord = Number(entry.order);
+    const pir = arr(entry.ir?.power);
+    const delta = arr(entry.deltaPower);
+    pkData[`uv${ord}`] = pir.map((v, i) => Number(v) + Number(delta[i] || 0));
+    pkData[`ir${ord}`] = pir;
+    pkData[`ctr${ord}`] = arr(entry.irPlusCounterterm);
+    seriesDefs.push({ key: `uv${ord}`, label: `${ord}LPT UV`, color: colors[ord] || '#333', dash: '', width: 1.8 });
+    seriesDefs.push({ key: `ir${ord}`, label: `${ord}LPT IR`, color: colors[ord] || '#333', dash: '5 3', width: 1.5 });
+  }
+  if (arr(o4.irPlusCounterterm).length) {
+    seriesDefs.push({ key: 'ctr4', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', dash: '2 2', width: 2.2 });
+  }
+  const lin = d.linear?.ir;
+  if (lin?.k?.length && lin?.power?.length) {
+    pkData.lin = arr(lin.power);
+    pkData.kLin = arr(lin.k);
+    seriesDefs.push({ key: 'lin', xkey: 'kLin', label: 'P_lin^IR (realization)', color: '#9e9e9e', dash: '1 2', width: 1.2, noResample: true });
+  }
+  addPlot(p, 'P1 sheet power at dual smoothings', k, seriesDefs, {
+    xlabel: 'k [h/Mpc]',
+    ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
+    xlog: true,
+    ylog: true,
+  }, pkData);
+
+  const ratioData = { k };
+  const ratioDefs = [];
+  for (const entry of orders) {
+    const ord = Number(entry.order);
+    const pir = arr(entry.ir?.power);
+    const puv = arr(entry.deltaPower).map((dp, i) => Number(pir[i] || 0) + Number(dp || 0));
+    const pred = arr(entry.irPlusCounterterm);
+    ratioData[`raw${ord}`] = puv.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
+    ratioData[`fit${ord}`] = pred.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
+    ratioDefs.push({ key: `raw${ord}`, label: `${ord}LPT P_UV/P_IR`, color: colors[ord] || '#333', width: 1.6 });
+    if (ord === 4) ratioDefs.push({ key: `fit${ord}`, label: '4LPT (IR+ctr)/IR', color: '#B279A2', dash: '3 2', width: 2 });
+  }
+  addPlot(p, 'Cutoff response relative to the IR sheet', k, ratioDefs, {
+    xlabel: 'k [h/Mpc]',
+    ylabel: 'P / P_IR',
+    xlog: true,
+    ylog: false,
+  }, ratioData);
+  $('p', 'panel-note', p, d.convention || 'Convention: P_UV(k) ≈ P_IR(k) − 2 cₛ² k² P_lin^IR(k) with cₛ² in (Mpc/h)².');
+}
 function showDiagnostics(d) {
   if(!d)return;
   showExecution(d.execution||execution);
@@ -2176,7 +2290,7 @@ function showExecution(meta){
   const details=$('details','published-provenance execution-raw',backendMeta);$('summary','',details,'Full execution metadata');
   const pre=$('pre','execution-raw-json',details);pre.textContent=JSON.stringify(meta,null,2);
 }
-function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and simplex Jacobian determinants are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'The sheet maps use exact cell integration of the P₀ and P₁ phase-space sheet following LPT trajectories. The CIC and TSC maps treat the same vertices as point particles; their empty cells and discreteness are properties of the estimator, not of the dynamics.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare Lagrangian resolution and observation-grid changes independently.',variance:'By Parseval’s theorem, the variance σ²(R) of a smoothed periodic field equals the sum over discrete Fourier modes weighted by W²(kR). At R = 8 Mpc/h with a real-space Top-Hat window, the unfiltered linear spectrum reproduces σ₈²(D(a)/D(1))² by construction.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
+function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and simplex Jacobian determinants are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'The sheet maps use exact cell integration of the P₀ and P₁ phase-space sheet following LPT trajectories. The CIC and TSC maps treat the same vertices as point particles; their empty cells and discreteness are properties of the estimator, not of the dynamics.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare Lagrangian resolution and observation-grid changes independently.',variance:'By Parseval’s theorem, the variance σ²(R) of a smoothed periodic field equals the sum over discrete Fourier modes weighted by W²(kR). At R = 8 Mpc/h with a real-space Top-Hat window, the unfiltered linear spectrum reproduces σ₈²(D(a)/D(1))² by construction.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.',counterterms:'Dual Gaussian IC filters of one seed isolate the UV→IR power response. Exact P₁ deposits for 1–4LPT measure that response without shot noise; the fit −2 cₛ² k² P_lin is the leading LEFT/EFTofLSS counterterm that absorbs it on large scales. Residuals diagnose higher-derivative operators.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
 async function loadPublished(){
   replayLibrary = await listReplayLibrary();
   if(!publishedData){

@@ -47,7 +47,7 @@ self.onmessage = ({ data }) => {
 
 function start(data) {
   if (shuttingDown) return;
-  const task = { requestId: data.requestId, key: data.key, state: data.state, allEstimators: data.allEstimators || null, estimatorsOnly: Boolean(data.estimatorsOnly), policy: data.policy || { requested: 'cpu' }, cancelled: false, controller: null };
+  const task = { requestId: data.requestId, key: data.key, state: data.state, allEstimators: data.allEstimators || null, estimatorsOnly: Boolean(data.estimatorsOnly), eftCounterterms: Boolean(data.eftCounterterms), policy: data.policy || { requested: 'cpu' }, cancelled: false, controller: null };
   active = task;
   void execute(task).then((result) => {
     if (cancelled(task)) send({ type: 'cancelled', requestId: task.requestId });
@@ -72,7 +72,7 @@ function start(data) {
 async function execute(task) {
   const started = performance.now();
   const inBrowserWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
-  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261028d', import.meta.url) }) : init();
+  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261029eft', import.meta.url) }) : init();
   try { await wasmReady; } catch (error) { wasmReady = null; throw error; }
   const wasm = wasmApi;
   if (cancelled(task)) return {};
@@ -112,6 +112,40 @@ async function execute(task) {
     if (Array.isArray(task.allEstimators) && task.allEstimators.length) {
       task.state = { ...task.state, estimators: task.allEstimators };
     }
+  }
+
+  if (task.eftCounterterms) {
+    phase(task, 'direct', 'Comparing dual-smoothing P₁ sheet spectra and fitting the sound-speed counterterm.', false);
+    if (typeof wasm.eft_counterterms_run !== 'function') {
+      throw new Error('This Wasm build does not expose eft_counterterms_run; rebuild with make wasm.');
+    }
+    const uv = Number(task.state.uvSmoothing ?? 5);
+    const irRaw = Number(task.state.irSmoothing ?? -1);
+    const kMax = Number(task.state.kMaxFit ?? 0.08);
+    const req = { ...task.state };
+    delete req.uvSmoothing;
+    delete req.irSmoothing;
+    delete req.kMaxFit;
+    delete req.view;
+    delete req.weight;
+    delete req.backend;
+    delete req.rotate;
+    delete req.tilt;
+    delete req.pubmodel;
+    delete req.pubest;
+    delete req.pubr;
+    delete req.paired;
+    delete req.schemaVersion;
+    req.ic = 'gaussian';
+    req.estimators = [];
+    const raw = wasm.eft_counterterms_run(JSON.stringify(req), uv, irRaw, kMax);
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (result?.error) throw new Error(result.error);
+    const execution = cpuExecution(task.policy?.requested || 'cpu', 'Dual-smoothing counterterm comparison uses the f64 CPU P₁ sheet path.');
+    result.execution = execution;
+    result.guard = { ok: true, crossed: false, reason: 'Counterterm comparison reports inverted fractions per filter; it does not use the single-run orientation guard.' };
+    task.execution = execution;
+    return { result, durationMilliseconds: performance.now() - started, execution };
   }
 
   phase(task, 'preparing', 'Preparing trajectories, tangents, and exact observations.');
