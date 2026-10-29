@@ -1241,70 +1241,134 @@ function buildPdfSeriesCurve(pdfObj, weightKey, mode, targetBins, fallbackLogrho
   if (!srcLogrho.length || !srcVals.length) return { x: [], y: [] };
 
   if (mode === 'cdf' || mode === 'peaked_cdf') {
-    const probs = srcVals.map((v) => Math.max(0, (Number.isFinite(v) ? v : 0) * srcDy));
-    let tot = 0, firstIdx = -1, lastIdx = -1;
-    for (let i = 0; i < probs.length; i++) {
-      if (probs[i] > 0) {
-        if (firstIdx < 0) firstIdx = i;
-        lastIdx = i;
-        tot += probs[i];
+    const m = Math.min(srcLogrho.length, srcVals.length);
+    const probs = new Float64Array(m);
+    let tot = 0, firstSrc = -1, lastSrc = -1;
+    for (let i = 0; i < m; i++) {
+      const p = Math.max(0, (Number.isFinite(srcVals[i]) ? srcVals[i] : 0) * srcDy);
+      probs[i] = p;
+      if (p > 0) {
+        if (firstSrc < 0) firstSrc = i;
+        lastSrc = i;
+        tot += p;
       }
     }
-    if (!(tot > 0) || firstIdx < 0) {
-      return { x: baseLogrho.map((y) => Math.pow(10, y)), y: baseLogrho.map(() => NaN) };
+    if (!(tot > 0) || firstSrc < 0) {
+      return { x: [], y: [] };
     }
-    const uMin = srcLogrho[firstIdx] - 0.5 * srcDy;
-    const uMax = srcLogrho[lastIdx] + 0.5 * srcDy;
-    const uKnots = [uMin];
-    const fKnots = [0];
-    let cum = 0;
-    let yMed = 0.5 * (uMin + uMax);
-    let foundMed = false;
-    for (let i = firstIdx; i <= lastIdx; i++) {
+
+    const nb = Math.max(8, Math.round(Number.isFinite(targetBins) && targetBins >= 4 ? targetBins : 160));
+    const spanBins = lastSrc - firstSrc + 1;
+    const rebinCount = Math.max(4, Math.min(nb, spanBins));
+    const uLo = srcLogrho[firstSrc] - 0.5 * srcDy;
+    const uHi = srcLogrho[lastSrc] + 0.5 * srcDy;
+    const dstDy = (uHi - uLo) / rebinCount;
+    const dstProb = new Float64Array(rebinCount);
+    for (let i = firstSrc; i <= lastSrc; i++) {
       const p = probs[i];
-      const fPrev = cum / tot;
-      cum += p;
-      const fNext = Math.min(1, cum / tot);
-      const uLeft = srcLogrho[i] - 0.5 * srcDy;
-      const uRight = uLeft + srcDy;
+      if (!(p > 0)) continue;
+      const a = srcLogrho[i] - 0.5 * srcDy;
+      const b = a + srcDy;
+      const j0 = Math.max(0, Math.floor((a - uLo) / dstDy));
+      const j1 = Math.min(rebinCount - 1, Math.floor((b - 1e-14 - uLo) / dstDy));
+      for (let j = j0; j <= j1; j++) {
+        const c = uLo + j * dstDy;
+        const d = c + dstDy;
+        const overlap = Math.max(0, Math.min(b, d) - Math.max(a, c));
+        dstProb[j] += p * (overlap / srcDy);
+      }
+    }
+
+    let jFirst = -1, jLast = -1, dstTot = 0;
+    for (let j = 0; j < rebinCount; j++) {
+      if (dstProb[j] > 0) {
+        if (jFirst < 0) jFirst = j;
+        jLast = j;
+        dstTot += dstProb[j];
+      }
+    }
+    if (!(dstTot > 0) || jFirst < 0) return { x: [], y: [] };
+
+    // Exact median crossing yMed from the fine source histogram
+    let cumFine = 0, yMed = 0.5 * (uLo + uHi), foundMed = false;
+    for (let i = firstSrc; i <= lastSrc; i++) {
+      const p = probs[i];
+      const fPrev = cumFine / tot;
+      cumFine += p;
+      const fNext = Math.min(1, cumFine / tot);
       if (!foundMed && fNext >= 0.5) {
+        const uLeft = srcLogrho[i] - 0.5 * srcDy;
         const frac = fNext > fPrev ? (0.5 - fPrev) / (fNext - fPrev) : 0.5;
         yMed = uLeft + Math.max(0, Math.min(1, frac)) * srcDy;
         foundMed = true;
-      }
-      if (p > 0 || i === lastIdx) {
-        uKnots.push(uRight);
-        fKnots.push(fNext);
+        break;
       }
     }
-    const nb = Math.max(8, Math.round(Number.isFinite(targetBins) && targetBins >= 4 ? targetBins : 160));
-    const uQuery = [];
-    for (let j = 0; j < nb; j++) {
-      uQuery.push(uMin + (j / (nb - 1)) * (uMax - uMin));
-    }
-    if (mode === 'peaked_cdf' && foundMed) {
-      let near = false;
-      for (let j = 0; j < uQuery.length; j++) {
-        if (Math.abs(uQuery[j] - yMed) < 1e-7) { uQuery[j] = yMed; near = true; break; }
+
+    // Build knots strictly from the first non-zero bin center to the last non-zero bin center
+    const uKnots = [];
+    const fLeKnots = [];
+    const fGeKnots = [];
+    let cumBefore = 0;
+    for (let j = jFirst; j <= jLast; j++) {
+      const p = dstProb[j];
+      if (p > 0) {
+        const uCenter = uLo + (j + 0.5) * dstDy;
+        const fLe = (cumBefore + 0.5 * p) / dstTot;
+        const fGe = Math.max(0, dstTot - cumBefore - 0.5 * p) / dstTot;
+        if (fLe > 0 && (mode === 'cdf' || fGe > 0)) {
+          uKnots.push(uCenter);
+          fLeKnots.push(Math.min(1, fLe));
+          fGeKnots.push(Math.min(1, fGe));
+        }
       }
-      if (!near) {
-        uQuery.push(yMed);
-        uQuery.sort((a, b) => a - b);
+      cumBefore += p;
+    }
+    if (!uKnots.length) return { x: [], y: [] };
+
+    // If nb > uKnots.length, upsample smoothly in log-probability space strictly within [uKnots[0], uKnots[last]]
+    let uSample = uKnots.slice();
+    let fLeSample = fLeKnots.slice();
+    let fGeSample = fGeKnots.slice();
+    if (nb > uKnots.length && uKnots.length >= 2) {
+      const uStart = uKnots[0], uEnd = uKnots[uKnots.length - 1];
+      uSample = new Array(nb);
+      for (let k = 0; k < nb; k++) {
+        uSample[k] = uStart + (k / (nb - 1)) * (uEnd - uStart);
+      }
+      if (mode === 'peaked_cdf' && foundMed && yMed > uStart && yMed < uEnd) {
+        if (!uSample.some((u) => Math.abs(u - yMed) < 1e-7)) {
+          uSample.push(yMed);
+          uSample.sort((a, b) => a - b);
+        }
+      }
+      const logLe = pchipInterpolate(uKnots, fLeKnots.map((v) => Math.log10(v)), uSample);
+      const logGe = pchipInterpolate(uKnots, fGeKnots.map((v) => Math.log10(Math.max(1e-30, v))), uSample);
+      fLeSample = logLe.map((lv) => Math.min(1, Math.pow(10, lv)));
+      fGeSample = logGe.map((lv) => Math.min(1, Math.pow(10, lv)));
+    } else if (mode === 'peaked_cdf' && foundMed && uSample.length >= 2) {
+      const uStart = uSample[0], uEnd = uSample[uSample.length - 1];
+      if (yMed > uStart && yMed < uEnd && !uSample.some((u) => Math.abs(u - yMed) < 1e-7)) {
+        const insIdx = uSample.findIndex((u) => u > yMed);
+        if (insIdx > 0) {
+          uSample.splice(insIdx, 0, yMed);
+          fLeSample.splice(insIdx, 0, 0.5);
+          fGeSample.splice(insIdx, 0, 0.5);
+        }
       }
     }
-    const fVals = pchipInterpolate(uKnots, fKnots, uQuery);
-    const outX = new Array(uQuery.length);
-    const outY = new Array(uQuery.length);
-    for (let j = 0; j < uQuery.length; j++) {
-      const u = uQuery[j];
-      outX[j] = Math.pow(10, u);
-      const f = Math.max(0, Math.min(1, fVals[j]));
+
+    const outX = new Array(uSample.length);
+    const outY = new Array(uSample.length);
+    for (let k = 0; k < uSample.length; k++) {
+      const u = uSample[k];
+      outX[k] = Math.pow(10, u);
       if (mode === 'cdf') {
-        outY[j] = f;
-      } else if (foundMed && Math.abs(u - yMed) < 1e-9) {
-        outY[j] = 0.5;
+        outY[k] = fLeSample[k];
+      } else if (foundMed && Math.abs(u - yMed) < 1e-7) {
+        outY[k] = 0.5;
       } else {
-        outY[j] = Math.max(1e-30, Math.min(f, 1 - f));
+        outY[k] = Math.min(fLeSample[k], fGeSample[k]);
       }
     }
     return { x: outX, y: outY };
