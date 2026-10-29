@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261029disp',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261029plot',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -938,8 +938,22 @@ function addPlot(parent,title,x,seriesDefs,axes,d) {
   const xs=arr(x); if(!xs.length){$('p','panel-note',box,'This run did not return data for this chart.');return null;}
   const series=[]; for(const def of seriesDefs){const ys=arr(d?.[def.key] ?? d?.spectra?.[def.key] ?? d?.pdf?.[def.key] ?? d?.gradient?.[def.key]);const sx=arr(def.xkey?(d?.[def.xkey]??d?.spectra?.[def.xkey]??d?.gradient?.[def.xkey]):xs);if(ys.length&&sx.length)series.push({...def,x:sx.slice(0,Math.min(sx.length,ys.length)),y:ys.slice(0,Math.min(sx.length,ys.length)),label:def.label});}
   if(!series.length){$('p','panel-note',box,'The selected output did not include the requested curves.');return null;}
-  plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);plot.draw();
+  plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);
+  if (Array.isArray(axes?.markers) && axes.markers.length) plot.setMarkers(axes.markers);
+  plot.draw();
   return plot;
+}
+/** Keep (x,y) pairs with finite x in (0, kMax]; used to stop counterterm curves outside the fit window. */
+function clipSeriesToKMax(kArr, yArr, kMax) {
+  const k = arr(kArr), y = arr(yArr), outK = [], outY = [];
+  const lim = Number(kMax);
+  for (let i = 0; i < Math.min(k.length, y.length); i++) {
+    const ki = Number(k[i]), yi = Number(y[i]);
+    if (!(ki > 0) || !Number.isFinite(yi)) continue;
+    if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
+    outK.push(ki); outY.push(yi);
+  }
+  return { k: outK, y: outY };
 }
 function sheetPositiveRange(arrays) {
   let lo = Infinity, hi = 0;
@@ -2132,6 +2146,12 @@ function renderCounterterms(d) {
   }
   const o4 = orders.find((o) => Number(o.order) === 4) || orders[orders.length - 1];
   const k = arr(o4.ir?.k);
+  const kFit = Number(d.request?.kMaxFit ?? S.kMaxFit);
+  const kFitMark = Number.isFinite(kFit) && kFit > 0
+    ? [{ x: kFit, label: `k_max fit = ${num(kFit, 3)}`, color: '#697586' }]
+    : [];
+  // Companion P(k): only the readable trio — 4LPT UV (target), 4LPT IR (baseline),
+  // IR+counterterm inside the fit window — plus faint lower-order UV ghosts.
   const pkData = { k };
   const seriesDefs = [];
   for (const entry of orders) {
@@ -2139,45 +2159,83 @@ function renderCounterterms(d) {
     const pir = arr(entry.ir?.power);
     const delta = arr(entry.deltaPower);
     pkData[`uv${ord}`] = pir.map((v, i) => Number(v) + Number(delta[i] || 0));
-    pkData[`ir${ord}`] = pir;
-    pkData[`ctr${ord}`] = arr(entry.irPlusCounterterm);
-    seriesDefs.push({ key: `uv${ord}`, label: `${ord}LPT UV`, color: colors[ord] || '#333', dash: '', width: 1.8 });
-    seriesDefs.push({ key: `ir${ord}`, label: `${ord}LPT IR`, color: colors[ord] || '#333', dash: '5 3', width: 1.5 });
+    if (ord === 4) pkData[`ir${ord}`] = pir;
   }
-  if (arr(o4.irPlusCounterterm).length) {
-    seriesDefs.push({ key: 'ctr4', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', dash: '2 2', width: 2.2 });
+  for (const entry of orders) {
+    const ord = Number(entry.order);
+    if (ord === 4) continue;
+    seriesDefs.push({
+      key: `uv${ord}`, label: `${ord}LPT UV`, color: colors[ord] || '#333',
+      width: 1.1, opacity: 0.28, zOrder: 1, noResample: true,
+    });
   }
-  const lin = d.linear?.ir;
-  if (lin?.k?.length && lin?.power?.length) {
-    pkData.lin = arr(lin.power);
-    pkData.kLin = arr(lin.k);
-    seriesDefs.push({ key: 'lin', xkey: 'kLin', label: 'P_lin^IR (realization)', color: '#9e9e9e', dash: '1 2', width: 1.2, noResample: true });
+  seriesDefs.push({
+    key: 'uv4', label: '4LPT UV (target)', color: '#E45756',
+    width: 2.8, opacity: 1, zOrder: 4,
+  });
+  seriesDefs.push({
+    key: 'ir4', label: '4LPT IR (baseline)', color: '#4C78A8',
+    dash: '7 4', width: 2.2, opacity: 0.95, zOrder: 3,
+  });
+  const ctrClip = clipSeriesToKMax(k, arr(o4.irPlusCounterterm), kFit);
+  if (ctrClip.k.length) {
+    pkData.kCtr = ctrClip.k;
+    pkData.ctr4 = ctrClip.y;
+    seriesDefs.push({
+      key: 'ctr4', xkey: 'kCtr', label: '4LPT IR + −2 cₛ² k² P_lin (fit window)',
+      color: '#B279A2', width: 3.0, opacity: 1, zOrder: 5, noResample: true,
+    });
   }
-  addPlot(p, 'Companion: P1 sheet power at dual smoothings', k, seriesDefs, {
+  addPlot(p, 'Companion density P(k): UV target vs IR + counterterm', k, seriesDefs, {
     xlabel: 'k [h/Mpc]',
     ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
     xlog: true,
     ylog: true,
+    markers: kFitMark,
   }, pkData);
+  $('p', 'panel-note', p,
+    'Essentials only: thick red = 4LPT UV sheet, thick blue dashed = 4LPT IR sheet, thick purple = IR plus the fitted density counterterm (drawn only for k ≤ k_max). Faint thin lines are lower-order UV for context. The vertical marker is the fit window edge.');
 
-  const ratioData = { k };
+  // Ratio in the fit window: 4LPT UV/IR vs (IR+ctr)/IR; lower orders faint.
+  const ratioClip = clipSeriesToKMax(k, arr(o4.ir?.power), kFit);
+  const ratioData = { kFit: ratioClip.k };
   const ratioDefs = [];
   for (const entry of orders) {
     const ord = Number(entry.order);
     const pir = arr(entry.ir?.power);
     const puv = arr(entry.deltaPower).map((dp, i) => Number(pir[i] || 0) + Number(dp || 0));
-    const pred = arr(entry.irPlusCounterterm);
-    ratioData[`raw${ord}`] = puv.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
-    ratioData[`fit${ord}`] = pred.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
-    ratioDefs.push({ key: `raw${ord}`, label: `${ord}LPT P_UV/P_IR`, color: colors[ord] || '#333', width: 1.6 });
-    if (ord === 4) ratioDefs.push({ key: `fit${ord}`, label: '4LPT (IR+ctr)/IR', color: '#B279A2', dash: '3 2', width: 2 });
+    const raw = puv.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
+    const clipped = clipSeriesToKMax(k, raw, kFit);
+    ratioData[`raw${ord}`] = clipped.y;
+    if (ord < 4) {
+      ratioDefs.push({
+        key: `raw${ord}`, xkey: 'kFit', label: `${ord}LPT P_UV/P_IR`,
+        color: colors[ord] || '#333', width: 1.2, opacity: 0.3, zOrder: 1, noResample: true,
+      });
+    } else {
+      ratioDefs.push({
+        key: `raw${ord}`, xkey: 'kFit', label: '4LPT P_UV/P_IR',
+        color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true,
+      });
+      const pred = arr(entry.irPlusCounterterm);
+      const fitRatio = pred.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
+      const fitClip = clipSeriesToKMax(k, fitRatio, kFit);
+      ratioData.fit4 = fitClip.y;
+      ratioDefs.push({
+        key: 'fit4', xkey: 'kFit', label: '4LPT (IR+ctr)/IR',
+        color: '#B279A2', dash: '6 3', width: 2.8, opacity: 1, zOrder: 4, noResample: true,
+      });
+    }
   }
-  addPlot(p, 'Cutoff response relative to the IR sheet', k, ratioDefs, {
+  addPlot(p, 'Cutoff response in the fit window (k ≤ k_max)', ratioClip.k, ratioDefs, {
     xlabel: 'k [h/Mpc]',
     ylabel: 'P / P_IR',
     xlog: true,
     ylog: false,
+    markers: kFitMark,
   }, ratioData);
+  $('p', 'panel-note', p,
+    'Restricted to the fit window so the high-k filter roll-off no longer dominates the axis. Purple should track red if the density counterterm absorbs the UV−IR difference.');
 
   const resK = arr(o4.displacement?.residualPower?.k);
   const delK = arr(o4.displacement?.deltaPower?.k);
