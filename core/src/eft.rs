@@ -1,16 +1,21 @@
 //! Dual-smoothing Lagrangian UV response and the leading sound-speed counterterm.
 //!
 //! Two Gaussian initial filters of the same seed share long-wavelength phases. The
-//! difference of their nonlinear P1 sheet power at low *k* is the integrated response
-//! of the modes between the two cutoffs. The usual one-loop Lagrangian / Eulerian EFT
-//! counterterm −2 cₛ² k² P_lin absorbs that difference on large scales.
+//! difference of their nonlinear displacements at low *k* is the integrated response
+//! of the modes between the two cutoffs. Following Mirbabayi & Zaldarriaga (2016),
+//! the stress \(\tau\) sources a counterterm displacement; the leading operator used
+//! here is \(\widehat{\boldsymbol\psi}_{\rm ct}=-\alpha k^2\widehat{\boldsymbol\psi}_{\rm IR}\)
+//! (unit-box \(k\) scaled so \(\alpha\equiv c_s^2\) is in \((h^{-1}\mathrm{Mpc})^2\)).
+//! Residual vertex scatter after the deterministic fit is summarized as a stochastic
+//! displacement power that can seed an ensemble of consistent noise realizations.
 use crate::{
     cosmological::LinearSpectrum,
     fft::FftEngine,
     grid::Grid,
     laboratory::{self, LabRequest},
-    observables, sheet, spectra, Cosmo,
+    observables, rng::Rng, sheet, spectra, Cosmo,
 };
+use num_complex::Complex64 as C64;
 use serde_json::{json, Value};
 
 /// Least-squares fit of ΔP(k) ≈ −2 cₛ² k² P_lin(k) on bins with 0 < k ≤ k_max.
@@ -251,6 +256,291 @@ fn realized_linear_physical(
     )
 }
 
+/// Leading displacement counterterm in Fourier space: ψ_ct = −α k_phys² ψ.
+/// `alpha` is cₛ² in (Mpc/h)²; positions/displacements are in unit-box coordinates.
+pub fn apply_displacement_counterterm(
+    grid: &Grid,
+    eng: &mut FftEngine,
+    psi: &[f64],
+    alpha: f64,
+    box_size: f64,
+) -> Vec<f64> {
+    assert_eq!(psi.len(), grid.size * grid.dim);
+    let scale = alpha / box_size.powi(2); // −α k_phys² = −(α/L²) k_unit²
+    let mut out = vec![0.0; psi.len()];
+    for a in 0..grid.dim {
+        let mut component = vec![0.0; grid.size];
+        for id in 0..grid.size {
+            component[id] = psi[id * grid.dim + a];
+        }
+        let mut hat = eng.forward_real(&component);
+        for (idx, v) in hat.iter_mut().enumerate() {
+            let k2 = grid.k2(idx);
+            *v *= -scale * k2;
+        }
+        let real = eng.inverse_to_real(hat);
+        for id in 0..grid.size {
+            out[id * grid.dim + a] = real[id];
+        }
+    }
+    out
+}
+
+fn displacement_from_positions(grid: &Grid, x: &[f64]) -> Vec<f64> {
+    let mut psi = vec![0.0; x.len()];
+    for id in 0..grid.size {
+        let ijk = grid.unravel(id);
+        for a in 0..grid.dim {
+            let q = ijk[a] as f64 * grid.dx();
+            // Minimal-image displacement in the unit box.
+            let mut d = x[id * grid.dim + a] - q;
+            if d > 0.5 {
+                d -= 1.0;
+            }
+            if d < -0.5 {
+                d += 1.0;
+            }
+            psi[id * grid.dim + a] = d;
+        }
+    }
+    psi
+}
+
+fn vector_rms(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt()
+}
+
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// Fit α ≡ cₛ² so Δψ = ψ_UV − ψ_IR ≈ −α k_phys² ψ_IR on modes with k_phys ≤ k_max.
+#[derive(Clone, Debug)]
+pub struct DisplacementSoundSpeedFit {
+    pub cs2: f64,
+    pub k_max: f64,
+    pub n_modes: usize,
+    /// RMS of ψ_UV − ψ_IR (unit box) before the counterterm.
+    pub rms_before: f64,
+    /// RMS of ψ_UV − (ψ_IR + ψ_ct) after the fit.
+    pub rms_after: f64,
+    /// Cosine similarity between Δψ and ψ_ct over all components.
+    pub correlation: f64,
+    /// Fraction of Δψ variance explained by ψ_ct.
+    pub variance_explained: f64,
+}
+
+pub fn fit_displacement_sound_speed(
+    grid: &Grid,
+    eng: &mut FftEngine,
+    psi_uv: &[f64],
+    psi_ir: &[f64],
+    box_size: f64,
+    k_max: f64,
+) -> Option<DisplacementSoundSpeedFit> {
+    assert_eq!(psi_uv.len(), grid.size * grid.dim);
+    assert_eq!(psi_ir.len(), psi_uv.len());
+    let k_max_unit = k_max * box_size;
+    let mut sxx = 0.0;
+    let mut sxy = 0.0;
+    let mut n_modes = 0usize;
+    // Δψ ≈ −α k_phys² ψ_IR = −(α/L²) k_unit² ψ_IR  ⇒  y = −Δψ_hat, x = (k_unit²/L²) ψ_IR_hat
+    for a in 0..grid.dim {
+        let mut du = vec![0.0; grid.size];
+        let mut di = vec![0.0; grid.size];
+        for id in 0..grid.size {
+            du[id] = psi_uv[id * grid.dim + a] - psi_ir[id * grid.dim + a];
+            di[id] = psi_ir[id * grid.dim + a];
+        }
+        let hat_du = eng.forward_real(&du);
+        let hat_di = eng.forward_real(&di);
+        for idx in 1..grid.size {
+            let k = grid.k2(idx).sqrt();
+            if k > k_max_unit || k == 0.0 {
+                continue;
+            }
+            let k2_phys = (k / box_size).powi(2);
+            let x = hat_di[idx] * k2_phys;
+            let y = -hat_du[idx];
+            // Hermitian: weight positive half only via full sum of Re[x* conj y] with 1/2 for pairs.
+            sxx += x.norm_sqr();
+            sxy += (x.conj() * y).re;
+            n_modes += 1;
+        }
+    }
+    if n_modes < 4 || !(sxx > 0.) {
+        return None;
+    }
+    let cs2 = sxy / sxx;
+    let psi_ct = apply_displacement_counterterm(grid, eng, psi_ir, cs2, box_size);
+    let mut delta = vec![0.0; psi_uv.len()];
+    let mut resid = vec![0.0; psi_uv.len()];
+    for i in 0..psi_uv.len() {
+        delta[i] = psi_uv[i] - psi_ir[i];
+        resid[i] = psi_uv[i] - (psi_ir[i] + psi_ct[i]);
+    }
+    let rms_before = vector_rms(&delta);
+    let rms_after = vector_rms(&resid);
+    let corr_den = vector_rms(&delta) * vector_rms(&psi_ct);
+    let correlation = if corr_den > 0. {
+        dot(&delta, &psi_ct) / (delta.len() as f64 * corr_den)
+    } else {
+        0.0
+    };
+    let var_d = delta.iter().map(|v| v * v).sum::<f64>();
+    let var_r = resid.iter().map(|v| v * v).sum::<f64>();
+    let variance_explained = if var_d > 0. { 1.0 - var_r / var_d } else { 0.0 };
+    Some(DisplacementSoundSpeedFit {
+        cs2,
+        k_max,
+        n_modes,
+        rms_before,
+        rms_after,
+        correlation,
+        variance_explained,
+    })
+}
+
+/// Shell-averaged power of a vector field's components (unit-box), returned as physical k, P.
+fn vector_field_power(
+    grid: &Grid,
+    eng: &mut FftEngine,
+    field: &[f64],
+    box_size: f64,
+    nbins: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let edges = spectra::bin_edges(grid, nbins);
+    let mut ksum = vec![0.0; nbins];
+    let mut psum = vec![0.0; nbins];
+    let mut cnt = vec![0.0; nbins];
+    let lk0 = edges[0].ln();
+    let dlk = (edges[nbins] / edges[0]).ln() / nbins as f64;
+    let vol = box_size.powi(grid.dim as i32);
+    // Physical power of physical displacement: ψ_phys = ψ_unit L, P_phys = P_unit L² * L^d
+    // Unit-box auto-spectrum of one component uses norm L_unit^d / N^{2d} with L_unit=1.
+    let norm = 1.0 / (grid.size as f64).powi(2);
+    for a in 0..grid.dim {
+        let mut component = vec![0.0; grid.size];
+        for id in 0..grid.size {
+            component[id] = field[id * grid.dim + a];
+        }
+        let hat = eng.forward_real(&component);
+        for idx in 1..grid.size {
+            let k = grid.k2(idx).sqrt();
+            if k < edges[0] || k >= edges[nbins] {
+                continue;
+            }
+            let bi = (((k.ln() - lk0) / dlk).floor() as usize).min(nbins - 1);
+            ksum[bi] += k;
+            psum[bi] += hat[idx].norm_sqr() * norm;
+            cnt[bi] += 1.0;
+        }
+    }
+    let mut k = Vec::new();
+    let mut p = Vec::new();
+    let mut n = Vec::new();
+    for i in 0..nbins {
+        if cnt[i] > 0. {
+            k.push((ksum[i] / cnt[i]) / box_size);
+            // Summed over components already; convert unit-box displacement power to physical.
+            p.push((psum[i] / cnt[i]) * vol * box_size.powi(2));
+            n.push(cnt[i]);
+        }
+    }
+    (k, p, n)
+}
+
+/// Draw `n_realizations` Gaussian stochastic displacements with shell power matched to
+/// `template` (the residual after the deterministic counterterm), restricted to k ≤ k_max.
+pub fn draw_stochastic_displacement_ensemble(
+    grid: &Grid,
+    eng: &mut FftEngine,
+    residual: &[f64],
+    box_size: f64,
+    k_max: f64,
+    n_realizations: usize,
+    seed: u64,
+) -> Vec<Vec<f64>> {
+    let (k_shell, p_shell, _) =
+        vector_field_power(grid, eng, residual, box_size, laboratory::spectrum_bins(grid.n));
+    let k_max_unit = k_max * box_size;
+    let mut out = Vec::with_capacity(n_realizations);
+    for r in 0..n_realizations {
+        let mut rng = Rng::new(seed.wrapping_add(17 + 104729 * r as u64));
+        let mut field = vec![0.0; residual.len()];
+        for a in 0..grid.dim {
+            let mut hat = vec![C64::new(0.0, 0.0); grid.size];
+            for idx in 1..grid.size {
+                let ijk = grid.unravel(idx);
+                let mut conj_ijk = [0usize; 3];
+                for b in 0..grid.dim {
+                    conj_ijk[b] = if ijk[b] == 0 { 0 } else { grid.n - ijk[b] };
+                }
+                let j = grid.ravel(conj_ijk);
+                if j < idx {
+                    continue; // already filled as conjugate of a lower index
+                }
+                let k_unit = grid.k2(idx).sqrt();
+                if k_unit == 0.0 || k_unit > k_max_unit {
+                    continue;
+                }
+                let k_phys = k_unit / box_size;
+                let p = nearest_power(k_phys, &k_shell, &p_shell).max(0.0);
+                // Physical P → unit-box component variance: undo vol * L² and split over dim.
+                let p_unit =
+                    p / (box_size.powi(grid.dim as i32) * box_size.powi(2) * grid.dim as f64);
+                let sigma = (0.5 * p_unit).max(0.0).sqrt() * grid.size as f64;
+                let z = if j == idx {
+                    C64::new(rng.normal() * sigma * std::f64::consts::SQRT_2, 0.0)
+                } else {
+                    C64::new(rng.normal(), rng.normal()) * sigma
+                };
+                hat[idx] = z;
+                if j != idx {
+                    hat[j] = z.conj();
+                }
+            }
+            let real = eng.inverse_to_real(hat);
+            for id in 0..grid.size {
+                field[id * grid.dim + a] = real[id];
+            }
+        }
+        out.push(field);
+    }
+    out
+}
+
+/// Hard Fourier low-pass of a vector field: keep modes with |k|_unit ≤ k_max_unit.
+fn lowpass_vector_field(
+    grid: &Grid,
+    eng: &mut FftEngine,
+    field: &[f64],
+    k_max_unit: f64,
+) -> Vec<f64> {
+    let mut out = vec![0.0; field.len()];
+    for a in 0..grid.dim {
+        let mut component = vec![0.0; grid.size];
+        for id in 0..grid.size {
+            component[id] = field[id * grid.dim + a];
+        }
+        let mut hat = eng.forward_real(&component);
+        for (idx, v) in hat.iter_mut().enumerate() {
+            let k = grid.k2(idx).sqrt();
+            if idx != 0 && k > k_max_unit {
+                *v = C64::new(0.0, 0.0);
+            }
+        }
+        let real = eng.inverse_to_real(hat);
+        for id in 0..grid.size {
+            out[id * grid.dim + a] = real[id];
+        }
+    }
+    out
+}
+
 fn nearest_power(k: f64, ks: &[f64], ps: &[f64]) -> f64 {
     if ks.is_empty() || ps.is_empty() || !(k > 0.) {
         return 0.0;
@@ -366,14 +656,66 @@ pub fn run_dual_smoothing_counterterms(
             &sp_ir.nmodes,
             k_max,
         );
-        let cs2 = fit.as_ref().map(|f| f.cs2).unwrap_or(0.0);
+        let cs2_pk = fit.as_ref().map(|f| f.cs2).unwrap_or(0.0);
         let p_ir_plus_ctr: Vec<f64> = sp_ir
             .k
             .iter()
             .zip(sp_ir.p.iter())
             .zip(p_lin_on_ir.iter())
-            .map(|((&k, &pir), &pl)| pir - 2.0 * cs2 * k * k * pl)
+            .map(|((&k, &pir), &pl)| pir - 2.0 * cs2_pk * k * k * pl)
             .collect();
+
+        // Vertex-level displacement comparison (Mirbabayi–Zaldarriaga bookkeeping).
+        let psi_uv = displacement_from_positions(&c_uv.grid, &x_uv);
+        let psi_ir = displacement_from_positions(&c_ir.grid, &x_ir);
+        let mut eng_l = FftEngine::new(&c_uv.grid);
+        let disp_fit =
+            fit_displacement_sound_speed(&c_uv.grid, &mut eng_l, &psi_uv, &psi_ir, base.box_size, k_max);
+        let cs2_disp = disp_fit.as_ref().map(|f| f.cs2).unwrap_or(0.0);
+        let psi_ct =
+            apply_displacement_counterterm(&c_uv.grid, &mut eng_l, &psi_ir, cs2_disp, base.box_size);
+        let mut resid = vec![0.0; psi_uv.len()];
+        let mut delta = vec![0.0; psi_uv.len()];
+        for i in 0..psi_uv.len() {
+            delta[i] = psi_uv[i] - psi_ir[i];
+            resid[i] = psi_uv[i] - (psi_ir[i] + psi_ct[i]);
+        }
+        let (k_res, p_res, n_res) =
+            vector_field_power(&c_uv.grid, &mut eng_l, &resid, base.box_size, laboratory::spectrum_bins(c_uv.grid.n));
+        let (k_del, p_del, _) =
+            vector_field_power(&c_uv.grid, &mut eng_l, &delta, base.box_size, laboratory::spectrum_bins(c_uv.grid.n));
+        let ensemble = draw_stochastic_displacement_ensemble(
+            &c_uv.grid,
+            &mut eng_l,
+            &resid,
+            base.box_size,
+            k_max,
+            16,
+            base.seed.wrapping_add(order as u64 * 10007),
+        );
+        // Score coverage only on the fit band: low-pass Δψ − ψ_ct and the
+        // stochastic draws (which already have support only for k ≤ k_max).
+        let resid_lp = lowpass_vector_field(&c_uv.grid, &mut eng_l, &resid, k_max * base.box_size);
+        let mut covered = 0.0_f64;
+        let mut total = 0.0_f64;
+        for id in 0..c_uv.grid.size {
+            for a in 0..c_uv.grid.dim {
+                let idx = id * c_uv.grid.dim + a;
+                let target = resid_lp[idx];
+                let mut var = 0.0_f64;
+                for e in &ensemble {
+                    let d = e[idx];
+                    var += d * d;
+                }
+                var /= ensemble.len().max(1) as f64;
+                let sig = var.sqrt().max(1e-15);
+                if target.abs() <= sig {
+                    covered += 1.0;
+                }
+                total += 1.0;
+            }
+        }
+        let ensemble_coverage = covered / total.max(1.0);
 
         orders.push(json!({
             "order": order,
@@ -406,6 +748,26 @@ pub fn run_dual_smoothing_counterterms(
                 "residualRms": f.residual_rms,
                 "meanRelativeDelta": f.mean_relative_delta,
             })),
+            "displacement": {
+                "fit": disp_fit.as_ref().map(|f| json!({
+                    "cs2": f.cs2,
+                    "kMax": f.k_max,
+                    "nModes": f.n_modes,
+                    "rmsBefore": f.rms_before,
+                    "rmsAfter": f.rms_after,
+                    "rmsReduction": if f.rms_before > 0. { 1.0 - f.rms_after / f.rms_before } else { 0.0 },
+                    "correlation": f.correlation,
+                    "varianceExplained": f.variance_explained,
+                })),
+                "operator": "psi_ct(k) = -cs2 * k_phys^2 * psi_IR(k)",
+                "deltaPower": { "k": k_del, "power": p_del },
+                "residualPower": { "k": k_res, "power": p_res, "nmodes": n_res },
+                "stochastic": {
+                    "nRealizations": ensemble.len(),
+                    "ensembleCoverageWithin1Sigma": ensemble_coverage,
+                    "note": "Gaussian draws matched to residual displacement shell power for k<=kMax; deterministic CT is the ensemble mean.",
+                },
+            },
         }));
     }
 
@@ -443,6 +805,6 @@ pub fn run_dual_smoothing_counterterms(
             "ir": { "k": k_lin_ir, "power": p_lin_ir, "nmodes": n_lin_ir },
         },
         "orders": orders,
-        "convention": "P_UV(k) ≈ P_IR(k) - 2 cs2 k^2 P_lin^IR(k); cs2 in (Mpc/h)^2; P1 exact sheet deposit; no PM.",
+        "convention": "Displacement EFT (Mirbabayi & Zaldarriaga): psi_UV ≈ psi_IR - cs2 k^2 psi_IR on modes k<=kMax, plus a Gaussian stochastic residual ensemble matched to leftover displacement power. Density P(k) fit retained as a companion diagnostic.",
     }))
 }

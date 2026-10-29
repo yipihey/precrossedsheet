@@ -1,7 +1,10 @@
 use hcc_core::{
     eft::{
-        continuum_filtered_sigma, fit_sound_speed, match_sigma_ratio, run_dual_smoothing_counterterms,
+        apply_displacement_counterterm, continuum_filtered_sigma, fit_displacement_sound_speed,
+        fit_sound_speed, match_sigma_ratio, run_dual_smoothing_counterterms,
     },
+    fft::FftEngine,
+    grid::Grid,
     laboratory::LabRequest,
 };
 
@@ -131,6 +134,35 @@ fn dual_smoothing_p1_sheet_fits_finite_sound_speed_in_2d() {
 }
 
 #[test]
+fn displacement_counterterm_fit_reduces_vertex_rms() {
+    // Synthetic: ψ_UV = ψ_IR − α k_phys² ψ_IR with α = 40 (Mpc/h)² on a small grid.
+    let alpha = 40.0_f64;
+    let box_size = 300.0;
+    let grid = Grid::new(2, 32, 1.0);
+    let mut eng = FftEngine::new(&grid);
+    let mut psi_ir = vec![0.0; grid.size * 2];
+    for id in 0..grid.size {
+        let ijk = grid.unravel(id);
+        let x = ijk[0] as f64 * grid.dx();
+        let y = ijk[1] as f64 * grid.dx();
+        psi_ir[id * 2] = 0.01 * (2.0 * std::f64::consts::PI * x).sin();
+        psi_ir[id * 2 + 1] = 0.007 * (2.0 * std::f64::consts::PI * y).cos();
+    }
+    let psi_ct = apply_displacement_counterterm(&grid, &mut eng, &psi_ir, alpha, box_size);
+    let psi_uv: Vec<f64> = psi_ir.iter().zip(psi_ct.iter()).map(|(a, b)| a + b).collect();
+    let fit = fit_displacement_sound_speed(&grid, &mut eng, &psi_uv, &psi_ir, box_size, 0.2)
+        .expect("displacement fit");
+    assert!(
+        (fit.cs2 - alpha).abs() / alpha < 1e-6,
+        "recovered {} vs {}",
+        fit.cs2,
+        alpha
+    );
+    assert!(fit.rms_after < 1e-10 * fit.rms_before.max(1e-15));
+    assert!(fit.variance_explained > 0.999);
+}
+
+#[test]
 fn dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit() {
     // Draft laboratory contract on a 32³ sheet / 64³ P1 mesh: UV Rf=5 Mpc/h yields
     // ∼1% inverted Kuhn tetrahedra at a=1 for this seed; IR is auto-matched to σ/3.
@@ -167,4 +199,22 @@ fn dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit() {
     let ratio = out["filters"]["sigmaRatio"].as_f64().unwrap();
     assert!((ratio - 1.0 / 3.0).abs() < 0.02);
     assert!((out["filters"]["uvSmoothing"].as_f64().unwrap() - 5.0).abs() < 1e-12);
+    let disp = &o4["displacement"]["fit"];
+    assert!(disp.is_object(), "missing displacement fit");
+    let rms_before = disp["rmsBefore"].as_f64().unwrap();
+    let rms_after = disp["rmsAfter"].as_f64().unwrap();
+    assert!(rms_after < rms_before, "CT should reduce vertex RMS: {rms_after} vs {rms_before}");
+    assert!(
+        disp["varianceExplained"].as_f64().unwrap() > 0.05,
+        "deterministic CT should explain a measurable fraction of Δψ"
+    );
+    let cov = o4["displacement"]["stochastic"]["ensembleCoverageWithin1Sigma"]
+        .as_f64()
+        .unwrap();
+    // Band-limited residual vs isotropic Gaussian noise with matched shell power:
+    // structured Δψ yields coverage below the Gaussian 68% ideal, but well above zero.
+    assert!(
+        (0.2..=0.9).contains(&cov),
+        "stochastic 1σ coverage unexpected: {cov}"
+    );
 }

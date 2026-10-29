@@ -329,13 +329,21 @@ User request: a Quarto/laboratory draft studying how small-scale modes influence
 large-scale power via the sound-speed counterterm, using 1–4LPT, two Gaussian
 IC smoothings (∼1% inverted tetrahedra vs ∼⅓ the linear σ), fine-grid exact P1
 deposits, and a fit to the usual −2 cₛ² k² P_lin LEFT/EFTofLSS operator.
+Follow-up: fit and compare at the displacement/vertex level after Mirbabayi &
+Zaldarriaga (arXiv:1511.01889), and treat the residual after the deterministic
+counterterm as a stochastic ensemble with matched residual power.
 
 Implementation:
-- `core/src/eft.rs` fits cₛ², matches σ_IR/σ_UV, runs dual-smoothing P1 spectra.
+- `core/src/eft.rs` fits cₛ², matches σ_IR/σ_UV, runs dual-smoothing P1 spectra,
+  fits the leading displacement operator ψ_ct = −cₛ² k² ψ_IR on modes
+  k≤k_max, and draws a Gaussian stochastic residual ensemble from leftover
+  Δψ shell power.
 - Default UV radius R_UV=5 Mpc/h on the 32³/64³ draft volume (seed 7) yields
   ∼1% inverted Kuhn tetrahedra at a=1; R_IR auto-matches continuum σ/3
-  (≈17.2 Mpc/h). Convention P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR with cₛ² in
-  (Mpc/h)²; no PM trajectory enters this path.
-- Lab view `counterterms` (schema keys Ruv, Rir, kFit; Rir=-1 means auto).
+  (≈17.2 Mpc/h). Density companion: P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR.
+  Displacement primary: ψ_UV ≈ ψ_IR + ψ_ct + ψ_stoch. No PM trajectory enters
+  this path.
+- Lab view `counterterms` (schema keys Ruv, Rir, kFit; Rir=-1 means auto)
+  reports both density and vertex-level fits plus ensemble coverage.
 - Chapter `chapters/05-eft.qmd` is explicitly a draft pedagogical section with
   provenance tests; it does not claim a production LEFT calibration.

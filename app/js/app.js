@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261029eft',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261029disp',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -528,7 +528,7 @@ function explain() {
     rsd: 'Map the phase-space sheet into redshift space s = x + (v_∥ / aH) n̂ along the line of sight. Compare the exact redshifted simplicial sheet (which shell-crosses in redshift space wherever ∂_∥ v_∥ < −aH) with a simplex velocity-gradient Gaussian packet construction that fits a d-dimensional Gaussian to each simplex using the exact velocity divergence and velocity-gradient tensor across the simplex.',
     gradient: 'Compare the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch against a finite difference. This does not differentiate clipped or deposited density.',
     published: 'This panel replays packaged reference data. These curves retain the original simulation conditions and estimator conventions; the live laboratory runs the independently specified cosmology and resolution.',
-    counterterms: 'Dual Gaussian initial filters of the same seed: a UV radius near ∼1% inverted simplices and an IR radius with ∼⅓ the linear σ. Exact P₁ sheet deposits on the fine mesh yield P(k) for 1–4LPT; the leading counterterm −2 cₛ² k² P_lin absorbs the large-scale difference.',
+    counterterms: 'Dual Gaussian initial filters of the same seed: a UV radius near ∼1% inverted simplices and an IR radius with ∼⅓ the linear σ. The leading displacement counterterm ψ_ct = −cₛ² k² ψ_IR is fit on modes k≤k_max and scored vertex-by-vertex; leftover residual power seeds a Gaussian stochastic ensemble. Density P(k) is retained as a companion diagnostic.',
   };
   viewHelp.textContent = messages[S.view];
 }
@@ -2103,8 +2103,8 @@ function renderCounterterms(d) {
   const filters = d.filters || {};
   const orders = Array.isArray(d.orders) ? d.orders : [];
   const p = panel(
-    'Lagrangian UV response and the sound-speed counterterm',
-    `Exact P₁ sheet deposits for 1–4LPT at two Gaussian IC filters of the same seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Fit window k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc under P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR. See the draft chapter for how this connects to LEFT / EFTofLSS.`,
+    'Lagrangian UV response: displacement counterterm and stochastic residual',
+    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc; density P(k) is a companion diagnostic. Residual Δψ power seeds a Gaussian stochastic ensemble.`,
   );
   if (!orders.length) {
     $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
@@ -2112,19 +2112,23 @@ function renderCounterterms(d) {
   }
   const table = $('table', 'estimator-matrix-table', p);
   const head = $('tr', '', table);
-  for (const h of ['Order', 'Inverted UV', 'Inverted IR', 'cₛ² [(Mpc/h)²]', 'Fit bins', 'Residual RMS']) {
+  for (const h of ['Order', 'Inv. UV', 'Inv. IR', 'cₛ² disp.', 'RMS↓', 'Explained', '1σ cov.', 'cₛ² P(k)']) {
     $('th', '', head, h);
   }
   const colors = { 1: '#4C78A8', 2: '#F58518', 3: '#54A24B', 4: '#E45756' };
   for (const entry of orders) {
     const tr = $('tr', '', table);
-    const fit = entry.fit || {};
+    const fitPk = entry.fit || {};
+    const fitD = entry.displacement?.fit || {};
+    const stoch = entry.displacement?.stochastic || {};
     $('td', '', tr, `${entry.order}LPT`);
     $('td', '', tr, num(entry.uv?.invertedElementFraction, 4));
     $('td', '', tr, num(entry.ir?.invertedElementFraction, 4));
-    $('td', '', tr, num(fit.cs2, 5));
-    $('td', '', tr, String(fit.nBins ?? '—'));
-    $('td', '', tr, num(fit.residualRms, 4));
+    $('td', '', tr, num(fitD.cs2, 5));
+    $('td', '', tr, fitD.rmsReduction != null ? num(fitD.rmsReduction, 3) : '—');
+    $('td', '', tr, fitD.varianceExplained != null ? num(fitD.varianceExplained, 3) : '—');
+    $('td', '', tr, stoch.ensembleCoverageWithin1Sigma != null ? num(stoch.ensembleCoverageWithin1Sigma, 3) : '—');
+    $('td', '', tr, num(fitPk.cs2, 5));
   }
   const o4 = orders.find((o) => Number(o.order) === 4) || orders[orders.length - 1];
   const k = arr(o4.ir?.k);
@@ -2149,7 +2153,7 @@ function renderCounterterms(d) {
     pkData.kLin = arr(lin.k);
     seriesDefs.push({ key: 'lin', xkey: 'kLin', label: 'P_lin^IR (realization)', color: '#9e9e9e', dash: '1 2', width: 1.2, noResample: true });
   }
-  addPlot(p, 'P1 sheet power at dual smoothings', k, seriesDefs, {
+  addPlot(p, 'Companion: P1 sheet power at dual smoothings', k, seriesDefs, {
     xlabel: 'k [h/Mpc]',
     ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
     xlog: true,
@@ -2174,7 +2178,30 @@ function renderCounterterms(d) {
     xlog: true,
     ylog: false,
   }, ratioData);
-  $('p', 'panel-note', p, d.convention || 'Convention: P_UV(k) ≈ P_IR(k) − 2 cₛ² k² P_lin^IR(k) with cₛ² in (Mpc/h)².');
+
+  const resK = arr(o4.displacement?.residualPower?.k);
+  const delK = arr(o4.displacement?.deltaPower?.k);
+  if (resK.length || delK.length) {
+    const psiData = {};
+    const psiDefs = [];
+    if (delK.length) {
+      psiData.kDel = delK;
+      psiData.pDel = arr(o4.displacement.deltaPower.power);
+      psiDefs.push({ key: 'pDel', xkey: 'kDel', label: 'P_Δψ (UV−IR)', color: '#E45756', width: 1.8, noResample: true });
+    }
+    if (resK.length) {
+      psiData.kRes = resK;
+      psiData.pRes = arr(o4.displacement.residualPower.power);
+      psiDefs.push({ key: 'pRes', xkey: 'kRes', label: 'P_resid after CT', color: '#4C78A8', dash: '4 2', width: 1.8, noResample: true });
+    }
+    addPlot(p, 'Displacement power: cutoff response vs residual after ψ_ct', resK.length ? resK : delK, psiDefs, {
+      xlabel: 'k [h/Mpc]',
+      ylabel: 'P_ψ [(Mpc/h)⁵]',
+      xlog: true,
+      ylog: true,
+    }, psiData);
+  }
+  $('p', 'panel-note', p, d.convention || 'Convention: ψ_UV ≈ ψ_IR − cₛ² k² ψ_IR + stochastic residual with matched shell power.');
 }
 function showDiagnostics(d) {
   if(!d)return;
