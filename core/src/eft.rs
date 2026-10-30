@@ -560,13 +560,117 @@ fn nearest_power(k: f64, ks: &[f64], ps: &[f64]) -> f64 {
     ps[best.min(ps.len() - 1)]
 }
 
+/// Zero Fourier modes with physical |k| > `k_cut` (h/Mpc). Soft modes are left untouched.
+fn apply_sharp_k_physical(c: &mut Cosmo, k_cut: f64, box_size: f64) {
+    let k_cut_unit = k_cut * box_size;
+    let k2_cut = k_cut_unit * k_cut_unit;
+    for i in 0..c.grid.size {
+        if c.grid.k2(i) > k2_cut {
+            c.delta0_hat[i] = C64::new(0.0, 0.0);
+        }
+    }
+    c.sigma0 = c
+        .delta0_hat
+        .iter()
+        .map(|v| v.norm_sqr())
+        .sum::<f64>()
+        .sqrt()
+        / c.grid.size as f64;
+    c.lpt = None;
+}
+
+fn realized_hat_sigma(c: &Cosmo) -> f64 {
+    c.delta0_hat
+        .iter()
+        .map(|v| v.norm_sqr())
+        .sum::<f64>()
+        .sqrt()
+        / c.grid.size as f64
+}
+
+fn scale_delta0(c: &mut Cosmo, scale: f64) {
+    if (scale - 1.0).abs() <= 1e-14 {
+        return;
+    }
+    for v in c.delta0_hat.iter_mut() {
+        *v *= scale;
+    }
+    c.sigma0 *= scale;
+    c.lpt = None;
+}
+
+/// Mid-plane slice of one Cartesian displacement component (flat row-major).
+fn displacement_component_slice(grid: &Grid, psi: &[f64], component: usize) -> (usize, usize, Vec<f64>) {
+    let n = grid.n;
+    let dim = grid.dim;
+    let a = component.min(dim.saturating_sub(1));
+    match dim {
+        1 => {
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                out.push(psi[i * dim + a]);
+            }
+            (n, 1, out)
+        }
+        2 => {
+            let mut out = Vec::with_capacity(n * n);
+            for i in 0..n {
+                for j in 0..n {
+                    out.push(psi[(i * n + j) * dim + a]);
+                }
+            }
+            (n, n, out)
+        }
+        _ => {
+            let mid = n / 2;
+            let mut out = Vec::with_capacity(n * n);
+            for i in 0..n {
+                for j in 0..n {
+                    let id = (i * n + j) * n + mid;
+                    out.push(psi[id * dim + a]);
+                }
+            }
+            (n, n, out)
+        }
+    }
+}
+
+fn kmax_grid(k_max: f64) -> Vec<f64> {
+    // Log-ish ladder around the requested fit cutoff for operator stability.
+    let anchors = [
+        0.40 * k_max,
+        0.55 * k_max,
+        0.70 * k_max,
+        0.85 * k_max,
+        k_max,
+        1.15 * k_max,
+        1.35 * k_max,
+        1.60 * k_max,
+        2.00 * k_max,
+    ];
+    let mut out = Vec::new();
+    for &k in &anchors {
+        if k > 0.01 && k <= 0.5 {
+            if out.last().map(|&p: &f64| (k - p).abs() > 1e-6).unwrap_or(true) {
+                out.push(k);
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(k_max.max(0.02));
+    }
+    out
+}
+
 /// Dual-smoothing P1 sheet comparison across LPT orders 1–4 with a sound-speed fit.
 ///
 /// - `uv_smoothing`: Gaussian IC radius expected near ∼1% inverted simplices at a=1.
 /// - `ir_smoothing`: optional safer radius; when `None`, chosen so σ_IR ≈ σ_UV/3.
-/// - `match_linear_variance`: when true, scale the IR δ₀ (and rebuild LPT) so the
-///   continuum linear σ matches the UV value. This removes the overall amplitude
-///   mismatch from different filters; the *shape* of P_lin^IR still differs.
+/// - `match_linear_variance`: primary IR amplitude — when true, scale IR δ₀ so continuum
+///   linear σ matches UV. Both native and matched IR sheets are always evolved so the
+///   UI can show side-by-side density ratios.
+/// - `pair_fixed_soft`: sharp-k split of one unsmoothed white-noise seed with cuts
+///   k_UV = 1/R_UV and k_IR = 1/R_IR so every mode with |k| ≤ k_IR is bitwise identical.
 /// - Observation mesh should be finer than the Lagrangian lattice (P1 exact deposit).
 pub fn run_dual_smoothing_counterterms(
     base: &LabRequest,
@@ -574,6 +678,7 @@ pub fn run_dual_smoothing_counterterms(
     ir_smoothing: Option<f64>,
     k_max: f64,
     match_linear_variance: bool,
+    pair_fixed_soft: bool,
 ) -> Result<Value, String> {
     if base.ic != "gaussian" {
         return Err(
@@ -596,37 +701,98 @@ pub fn run_dual_smoothing_counterterms(
         })?,
     };
 
-    let sigma_uv = continuum_filtered_sigma(base, uv_smoothing, growth_ratio);
-    let sigma_ir_native = continuum_filtered_sigma(base, ir, growth_ratio);
-    let amplitude_scale = if match_linear_variance && sigma_ir_native > 0. {
-        sigma_uv / sigma_ir_native
+    let sigma_uv_cont = continuum_filtered_sigma(base, uv_smoothing, growth_ratio);
+    let sigma_ir_cont = continuum_filtered_sigma(base, ir, growth_ratio);
+    let match_scale = if sigma_ir_cont > 0. {
+        sigma_uv_cont / sigma_ir_cont
     } else {
         1.0
     };
-    let sigma_ir = sigma_ir_native * amplitude_scale;
 
-    let mut req_uv = base.clone();
-    req_uv.initial_smoothing = uv_smoothing;
-    req_uv.order = 4;
-    req_uv.estimators = vec![];
-    req_uv.validate()?;
+    let k_uv_cut = if uv_smoothing > 0. {
+        1.0 / uv_smoothing
+    } else {
+        1e6
+    };
+    let k_ir_cut = if ir > 0. { 1.0 / ir } else { 1e6 };
 
-    let mut req_ir = base.clone();
-    req_ir.initial_smoothing = ir;
-    req_ir.order = 4;
-    req_ir.estimators = vec![];
-    req_ir.validate()?;
+    // --- Build UV + native IR (+ matched IR clone) ---
+    let (mut c_uv, mut c_ir_native) = if pair_fixed_soft {
+        let mut req0 = base.clone();
+        req0.initial_smoothing = 0.0;
+        req0.order = 4;
+        req0.estimators = vec![];
+        req0.validate()?;
+        let mut uv = laboratory::initial_cosmo(&req0);
+        let mut ir_c = laboratory::initial_cosmo(&req0);
+        apply_sharp_k_physical(&mut uv, k_uv_cut, base.box_size);
+        apply_sharp_k_physical(&mut ir_c, k_ir_cut, base.box_size);
+        uv.build_lpt(4);
+        ir_c.build_lpt(4);
+        (uv, ir_c)
+    } else {
+        let mut req_uv = base.clone();
+        req_uv.initial_smoothing = uv_smoothing;
+        req_uv.order = 4;
+        req_uv.estimators = vec![];
+        req_uv.validate()?;
+        let mut req_ir = base.clone();
+        req_ir.initial_smoothing = ir;
+        req_ir.order = 4;
+        req_ir.estimators = vec![];
+        req_ir.validate()?;
+        (
+            laboratory::initial_conditions(&req_uv),
+            laboratory::initial_conditions(&req_ir),
+        )
+    };
 
-    let c_uv = laboratory::initial_conditions(&req_uv);
-    let mut c_ir = laboratory::initial_conditions(&req_ir);
-    if (amplitude_scale - 1.0).abs() > 1e-14 {
-        for v in c_ir.delta0_hat.iter_mut() {
-            *v *= amplitude_scale;
-        }
-        c_ir.sigma0 *= amplitude_scale;
-        c_ir.lpt = None;
-        c_ir.build_lpt(4);
-    }
+    // Matched-IR: same native realization, δ₀ scaled so continuum σ matches UV.
+    let mut c_ir_matched = laboratory::initial_cosmo(&{
+        let mut r = base.clone();
+        r.initial_smoothing = if pair_fixed_soft { 0.0 } else { ir };
+        r.order = 4;
+        r.estimators = vec![];
+        r
+    });
+    c_ir_matched.delta0_hat = c_ir_native.delta0_hat.clone();
+    c_ir_matched.sigma0 = c_ir_native.sigma0;
+    c_ir_matched.cosmo = c_ir_native.cosmo.clone();
+    c_ir_matched.keep_tensors = c_ir_native.keep_tensors;
+    scale_delta0(&mut c_ir_matched, match_scale);
+    c_ir_matched.build_lpt(4);
+
+    let sigma_uv_realized = realized_hat_sigma(&c_uv);
+    let sigma_ir_native_realized = realized_hat_sigma(&c_ir_native);
+    let sigma_ir_matched_realized = realized_hat_sigma(&c_ir_matched);
+    let amplitude_scale = if match_linear_variance {
+        match_scale
+    } else {
+        1.0
+    };
+    // Prefer continuum σ for Gaussian-filter bookkeeping (stable vs discrete
+    // sampling); for sharp-k pair-fixed, report realized discrete σ.
+    let (sigma_uv, sigma_ir_native, sigma_ir_matched, sigma_ir_primary) = if pair_fixed_soft {
+        let primary = if match_linear_variance {
+            sigma_ir_matched_realized
+        } else {
+            sigma_ir_native_realized
+        };
+        (
+            sigma_uv_realized,
+            sigma_ir_native_realized,
+            sigma_ir_matched_realized,
+            primary,
+        )
+    } else {
+        let primary = if match_linear_variance {
+            sigma_uv_cont
+        } else {
+            sigma_ir_cont
+        };
+        (sigma_uv_cont, sigma_ir_cont, sigma_uv_cont, primary)
+    };
+
     let a = if base.epoch == "scaleFactor" {
         base.scale_factor
     } else {
@@ -639,22 +805,48 @@ pub fn run_dual_smoothing_counterterms(
         c_uv.lpt_ref().growth.a_of_d(base.fraction * sc)
     };
     let d_uv = c_uv.lpt_ref().growth.d_of_a(a);
-    let d_ir = c_ir.lpt_ref().growth.d_of_a(a);
+    let d_ir_n = c_ir_native.lpt_ref().growth.d_of_a(a);
+    let d_ir_m = c_ir_matched.lpt_ref().growth.d_of_a(a);
     let eg = Grid::new(base.dim, base.mesh, 1.0);
 
-    let (k_lin_ir, p_lin_ir, n_lin_ir) = realized_linear_physical(&c_ir, &eg, d_ir, base.box_size);
     let (k_lin_uv, p_lin_uv, _) = realized_linear_physical(&c_uv, &eg, d_uv, base.box_size);
+    let (k_lin_ir_n, p_lin_ir_n, n_lin_ir) =
+        realized_linear_physical(&c_ir_native, &eg, d_ir_n, base.box_size);
+    let (k_lin_ir_m, p_lin_ir_m, _) =
+        realized_linear_physical(&c_ir_matched, &eg, d_ir_m, base.box_size);
 
+    let c_ir_primary: &Cosmo = if match_linear_variance {
+        &c_ir_matched
+    } else {
+        &c_ir_native
+    };
+    let d_ir = if match_linear_variance { d_ir_m } else { d_ir_n };
+    let (k_lin_ir, p_lin_ir) = if match_linear_variance {
+        (k_lin_ir_m.clone(), p_lin_ir_m.clone())
+    } else {
+        (k_lin_ir_n.clone(), p_lin_ir_n.clone())
+    };
+
+    let k_sweep = kmax_grid(k_max);
     let mut orders = Vec::new();
+    let mut slice_preview: Option<Value> = None;
+
     for order in 1..=4 {
         let x_uv = laboratory::evaluate_lpt_positions(&c_uv, d_uv, order);
-        let x_ir = laboratory::evaluate_lpt_positions(&c_ir, d_ir, order);
+        let x_ir = laboratory::evaluate_lpt_positions(c_ir_primary, d_ir, order);
+        let x_ir_n = laboratory::evaluate_lpt_positions(&c_ir_native, d_ir_n, order);
+        let x_ir_m = laboratory::evaluate_lpt_positions(&c_ir_matched, d_ir_m, order);
+
         let (inv_n_uv, inv_m_uv) = inverted_fractions(&c_uv.grid, &x_uv);
-        let (inv_n_ir, inv_m_ir) = inverted_fractions(&c_ir.grid, &x_ir);
+        let (inv_n_ir, inv_m_ir) = inverted_fractions(&c_ir_primary.grid, &x_ir);
         let rho_uv = density_p1(&c_uv.grid, &x_uv, base.mesh);
-        let rho_ir = density_p1(&c_ir.grid, &x_ir, base.mesh);
+        let rho_ir = density_p1(&c_ir_primary.grid, &x_ir, base.mesh);
+        let rho_ir_n = density_p1(&c_ir_native.grid, &x_ir_n, base.mesh);
+        let rho_ir_m = density_p1(&c_ir_matched.grid, &x_ir_m, base.mesh);
         let sp_uv = spectrum_physical(&rho_uv, &eg, base.box_size);
         let sp_ir = spectrum_physical(&rho_ir, &eg, base.box_size);
+        let sp_ir_n = spectrum_physical(&rho_ir_n, &eg, base.box_size);
+        let sp_ir_m = spectrum_physical(&rho_ir_m, &eg, base.box_size);
 
         let p_uv_on_ir: Vec<f64> = sp_ir
             .k
@@ -666,6 +858,37 @@ pub fn run_dual_smoothing_counterterms(
             .iter()
             .map(|&k| nearest_power(k, &k_lin_ir, &p_lin_ir))
             .collect();
+        let p_uv_on_n: Vec<f64> = sp_ir_n
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &sp_uv.k, &sp_uv.p))
+            .collect();
+        let p_lin_uv_on_n: Vec<f64> = sp_ir_n
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &k_lin_uv, &p_lin_uv))
+            .collect();
+        let p_lin_n_on_n: Vec<f64> = sp_ir_n
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &k_lin_ir_n, &p_lin_ir_n))
+            .collect();
+        let p_uv_on_m: Vec<f64> = sp_ir_m
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &sp_uv.k, &sp_uv.p))
+            .collect();
+        let p_lin_uv_on_m: Vec<f64> = sp_ir_m
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &k_lin_uv, &p_lin_uv))
+            .collect();
+        let p_lin_m_on_m: Vec<f64> = sp_ir_m
+            .k
+            .iter()
+            .map(|&k| nearest_power(k, &k_lin_ir_m, &p_lin_ir_m))
+            .collect();
+
         let fit = fit_sound_speed(
             &sp_ir.k,
             &p_uv_on_ir,
@@ -683,25 +906,102 @@ pub fn run_dual_smoothing_counterterms(
             .map(|((&k, &pir), &pl)| pir - 2.0 * cs2_pk * k * k * pl)
             .collect();
 
+        let ratio_native: Vec<f64> = sp_ir_n
+            .k
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if sp_ir_n.p[i] > 0. {
+                    p_uv_on_n[i] / sp_ir_n.p[i]
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let ratio_matched: Vec<f64> = sp_ir_m
+            .k
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if sp_ir_m.p[i] > 0. {
+                    p_uv_on_m[i] / sp_ir_m.p[i]
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let lin_ratio_native: Vec<f64> = sp_ir_n
+            .k
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if p_lin_n_on_n[i] > 0. {
+                    p_lin_uv_on_n[i] / p_lin_n_on_n[i]
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let lin_ratio_matched: Vec<f64> = sp_ir_m
+            .k
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if p_lin_m_on_m[i] > 0. {
+                    p_lin_uv_on_m[i] / p_lin_m_on_m[i]
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let filter_corr_native: Vec<f64> = ratio_native
+            .iter()
+            .zip(lin_ratio_native.iter())
+            .map(|(&r, &lr)| if lr > 0. { r / lr } else { 0.0 })
+            .collect();
+        let filter_corr_matched: Vec<f64> = ratio_matched
+            .iter()
+            .zip(lin_ratio_matched.iter())
+            .map(|(&r, &lr)| if lr > 0. { r / lr } else { 0.0 })
+            .collect();
+
         // Vertex-level displacement comparison (Mirbabayi–Zaldarriaga bookkeeping).
         let psi_uv = displacement_from_positions(&c_uv.grid, &x_uv);
-        let psi_ir = displacement_from_positions(&c_ir.grid, &x_ir);
+        let psi_ir = displacement_from_positions(&c_ir_primary.grid, &x_ir);
         let mut eng_l = FftEngine::new(&c_uv.grid);
-        let disp_fit =
-            fit_displacement_sound_speed(&c_uv.grid, &mut eng_l, &psi_uv, &psi_ir, base.box_size, k_max);
+        let disp_fit = fit_displacement_sound_speed(
+            &c_uv.grid,
+            &mut eng_l,
+            &psi_uv,
+            &psi_ir,
+            base.box_size,
+            k_max,
+        );
         let cs2_disp = disp_fit.as_ref().map(|f| f.cs2).unwrap_or(0.0);
         let psi_ct =
             apply_displacement_counterterm(&c_uv.grid, &mut eng_l, &psi_ir, cs2_disp, base.box_size);
         let mut resid = vec![0.0; psi_uv.len()];
         let mut delta = vec![0.0; psi_uv.len()];
+        let mut psi_ir_ct = vec![0.0; psi_uv.len()];
         for i in 0..psi_uv.len() {
             delta[i] = psi_uv[i] - psi_ir[i];
             resid[i] = psi_uv[i] - (psi_ir[i] + psi_ct[i]);
+            psi_ir_ct[i] = psi_ir[i] + psi_ct[i];
         }
-        let (k_res, p_res, n_res) =
-            vector_field_power(&c_uv.grid, &mut eng_l, &resid, base.box_size, laboratory::spectrum_bins(c_uv.grid.n));
-        let (k_del, p_del, _) =
-            vector_field_power(&c_uv.grid, &mut eng_l, &delta, base.box_size, laboratory::spectrum_bins(c_uv.grid.n));
+        let (k_res, p_res, n_res) = vector_field_power(
+            &c_uv.grid,
+            &mut eng_l,
+            &resid,
+            base.box_size,
+            laboratory::spectrum_bins(c_uv.grid.n),
+        );
+        let (k_del, p_del, _) = vector_field_power(
+            &c_uv.grid,
+            &mut eng_l,
+            &delta,
+            base.box_size,
+            laboratory::spectrum_bins(c_uv.grid.n),
+        );
         let ensemble = draw_stochastic_displacement_ensemble(
             &c_uv.grid,
             &mut eng_l,
@@ -711,8 +1011,6 @@ pub fn run_dual_smoothing_counterterms(
             16,
             base.seed.wrapping_add(order as u64 * 10007),
         );
-        // Score coverage only on the fit band: low-pass Δψ − ψ_ct and the
-        // stochastic draws (which already have support only for k ≤ k_max).
         let resid_lp = lowpass_vector_field(&c_uv.grid, &mut eng_l, &resid, k_max * base.box_size);
         let mut covered = 0.0_f64;
         let mut total = 0.0_f64;
@@ -734,6 +1032,57 @@ pub fn run_dual_smoothing_counterterms(
             }
         }
         let ensemble_coverage = covered / total.max(1.0);
+
+        // k_max stability sweep — refit only (no re-LPT).
+        let mut sweep = Vec::new();
+        for &km in &k_sweep {
+            let df =
+                fit_displacement_sound_speed(&c_uv.grid, &mut eng_l, &psi_uv, &psi_ir, base.box_size, km);
+            let pf = fit_sound_speed(
+                &sp_ir.k,
+                &p_uv_on_ir,
+                &sp_ir.p,
+                &p_lin_on_ir,
+                &sp_ir.nmodes,
+                km,
+            );
+            sweep.push(json!({
+                "kMax": km,
+                "cs2Disp": df.as_ref().map(|f| f.cs2),
+                "cs2Pk": pf.as_ref().map(|f| f.cs2),
+                "rmsReduction": df.as_ref().map(|f| {
+                    if f.rms_before > 0. { 1.0 - f.rms_after / f.rms_before } else { 0.0 }
+                }),
+                "varianceExplained": df.as_ref().map(|f| f.variance_explained),
+                "nModes": df.as_ref().map(|f| f.n_modes),
+                "nBins": pf.as_ref().map(|f| f.n_bins),
+            }));
+        }
+
+        if order == 4 {
+            let (nx, ny, uv_sl) = displacement_component_slice(&c_uv.grid, &psi_uv, 0);
+            let (_, _, ir_ct_sl) = displacement_component_slice(&c_uv.grid, &psi_ir_ct, 0);
+            let mut draw_slices = Vec::new();
+            for (di, draw) in ensemble.iter().take(3).enumerate() {
+                let mut full = psi_ir_ct.clone();
+                for i in 0..full.len() {
+                    full[i] += draw[i];
+                }
+                let (_, _, sl) = displacement_component_slice(&c_uv.grid, &full, 0);
+                draw_slices.push(json!({ "index": di, "psiX": sl }));
+            }
+            slice_preview = Some(json!({
+                "order": 4,
+                "component": "psi_x",
+                "plane": if c_uv.grid.dim >= 3 { "z=n/2" } else { "full" },
+                "nx": nx,
+                "ny": ny,
+                "uv": uv_sl,
+                "irPlusCt": ir_ct_sl,
+                "draws": draw_slices,
+                "note": "2D mid-plane of the first Cartesian displacement component. Draws = IR+CT+stochastic residual.",
+            }));
+        }
 
         orders.push(json!({
             "order": order,
@@ -759,6 +1108,21 @@ pub fn run_dual_smoothing_counterterms(
             },
             "deltaPower": sp_ir.k.iter().enumerate().map(|(i, _)| p_uv_on_ir[i] - sp_ir.p[i]).collect::<Vec<_>>(),
             "irPlusCounterterm": p_ir_plus_ctr,
+            "amplitudeCompare": {
+                "native": {
+                    "k": sp_ir_n.k,
+                    "ratio": ratio_native,
+                    "linearRatio": lin_ratio_native,
+                    "filterCorrectedRatio": filter_corr_native,
+                },
+                "matched": {
+                    "k": sp_ir_m.k,
+                    "ratio": ratio_matched,
+                    "linearRatio": lin_ratio_matched,
+                    "filterCorrectedRatio": filter_corr_matched,
+                },
+            },
+            "kMaxSweep": sweep,
             "fit": fit.as_ref().map(|f| json!({
                 "cs2": f.cs2,
                 "nBins": f.n_bins,
@@ -789,6 +1153,10 @@ pub fn run_dual_smoothing_counterterms(
         }));
     }
 
+    // Silence unused mut on c_uv after construction path.
+    let _ = &mut c_uv;
+    let _ = &mut c_ir_native;
+
     Ok(json!({
         "kind": "eftCounterterms",
         "request": {
@@ -811,27 +1179,42 @@ pub fn run_dual_smoothing_counterterms(
             "irSmoothing": ir,
             "kMaxFit": k_max,
             "matchLinearVariance": match_linear_variance,
+            "pairFixedSoft": pair_fixed_soft,
         },
         "filters": {
             "uvSmoothing": uv_smoothing,
             "irSmoothing": ir,
             "sigmaLinUv": sigma_uv,
+            "sigmaLinUvContinuum": sigma_uv_cont,
+            "sigmaLinUvRealized": sigma_uv_realized,
             "sigmaLinIrNative": sigma_ir_native,
-            "sigmaLinIr": sigma_ir,
-            "sigmaRatio": if sigma_uv > 0. { sigma_ir / sigma_uv } else { 0.0 },
+            "sigmaLinIrMatched": sigma_ir_matched,
+            "sigmaLinIrNativeRealized": sigma_ir_native_realized,
+            "sigmaLinIrMatchedRealized": sigma_ir_matched_realized,
+            "sigmaLinIr": sigma_ir_primary,
+            "sigmaRatio": if sigma_uv > 0. { sigma_ir_primary / sigma_uv } else { 0.0 },
             "matchLinearVariance": match_linear_variance,
             "amplitudeScale": amplitude_scale,
-            "note": if match_linear_variance {
-                "IR δ0 scaled by σ_UV/σ_IR(native) before LPT so continuum linear variances match. Soft-mode IR power is boosted above UV; P_lin shapes still differ."
+            "matchScale": match_scale,
+            "pairFixedSoft": pair_fixed_soft,
+            "kUvCut": if pair_fixed_soft { Some(k_uv_cut) } else { None },
+            "kIrCut": if pair_fixed_soft { Some(k_ir_cut) } else { None },
+            "note": if pair_fixed_soft {
+                "Sharp-k pair-fixed soft modes: shared white noise with k_cut = 1/R. Modes |k|≤k_IR are identical in UV and IR."
+            } else if match_linear_variance {
+                "Primary IR δ0 scaled by σ_UV/σ_IR(native) before LPT. Native and matched density ratios both returned for side-by-side comparison."
             } else {
-                "Native filtered amplitudes (no σ matching). Density UV/IR partly reflects linear filter mismatch."
+                "Primary uses native filtered amplitudes. Matched-σ density ratios also returned for side-by-side comparison."
             },
         },
         "linear": {
             "uv": { "k": k_lin_uv, "power": p_lin_uv },
             "ir": { "k": k_lin_ir, "power": p_lin_ir, "nmodes": n_lin_ir },
+            "irNative": { "k": k_lin_ir_n, "power": p_lin_ir_n },
+            "irMatched": { "k": k_lin_ir_m, "power": p_lin_ir_m },
         },
         "orders": orders,
-        "convention": "Displacement EFT (Mirbabayi & Zaldarriaga): psi_UV ≈ psi_IR - cs2 k^2 psi_IR on modes k<=kMax, plus a Gaussian stochastic residual ensemble matched to leftover displacement power. Density P(k) fit retained as a companion diagnostic.",
+        "slicePreview": slice_preview,
+        "convention": "Displacement EFT (Mirbabayi & Zaldarriaga): psi_UV ≈ psi_IR - cs2 k^2 psi_IR on modes k<=kMax, plus a Gaussian stochastic residual ensemble matched to leftover displacement power. Density P(k) fit retained as a companion diagnostic. Both native and matched-σ IR ratios are returned; kMaxSweep refits without re-LPT.",
     }))
 }

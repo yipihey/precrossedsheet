@@ -343,7 +343,7 @@ selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'
 activeControlGroup=controlSection('EFT dual-smoothing filters');
 numberControl('uvSmoothing','UV filter Ruv (Mpc/h)',0,200,.1,'Gaussian IC radius for the UV (mildly crossed) sheet. Default 5 Mpc/h targets ∼1% inverted tetrahedra at a=1 on the 32³ draft laboratory volume.');
 numberControl('irSmoothing','IR filter Rir (Mpc/h); −1 = auto σ/3',-1,200,.1,'Safer Gaussian IC radius. Set to −1 to auto-match continuum linear σ_IR ≈ σ_UV/3.');
-numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wavenumber retained when fitting P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR.');
+numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wavenumber retained when fitting P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR. A stability sweep around this value is always reported.');
 {
   const mlvWrap = $('label', 'control-field', activeControlGroup);
   const mlvRow = $('span', 'control-top', mlvWrap);
@@ -352,7 +352,7 @@ numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wave
   mlvCb.type = 'checkbox';
   mlvCb.checked = Boolean(S.matchLinearVariance);
   mlvCb.setAttribute('aria-label', 'Scale IR initial conditions so continuum linear σ matches UV');
-  $('small', 'control-help', mlvWrap, 'Removes the overall amplitude mismatch from different Gaussian filters before LPT. Soft-mode IR power is boosted above UV; P_lin shapes still differ. Prefer this when isolating dynamical UV→IR response.');
+  $('small', 'control-help', mlvWrap, 'Primary IR amplitude convention. Both native and matched density ratios are always returned for side-by-side comparison. Soft-mode IR power is boosted above UV when on; P_lin shapes still differ.');
   mlvCb.addEventListener('change', () => {
     S.matchLinearVariance = mlvCb.checked;
     S = normalizeState(S);
@@ -360,6 +360,23 @@ numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wave
     changed(true);
   });
   controlHandles.matchLinearVariance = { set: (v) => { mlvCb.checked = Boolean(v); }, el: mlvCb };
+}
+{
+  const pfsWrap = $('label', 'control-field', activeControlGroup);
+  const pfsRow = $('span', 'control-top', pfsWrap);
+  $('span', 'control-name', pfsRow, 'Pair-fixed soft modes (sharp-k split)');
+  const pfsCb = $('input', '', pfsRow);
+  pfsCb.type = 'checkbox';
+  pfsCb.checked = Boolean(S.pairFixedSoft);
+  pfsCb.setAttribute('aria-label', 'Use sharp-k pair-fixed soft modes instead of Gaussian filters');
+  $('small', 'control-help', pfsWrap, 'Shared white-noise seed with sharp cuts k_UV = 1/R_UV and k_IR = 1/R_IR. Every mode with |k| ≤ k_IR is bitwise identical in UV and IR — cleaner than total-σ matching for isolating hard-mode response.');
+  pfsCb.addEventListener('change', () => {
+    S.pairFixedSoft = pfsCb.checked;
+    S = normalizeState(S);
+    controls.sync();
+    changed(true);
+  });
+  controlHandles.pairFixedSoft = { set: (v) => { pfsCb.checked = Boolean(v); }, el: pfsCb };
 }
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of √a-spaced canonical KDK time steps for the deconvolved TSC particle-mesh trajectory (≥ 64 recommended).');
@@ -485,7 +502,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261030mlv',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030lab',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -2158,15 +2175,46 @@ function renderCounterterms(d) {
   const filters = d.filters || {};
   const orders = Array.isArray(d.orders) ? d.orders : [];
   const matched = Boolean(filters.matchLinearVariance);
+  const pairFixed = Boolean(filters.pairFixedSoft);
   const ampScale = Number(filters.amplitudeScale ?? 1);
+  const filterKind = pairFixed
+    ? `sharp-k pair-fixed soft modes (k_UV = ${num(filters.kUvCut, 4)}, k_IR = ${num(filters.kIrCut, 4)} h/Mpc)`
+    : 'two Gaussian IC filters of one seed';
   const p = panel(
     'Lagrangian UV response: displacement counterterm and stochastic residual',
-    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}${matched ? `, scaled ×${num(ampScale,4)} from native ${num(filters.sigmaLinIrNative,4)}` : ''}, ratio ${num(filters.sigmaRatio,4)}). ${matched ? 'Match-linear-variance is ON. ' : ''}Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc. Density charts include the linear filter curves and are clipped to the fit window.`,
+    `Exact P₁ sheets for 1–4LPT at ${filterKind}. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}${matched ? `, scaled ×${num(ampScale,4)} from native ${num(filters.sigmaLinIrNative,4)}` : ''}, ratio ${num(filters.sigmaRatio,4)}). ${matched ? 'Match-linear-variance is ON for the primary IR. ' : ''}Both native and matched density ratios are shown below. Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc.`,
   );
   if (!orders.length) {
     $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
     return;
   }
+  const csvBtn = $('button', 'export-button', p, 'Export cₛ² table CSV');
+  csvBtn.type = 'button';
+  csvBtn.setAttribute('aria-label', 'Download fitted sound-speed table and k_max sweep as CSV');
+  csvBtn.addEventListener('click', () => {
+    const lines = ['order,inv_uv,inv_ir,cs2_disp,rms_reduction,variance_explained,coverage_1sig,cs2_pk,k_max'];
+    for (const entry of orders) {
+      const fitPk = entry.fit || {};
+      const fitD = entry.displacement?.fit || {};
+      const stoch = entry.displacement?.stochastic || {};
+      lines.push([
+        entry.order, entry.uv?.invertedElementFraction, entry.ir?.invertedElementFraction,
+        fitD.cs2, fitD.rmsReduction, fitD.varianceExplained, stoch.ensembleCoverageWithin1Sigma,
+        fitPk.cs2, fitPk.kMax ?? d.request?.kMaxFit,
+      ].map((v) => (v == null || Number.isNaN(Number(v)) ? '' : String(v))).join(','));
+    }
+    lines.push('');
+    lines.push('order,k_max,cs2_disp,cs2_pk,rms_reduction,variance_explained,n_modes,n_bins');
+    for (const entry of orders) {
+      for (const sw of (entry.kMaxSweep || [])) {
+        lines.push([
+          entry.order, sw.kMax, sw.cs2Disp, sw.cs2Pk, sw.rmsReduction, sw.varianceExplained, sw.nModes, sw.nBins,
+        ].map((v) => (v == null || Number.isNaN(Number(v)) ? '' : String(v))).join(','));
+      }
+    }
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `eft-cs2-Ruv${num(filters.uvSmoothing, 2)}-Rir${num(filters.irSmoothing, 2)}-kmax${num(d.request?.kMaxFit, 3)}.csv`);
+    flash(csvBtn, 'Saved');
+  });
   const table = $('table', 'estimator-matrix-table', p);
   const head = $('tr', '', table);
   for (const h of ['Order', 'Inv. UV', 'Inv. IR', 'cₛ² disp.', 'RMS↓', 'Explained', '1σ cov.', 'cₛ² P(k)']) {
@@ -2279,6 +2327,75 @@ function renderCounterterms(d) {
       ? 'Grey dotted = linear filter ratio after σ matching (soft IR is boosted). Red = nonlinear UV/IR; purple = IR+ctr. Departure of red from grey is dynamical.'
       : 'Grey dotted = pure linear filter UV/IR. Green = filter-corrected nonlinear ratio (should sit near 1 if dynamics add no extra). Purple tracks red if the density CT absorbs the raw UV−IR difference.');
 
+  // Side-by-side native vs matched amplitude conventions (always computed).
+  const amp = o4.amplitudeCompare || {};
+  const kn = arr(amp.native?.k);
+  const rn = arr(amp.native?.ratio);
+  const cn = arr(amp.native?.filterCorrectedRatio);
+  const km = arr(amp.matched?.k);
+  const rm = arr(amp.matched?.ratio);
+  const cm = arr(amp.matched?.filterCorrectedRatio);
+  if (kn.length && km.length) {
+    const sideWinN = clipAlignedToKMax(kn, [rn, cn], kFit);
+    const sideWinM = clipAlignedToKMax(km, [rm, cm], kFit);
+    // Resample matched onto native k grid for a shared plot when lengths differ.
+    const kSide = sideWinN.k;
+    const interp = (xk, yk, xq) => xq.map((x) => {
+      const xx = Number(x);
+      if (!(xx > 0) || !xk.length) return NaN;
+      let best = 0, bd = Infinity;
+      for (let j = 0; j < xk.length; j++) {
+        const dln = Math.abs(Math.log(Number(xk[j])) - Math.log(xx));
+        if (dln < bd) { bd = dln; best = j; }
+      }
+      return Number(yk[best]);
+    });
+    const rmOn = interp(sideWinM.k, sideWinM.y[0], kSide);
+    const cmOn = interp(sideWinM.k, sideWinM.y[1], kSide);
+    addPlot(p, 'Side-by-side: native vs matched-σ UV/IR ratios', kSide, [
+      { key: 'unity', xkey: 'kS', label: '1', color: '#9e9e9e', dash: '2 3', width: 1.1, opacity: 0.65, zOrder: 1, noResample: true },
+      { key: 'rn', xkey: 'kS', label: 'native P_UV/P_IR', color: '#E45756', width: 2.4, opacity: 1, zOrder: 3, noResample: true },
+      { key: 'rm', xkey: 'kS', label: 'matched-σ P_UV/P_IR', color: '#F58518', dash: '6 3', width: 2.4, opacity: 0.95, zOrder: 3, noResample: true },
+      { key: 'cn', xkey: 'kS', label: 'native filter-corrected', color: '#54A24B', width: 2.0, opacity: 0.9, zOrder: 4, noResample: true },
+      { key: 'cm', xkey: 'kS', label: 'matched filter-corrected', color: '#4C78A8', dash: '5 3', width: 2.0, opacity: 0.9, zOrder: 4, noResample: true },
+    ], {
+      xlabel: 'k [h/Mpc]',
+      ylabel: 'P_UV / P_IR',
+      xlog: true,
+      ylog: false,
+      markers: kFitMark,
+    }, {
+      kS: kSide,
+      rn: sideWinN.y[0],
+      cn: sideWinN.y[1],
+      rm: rmOn,
+      cm: cmOn,
+      unity: kSide.map(() => 1),
+    });
+    $('p', 'panel-note', p,
+      'One run, both amplitude conventions. Red/orange = raw UV/IR; green/blue = divided by the linear filter ratio. Primary displacement fit uses the Match-linear-variance toggle.');
+  }
+
+  // k_max stability sweep (4LPT).
+  const sweep = Array.isArray(o4.kMaxSweep) ? o4.kMaxSweep : [];
+  if (sweep.length) {
+    const kSw = sweep.map((s) => Number(s.kMax));
+    const csD = sweep.map((s) => Number(s.cs2Disp));
+    const csP = sweep.map((s) => Number(s.cs2Pk));
+    addPlot(p, 'Operator stability: fitted cₛ² vs k_max', kSw, [
+      { key: 'csD', xkey: 'kSw', label: 'cₛ² displacement', color: '#4C78A8', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+      { key: 'csP', xkey: 'kSw', label: 'cₛ² density P(k)', color: '#B279A2', dash: '6 3', width: 2.4, opacity: 0.9, zOrder: 2, noResample: true },
+    ], {
+      xlabel: 'fit k_max [h/Mpc]',
+      ylabel: 'cₛ² [(Mpc/h)²]',
+      xlog: false,
+      ylog: false,
+      markers: kFitMark,
+    }, { kSw, csD, csP });
+    $('p', 'panel-note', p,
+      'Refits only — no re-LPT. A flat plateau near the chosen k_max means the operator is robust; a strong drift warns that the window is contaminated by higher-derivative or stochastic terms.');
+  }
+
   // Fractional residual after the density CT (same window).
   const residFrac = puv4.map((v, i) => {
     const ir = Number(pir4[i]), ct = Number(pct4[i]);
@@ -2357,6 +2474,64 @@ function renderCounterterms(d) {
       $('p', 'panel-note', p,
         'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
     }
+  }
+  // Stochastic displacement slice: UV vs IR+CT vs a few IR+CT+noise draws.
+  const slice = d.slicePreview;
+  if (slice && Array.isArray(slice.uv) && slice.nx && slice.ny) {
+    const nx = Number(slice.nx), ny = Number(slice.ny);
+    const fields = [
+      { label: 'ψ_UV', data: arr(slice.uv), color: '#E45756' },
+      { label: 'ψ_IR + ψ_ct', data: arr(slice.irPlusCt), color: '#4C78A8' },
+    ];
+    for (const draw of (slice.draws || []).slice(0, 3)) {
+      fields.push({ label: `draw ${Number(draw.index) + 1}`, data: arr(draw.psiX), color: '#54A24B' });
+    }
+    const block = $('div', 'panel-plot', p);
+    $('h3', 'panel-subheading', block, `Stochastic displacement slice (${slice.component || 'ψ_x'}, ${slice.plane || 'mid-plane'})`);
+    const row = $('div', '', block);
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.gap = '10px';
+    row.style.alignItems = 'flex-start';
+    let vmin = Infinity, vmax = -Infinity;
+    for (const f of fields) {
+      for (const v of f.data) {
+        const x = Number(v);
+        if (Number.isFinite(x)) { vmin = Math.min(vmin, x); vmax = Math.max(vmax, x); }
+      }
+    }
+    if (!(vmax > vmin)) { vmin = -1; vmax = 1; }
+    const span = vmax - vmin || 1;
+    for (const f of fields) {
+      const cell = $('div', '', row);
+      $('div', 'panel-note', cell, f.label).style.margin = '0 0 4px';
+      const c = $('canvas', 'lab-canvas canvas-square', cell);
+      const side = Math.min(220, Math.max(120, 8 * Math.max(nx, ny)));
+      c.width = side; c.height = side;
+      c.setAttribute('role', 'img');
+      c.setAttribute('aria-label', f.label);
+      const ctx = c.getContext('2d');
+      const off = document.createElement('canvas');
+      off.width = nx; off.height = ny;
+      const octx = off.getContext('2d');
+      const img = octx.createImageData(nx, ny);
+      const buf = img.data;
+      for (let i = 0; i < nx * ny; i++) {
+        const t = (Number(f.data[i]) - vmin) / span;
+        const u = Math.max(0, Math.min(1, t));
+        // Coolwarm-ish: blue → white → red
+        const r = Math.round(255 * Math.min(1, 2 * u));
+        const b = Math.round(255 * Math.min(1, 2 * (1 - u)));
+        const g = Math.round(255 * (1 - Math.abs(2 * u - 1)));
+        const o = i * 4;
+        buf[o] = r; buf[o + 1] = g; buf[o + 2] = b; buf[o + 3] = 255;
+      }
+      octx.putImageData(img, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(off, 0, 0, side, side);
+    }
+    $('p', 'panel-note', block,
+      slice.note || 'Shared color scale across panels. Green draws are IR+CT plus independent residual noise matched to leftover displacement shell power.');
   }
   $('p', 'panel-note', p, d.convention || 'Convention: ψ_UV ≈ ψ_IR − cₛ² k² ψ_IR + stochastic residual with matched shell power.');
 }
