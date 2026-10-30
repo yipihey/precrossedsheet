@@ -1242,12 +1242,14 @@ pub fn lab_run(request: &str) -> String {
 
 /// Dual-smoothing P1 sheet power spectra (orders 1–4) with a sound-speed fit.
 /// Pass `ir_smoothing < 0` to auto-match σ_IR ≈ σ_UV / 3.
+/// When `match_linear_variance` is true, scale IR δ₀ so continuum σ matches UV.
 #[wasm_bindgen]
 pub fn eft_counterterms_run(
     request: &str,
     uv_smoothing: f64,
     ir_smoothing: f64,
     k_max: f64,
+    match_linear_variance: bool,
 ) -> String {
     let req: crate::laboratory::LabRequest = match serde_json::from_str(request) {
         Ok(v) => v,
@@ -1261,7 +1263,13 @@ pub fn eft_counterterms_run(
     } else {
         Some(ir_smoothing)
     };
-    match crate::eft::run_dual_smoothing_counterterms(&req, uv_smoothing, ir, k_max) {
+    match crate::eft::run_dual_smoothing_counterterms(
+        &req,
+        uv_smoothing,
+        ir,
+        k_max,
+        match_linear_variance,
+    ) {
         Ok(v) => v.to_string(),
         Err(e) => serde_json::json!({"error": e}).to_string(),
     }

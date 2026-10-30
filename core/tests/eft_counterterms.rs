@@ -82,7 +82,7 @@ fn dual_smoothing_p1_sheet_fits_finite_sound_speed_in_2d() {
         ..Default::default()
     };
     let uv = 5.0;
-    let out = run_dual_smoothing_counterterms(&base, uv, None, 0.08).expect("dual run");
+    let out = run_dual_smoothing_counterterms(&base, uv, None, 0.08, false).expect("dual run");
     assert_eq!(out["kind"], "eftCounterterms");
     let ratio = out["filters"]["sigmaRatio"].as_f64().unwrap();
     assert!(
@@ -185,7 +185,7 @@ fn dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit() {
         estimators: vec![],
         ..Default::default()
     };
-    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08).expect("3d dual");
+    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false).expect("3d dual");
     let o4 = &out["orders"][3];
     let inv = o4["uv"]["invertedElementFraction"].as_f64().unwrap();
     assert!(
@@ -216,5 +216,58 @@ fn dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit() {
     assert!(
         (0.2..=0.9).contains(&cov),
         "stochastic 1σ coverage unexpected: {cov}"
+    );
+}
+
+#[test]
+fn match_linear_variance_scales_ir_sigma_to_uv() {
+    let base = LabRequest {
+        dim: 2,
+        n: 32,
+        mesh: 64,
+        force_mesh: 32,
+        ic: "gaussian".into(),
+        seed: 42,
+        box_size: 300.,
+        initial_cutoff: 4,
+        epoch: "scaleFactor".into(),
+        scale_factor: 1.0,
+        fraction: 1.0,
+        order: 4,
+        steps: 32,
+        smoothing: 0.0,
+        transfer: "smooth".into(),
+        estimators: vec![],
+        ..Default::default()
+    };
+    let native = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false).expect("native");
+    let matched = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, true).expect("matched");
+    let s_uv = matched["filters"]["sigmaLinUv"].as_f64().unwrap();
+    let s_ir = matched["filters"]["sigmaLinIr"].as_f64().unwrap();
+    let s_ir_native = matched["filters"]["sigmaLinIrNative"].as_f64().unwrap();
+    let amp = matched["filters"]["amplitudeScale"].as_f64().unwrap();
+    assert!(matched["filters"]["matchLinearVariance"].as_bool().unwrap());
+    assert!((s_ir / s_uv - 1.0).abs() < 1e-10, "matched σ_IR/σ_UV={}", s_ir / s_uv);
+    assert!((amp - s_uv / s_ir_native).abs() < 1e-10, "amplitude scale {amp}");
+    assert!(
+        (native["filters"]["sigmaRatio"].as_f64().unwrap() - 1.0 / 3.0).abs() < 0.02,
+        "native still at σ/3"
+    );
+    // After matching, IR linear power at the lowest bin should exceed UV (soft modes boosted).
+    let k_ir = matched["linear"]["ir"]["k"][0].as_f64().unwrap();
+    let p_ir = matched["linear"]["ir"]["power"][0].as_f64().unwrap();
+    let mut best = 0usize;
+    let mut bd = 1e99;
+    for (j, kv) in matched["linear"]["uv"]["k"].as_array().unwrap().iter().enumerate() {
+        let d = (kv.as_f64().unwrap().ln() - k_ir.ln()).abs();
+        if d < bd {
+            bd = d;
+            best = j;
+        }
+    }
+    let p_uv = matched["linear"]["uv"]["power"][best].as_f64().unwrap();
+    assert!(
+        p_ir > p_uv,
+        "matched IR soft power should exceed UV: IR={p_ir} UV={p_uv}"
     );
 }

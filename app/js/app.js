@@ -344,6 +344,23 @@ activeControlGroup=controlSection('EFT dual-smoothing filters');
 numberControl('uvSmoothing','UV filter Ruv (Mpc/h)',0,200,.1,'Gaussian IC radius for the UV (mildly crossed) sheet. Default 5 Mpc/h targets ∼1% inverted tetrahedra at a=1 on the 32³ draft laboratory volume.');
 numberControl('irSmoothing','IR filter Rir (Mpc/h); −1 = auto σ/3',-1,200,.1,'Safer Gaussian IC radius. Set to −1 to auto-match continuum linear σ_IR ≈ σ_UV/3.');
 numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wavenumber retained when fitting P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR.');
+{
+  const mlvWrap = $('label', 'control-field', activeControlGroup);
+  const mlvRow = $('span', 'control-top', mlvWrap);
+  $('span', 'control-name', mlvRow, 'Match linear variance (scale IR δ₀ up to σ_UV)');
+  const mlvCb = $('input', '', mlvRow);
+  mlvCb.type = 'checkbox';
+  mlvCb.checked = Boolean(S.matchLinearVariance);
+  mlvCb.setAttribute('aria-label', 'Scale IR initial conditions so continuum linear σ matches UV');
+  $('small', 'control-help', mlvWrap, 'Removes the overall amplitude mismatch from different Gaussian filters before LPT. Soft-mode IR power is boosted above UV; P_lin shapes still differ. Prefer this when isolating dynamical UV→IR response.');
+  mlvCb.addEventListener('change', () => {
+    S.matchLinearVariance = mlvCb.checked;
+    S = normalizeState(S);
+    controls.sync();
+    changed(true);
+  });
+  controlHandles.matchLinearVariance = { set: (v) => { mlvCb.checked = Boolean(v); }, el: mlvCb };
+}
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of √a-spaced canonical KDK time steps for the deconvolved TSC particle-mesh trajectory (≥ 64 recommended).');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Eulerian grid resolution used to deposit density, compute PDFs, and evaluate FFT power spectra.');
@@ -468,7 +485,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261030gate',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030mlv',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -2140,9 +2157,11 @@ function renderGradient(d) {const p=panel('Initial-amplitude response at fixed e
 function renderCounterterms(d) {
   const filters = d.filters || {};
   const orders = Array.isArray(d.orders) ? d.orders : [];
+  const matched = Boolean(filters.matchLinearVariance);
+  const ampScale = Number(filters.amplitudeScale ?? 1);
   const p = panel(
     'Lagrangian UV response: displacement counterterm and stochastic residual',
-    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc. Density charts are clipped to that fit window (UV, IR, IR+ctr only); residual Δψ power seeds the stochastic ensemble.`,
+    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}${matched ? `, scaled ×${num(ampScale,4)} from native ${num(filters.sigmaLinIrNative,4)}` : ''}, ratio ${num(filters.sigmaRatio,4)}). ${matched ? 'Match-linear-variance is ON. ' : ''}Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc. Density charts include the linear filter curves and are clipped to the fit window.`,
   );
   if (!orders.length) {
     $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
@@ -2176,13 +2195,43 @@ function renderCounterterms(d) {
   const pir4 = arr(o4.ir?.power);
   const puv4 = arr(o4.deltaPower).map((dp, i) => Number(pir4[i] || 0) + Number(dp || 0));
   const pct4 = arr(o4.irPlusCounterterm);
-  // Absolute P(k) only inside the fit window — three aligned curves, no high-k cliff.
-  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4], kFit, true);
-  const pkData = { kWin: pkWin.k, uv4: pkWin.y[0], ir4: pkWin.y[1], ctr4: pkWin.y[2] };
+  // Absolute P(k) in the fit window: nonlinear trio + faint linear filter curves.
+  const linUvK = arr(d.linear?.uv?.k);
+  const linUvP = arr(d.linear?.uv?.power);
+  const linIrK = arr(d.linear?.ir?.k);
+  const linIrP = arr(d.linear?.ir?.power);
+  const linUvOnIr = k.map((ki) => {
+    const kk = Number(ki);
+    if (!(kk > 0) || !linUvK.length) return NaN;
+    let best = 0, bd = Infinity;
+    for (let j = 0; j < linUvK.length; j++) {
+      const dln = Math.abs(Math.log(Number(linUvK[j])) - Math.log(kk));
+      if (dln < bd) { bd = dln; best = j; }
+    }
+    return Number(linUvP[best]);
+  });
+  const linIrOnIr = k.map((ki) => {
+    const kk = Number(ki);
+    if (!(kk > 0) || !linIrK.length) return NaN;
+    let best = 0, bd = Infinity;
+    for (let j = 0; j < linIrK.length; j++) {
+      const dln = Math.abs(Math.log(Number(linIrK[j])) - Math.log(kk));
+      if (dln < bd) { bd = dln; best = j; }
+    }
+    return Number(linIrP[best]);
+  });
+  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4, linUvOnIr, linIrOnIr], kFit, true);
+  const pkData = {
+    kWin: pkWin.k,
+    uv4: pkWin.y[0], ir4: pkWin.y[1], ctr4: pkWin.y[2],
+    linUv: pkWin.y[3], linIr: pkWin.y[4],
+  };
   addPlot(p, 'Companion density P(k) in the fit window', pkWin.k, [
+    { key: 'linUv', xkey: 'kWin', label: 'P_lin UV (filter)', color: '#E45756', dash: '2 2', width: 1.4, opacity: 0.35, zOrder: 1, noResample: true },
+    { key: 'linIr', xkey: 'kWin', label: 'P_lin IR (filter)', color: '#4C78A8', dash: '2 2', width: 1.4, opacity: 0.35, zOrder: 1, noResample: true },
     { key: 'uv4', xkey: 'kWin', label: '4LPT UV (target)', color: '#E45756', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
     { key: 'ir4', xkey: 'kWin', label: '4LPT IR (baseline)', color: '#4C78A8', dash: '7 4', width: 2.2, opacity: 0.9, zOrder: 3, noResample: true },
-    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 0.85, dash: '1 0', zOrder: 5, noResample: true },
+    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 0.85, zOrder: 5, noResample: true },
   ], {
     xlabel: 'k [h/Mpc]',
     ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
@@ -2191,23 +2240,34 @@ function renderCounterterms(d) {
     markers: kFitMark,
   }, pkData);
   $('p', 'panel-note', p,
-    'Three curves only, all clipped to k ≤ k_max: thick red = UV target, blue dashed = IR baseline, purple = IR plus the fitted density counterterm. Purple should sit near red if the companion density fit is working.');
+    'Thick: 4LPT UV / IR / IR+ctr. Faint dotted: linear filter spectra (same seed). Clipped to k ≤ k_max. Purple should sit near red if the density counterterm works.');
 
-  // Ratio: UV/IR vs (IR+ctr)/IR in the fit window — the clearest density diagnostic.
+  // Ratio: nonlinear UV/IR, (IR+ctr)/IR, and linear filter UV/IR.
   const rawRatio = puv4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
   const ctrRatio = pct4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
-  const ratioWin = clipAlignedToKMax(k, [rawRatio, ctrRatio], kFit);
+  const linRatio = linUvOnIr.map((v, i) => (Number(linIrOnIr[i]) > 0 ? v / Number(linIrOnIr[i]) : NaN));
+  const filtCorr = rawRatio.map((v, i) => (Number(linRatio[i]) > 0 ? v / Number(linRatio[i]) : NaN));
+  const ratioWin = clipAlignedToKMax(k, [rawRatio, ctrRatio, linRatio, filtCorr], kFit);
   const ratioData = {
     kWin: ratioWin.k,
     raw4: ratioWin.y[0],
     fit4: ratioWin.y[1],
+    linR: ratioWin.y[2],
+    corr: ratioWin.y[3],
     unity: ratioWin.k.map(() => 1),
   };
-  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', ratioWin.k, [
+  const ratioSeries = [
     { key: 'unity', xkey: 'kWin', label: 'IR ≡ 1', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
+    { key: 'linR', xkey: 'kWin', label: 'P_lin UV / P_lin IR (filter)', color: '#697586', dash: '2 2', width: 1.8, opacity: 0.75, zOrder: 2, noResample: true },
     { key: 'raw4', xkey: 'kWin', label: '4LPT P_UV / P_IR', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
     { key: 'fit4', xkey: 'kWin', label: '4LPT (IR+ctr) / P_IR', color: '#B279A2', dash: '6 3', width: 2.8, opacity: 0.9, zOrder: 4, noResample: true },
-  ], {
+  ];
+  if (!matched) {
+    ratioSeries.push({
+      key: 'corr', xkey: 'kWin', label: '(P_UV/P_IR) / (P_lin UV/IR)', color: '#54A24B', width: 2.2, opacity: 0.95, zOrder: 5, noResample: true,
+    });
+  }
+  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', ratioWin.k, ratioSeries, {
     xlabel: 'k [h/Mpc]',
     ylabel: 'P / P_IR',
     xlog: true,
@@ -2215,7 +2275,9 @@ function renderCounterterms(d) {
     markers: kFitMark,
   }, ratioData);
   $('p', 'panel-note', p,
-    'Purple should track red across the fit window. Departure of purple from red is the density residual the leading −2 cₛ² k² P_lin operator does not absorb.');
+    matched
+      ? 'Grey dotted = linear filter ratio after σ matching (soft IR is boosted). Red = nonlinear UV/IR; purple = IR+ctr. Departure of red from grey is dynamical.'
+      : 'Grey dotted = pure linear filter UV/IR. Green = filter-corrected nonlinear ratio (should sit near 1 if dynamics add no extra). Purple tracks red if the density CT absorbs the raw UV−IR difference.');
 
   // Fractional residual after the density CT (same window).
   const residFrac = puv4.map((v, i) => {

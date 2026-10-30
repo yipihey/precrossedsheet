@@ -72,7 +72,7 @@ function start(data) {
 async function execute(task) {
   const started = performance.now();
   const inBrowserWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
-  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261030gate', import.meta.url) }) : init();
+  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261030mlv', import.meta.url) }) : init();
   try { await wasmReady; } catch (error) { wasmReady = null; throw error; }
   const wasm = wasmApi;
   if (cancelled(task)) return {};
@@ -122,10 +122,12 @@ async function execute(task) {
     const uv = Number(task.state.uvSmoothing ?? 5);
     const irRaw = Number(task.state.irSmoothing ?? -1);
     const kMax = Number(task.state.kMaxFit ?? 0.08);
+    const matchVar = Boolean(task.state.matchLinearVariance);
     const req = { ...task.state };
     delete req.uvSmoothing;
     delete req.irSmoothing;
     delete req.kMaxFit;
+    delete req.matchLinearVariance;
     delete req.view;
     delete req.weight;
     delete req.backend;
@@ -138,7 +140,7 @@ async function execute(task) {
     delete req.schemaVersion;
     req.ic = 'gaussian';
     req.estimators = [];
-    const raw = wasm.eft_counterterms_run(JSON.stringify(req), uv, irRaw, kMax);
+    const raw = wasm.eft_counterterms_run(JSON.stringify(req), uv, irRaw, kMax, matchVar);
     const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (result?.error) throw new Error(result.error);
     const execution = cpuExecution(task.policy?.requested || 'cpu', 'Dual-smoothing counterterm comparison uses the f64 CPU P₁ sheet path.');

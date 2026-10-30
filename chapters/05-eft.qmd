@@ -25,6 +25,8 @@ Our laboratory never applies an Eulerian sharp-$k$ cutoff after displacement. Ul
 
 The IR sheet is essentially uncrossed. The UV sheet is still mostly single-stream, but it carries the nonlinear response of the intermediate band that the IR filter removed. That band is precisely what an EFT counterterm is designed to encode—and because both sheets share the same seed, the difference $\Delta\boldsymbol\psi=\boldsymbol\psi_{\rm UV}-\boldsymbol\psi_{\rm IR}$ is a concrete training signal for the free coefficients.
 
+A subtlety: the two filters also change the *linear* variance. At fixed cosmology $\sigma_8$, $P_{\rm lin}^{\rm UV}/P_{\rm lin}^{\rm IR}=\mathrm{e}^{k^2(R_{\rm IR}^2-R_{\rm UV}^2)}$ to leading order has the same $k^2 P_{\rm lin}$ shape as the sound-speed operator, so a density-only $c_s^2$ fit is partly degenerate with the linear filter. The laboratory therefore offers a **match linear variance** toggle (`mlv=1`) that scales the IR $\delta_0$ by $\sigma_{\rm UV}/\sigma_{\rm IR}$ before LPT, and always overlays the linear filter curves on the density diagnostics. With matching off, the green filter-corrected ratio $(P_{\rm UV}/P_{\rm IR})/(P_{\rm lin}^{\rm UV}/P_{\rm lin}^{\rm IR})$ isolates dynamical response; with matching on, compare nonlinear UV/IR to the (boosted) linear filter ratio.
+
 ## Exact P1 Spectra for 1LPT–4LPT {#sec-eft-p1-spectra}
 
 For each filter and each order $n=1,\ldots,4$ the laboratory:
@@ -94,7 +96,7 @@ The pre-crossed sheet therefore does not *replace* the counterterm: it **compute
 ::: {.callout-tip title="Try it: dual-smoothing displacement laboratory"}
 Open the counterterms view on the draft $32^3\to 64^3$ P1 experiment. Inspect inverted fractions, the density companion $P_{\rm UV}/P_{\rm IR}$, the vertex-level $c_s^2$ fit (RMS before/after), and the stochastic ensemble coverage. Set `Rir=-1` to keep $\sigma_{\rm IR}=\sigma_{\rm UV}/3$ automatically.
 
-{{< lab "v=3&view=counterterms&dim=3&n=32&mesh=64&force=32&ic=gaussian&cutoff=4&a=1&epoch=scaleFactor&order=4&Ruv=5&Rir=-1&kFit=0.08&smoothing=0&L=300&seed=7" "Open the EFT counterterms experiment" >}}
+{{< lab "v=3&view=counterterms&dim=3&n=32&mesh=64&force=32&ic=gaussian&cutoff=4&a=1&epoch=scaleFactor&order=4&Ruv=5&Rir=-1&kFit=0.08&mlv=0&smoothing=0&L=300&seed=7" "Open the EFT counterterms experiment" >}}
 :::
 
 ## Key Takeaways

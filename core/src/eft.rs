@@ -564,12 +564,16 @@ fn nearest_power(k: f64, ks: &[f64], ps: &[f64]) -> f64 {
 ///
 /// - `uv_smoothing`: Gaussian IC radius expected near ∼1% inverted simplices at a=1.
 /// - `ir_smoothing`: optional safer radius; when `None`, chosen so σ_IR ≈ σ_UV/3.
+/// - `match_linear_variance`: when true, scale the IR δ₀ (and rebuild LPT) so the
+///   continuum linear σ matches the UV value. This removes the overall amplitude
+///   mismatch from different filters; the *shape* of P_lin^IR still differs.
 /// - Observation mesh should be finer than the Lagrangian lattice (P1 exact deposit).
 pub fn run_dual_smoothing_counterterms(
     base: &LabRequest,
     uv_smoothing: f64,
     ir_smoothing: Option<f64>,
     k_max: f64,
+    match_linear_variance: bool,
 ) -> Result<Value, String> {
     if base.ic != "gaussian" {
         return Err(
@@ -593,7 +597,13 @@ pub fn run_dual_smoothing_counterterms(
     };
 
     let sigma_uv = continuum_filtered_sigma(base, uv_smoothing, growth_ratio);
-    let sigma_ir = continuum_filtered_sigma(base, ir, growth_ratio);
+    let sigma_ir_native = continuum_filtered_sigma(base, ir, growth_ratio);
+    let amplitude_scale = if match_linear_variance && sigma_ir_native > 0. {
+        sigma_uv / sigma_ir_native
+    } else {
+        1.0
+    };
+    let sigma_ir = sigma_ir_native * amplitude_scale;
 
     let mut req_uv = base.clone();
     req_uv.initial_smoothing = uv_smoothing;
@@ -608,7 +618,15 @@ pub fn run_dual_smoothing_counterterms(
     req_ir.validate()?;
 
     let c_uv = laboratory::initial_conditions(&req_uv);
-    let c_ir = laboratory::initial_conditions(&req_ir);
+    let mut c_ir = laboratory::initial_conditions(&req_ir);
+    if (amplitude_scale - 1.0).abs() > 1e-14 {
+        for v in c_ir.delta0_hat.iter_mut() {
+            *v *= amplitude_scale;
+        }
+        c_ir.sigma0 *= amplitude_scale;
+        c_ir.lpt = None;
+        c_ir.build_lpt(4);
+    }
     let a = if base.epoch == "scaleFactor" {
         base.scale_factor
     } else {
@@ -792,13 +810,22 @@ pub fn run_dual_smoothing_counterterms(
             "uvSmoothing": uv_smoothing,
             "irSmoothing": ir,
             "kMaxFit": k_max,
+            "matchLinearVariance": match_linear_variance,
         },
         "filters": {
             "uvSmoothing": uv_smoothing,
             "irSmoothing": ir,
             "sigmaLinUv": sigma_uv,
+            "sigmaLinIrNative": sigma_ir_native,
             "sigmaLinIr": sigma_ir,
             "sigmaRatio": if sigma_uv > 0. { sigma_ir / sigma_uv } else { 0.0 },
+            "matchLinearVariance": match_linear_variance,
+            "amplitudeScale": amplitude_scale,
+            "note": if match_linear_variance {
+                "IR δ0 scaled by σ_UV/σ_IR(native) before LPT so continuum linear variances match. Soft-mode IR power is boosted above UV; P_lin shapes still differ."
+            } else {
+                "Native filtered amplitudes (no σ matching). Density UV/IR partly reflects linear filter mismatch."
+            },
         },
         "linear": {
             "uv": { "k": k_lin_uv, "power": p_lin_uv },
