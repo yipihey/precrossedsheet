@@ -19,6 +19,7 @@ pub mod observables;
 pub mod laboratory;
 pub mod gpu_lpt;
 pub mod cosmological;
+pub mod eft;
 pub mod r3d;
 pub mod rng;
 pub mod sheet;

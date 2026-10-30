@@ -48,6 +48,7 @@ book:
     - chapters/04-validation.qmd
     - chapters/05-pdfs.qmd
     - chapters/05-two-point.qmd
+    - chapters/05-eft.qmd
     - chapters/05-rsd.qmd
     - chapters/06-inference.qmd
     - chapters/07-lab.qmd

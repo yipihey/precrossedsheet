@@ -249,7 +249,7 @@ pub fn initial_conditions(r: &LabRequest) -> Cosmo {
 }
 /// Double-precision evaluation of the inherited spatial terms. The terms
 /// themselves retain upstream f32 precision, but time sums and amplitudes do not.
-fn evaluate(c: &Cosmo, d: f64, order: usize, amp: f64) -> (Vec<f64>, Vec<f64>) {
+pub(crate) fn evaluate(c: &Cosmo, d: f64, order: usize, amp: f64) -> (Vec<f64>, Vec<f64>) {
     let l = c.lpt_ref();
     let mut x = vec![0.; c.grid.size * c.grid.dim];
     let mut v = x.clone();
@@ -295,9 +295,23 @@ fn power(g: &Grid, rho: &[f32]) -> spectra::Spectrum {
     let contrast: Vec<f32> = rho.iter().map(|&v| v - 1.).collect();
     spectra::power_spectrum(g, &mut eng, &contrast, spectrum_bins(g.n))
 }
+/// LPT vertex positions at growth `d` and truncation `order` (amplitude = 1).
+pub fn evaluate_lpt_positions(c: &Cosmo, d: f64, order: usize) -> Vec<f64> {
+    evaluate(c, d, order, 1.0).0
+}
+
 /// The linear power of *this realization*, D^2 |delta0_k|^2, averaged over the same
 /// isotropic bins as the measured fields, for bins lying entirely inside the radial
 /// cutoff (where the mesh modes and the input modes coincide). Unit-box units.
+pub fn realized_linear_power_bins(
+    c: &Cosmo,
+    eg: &Grid,
+    d: f64,
+    nbins: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    realized_linear_bins_with_count(c, eg, d, nbins)
+}
+
 fn realized_linear_bins_with_count(
     c: &Cosmo,
     eg: &Grid,

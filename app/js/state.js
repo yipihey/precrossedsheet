@@ -18,16 +18,19 @@ export const SCHEMA = Object.freeze({
   order: [1, 4], seed: [0, 9999], ic: ['waves', 'gaussian'], transfer: ['smooth', 'bao'], initialCutoff: [1, 32],
   omegaM: [.05, 1], omegaB: [0, .2], h: [.4, 1], ns: [.8, 1.2], sigma8: [.1, 1.5],
   boxSize: [50, 2000], initialSmoothing: [0, 200], smoothing: [0, .15], steps: STEPS,
-  mesh: GRIDS, forceMesh: GRIDS, view: ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'published'],
+  mesh: GRIDS, forceMesh: GRIDS, view: ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'counterterms', 'published'],
   weight: ['volume', 'mass'], backend: ['cpu', 'gpu', 'auto'], rotate: [-180, 180], tilt: [-80, 80], schemaVersion: [STATE_VERSION, STATE_VERSION],
   pubmodel: ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody'], pubest: ['sheet', 'cic'], pubr: [7, 14, 28, 42], paired: [true, false],
+  uvSmoothing: [0, 200], irSmoothing: [-1, 200], kMaxFit: [.01, .5], matchLinearVariance: [true, false],
+  pairFixedSoft: [true, false],
 });
 const DEFAULTS = Object.freeze({
   dim: 2, n: 32, fraction: .5, epoch: 'fraction', scaleFactor: .5, order: 4, seed: 7,
   ic: 'waves', transfer: 'smooth', initialCutoff: 3, omegaM: .315, omegaB: .049, h: .674, ns: .965, sigma8: .811,
   boxSize: 300, initialSmoothing: 14, smoothing: .03, steps: 64, mesh: 32, forceMesh: 32,
   view: 'sheet', weight: 'volume', backend: 'cpu', rotate: 35, tilt: 25,
-  pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true, schemaVersion: STATE_VERSION,
+  pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true,
+  uvSmoothing: 5, irSmoothing: -1, kMaxFit: .08, matchLinearVariance: false, pairFixedSoft: false, schemaVersion: STATE_VERSION,
 });
 
 // The long state key and compact fragment key are both part of the checked
@@ -43,23 +46,27 @@ export const HASH_SCHEMA = Object.freeze([
   ['steps', 'steps', 'num', [32, 1024]], ['mesh', 'mesh', 'num', [16, 2048]], ['forceMesh', 'force', 'num', [16, 2048]],
   ['schemaVersion', 'v', 'num', [STATE_VERSION, STATE_VERSION]],
   ['backend', 'backend', 'enum', ['cpu', 'gpu', 'auto']],
-  ['view', 'view', 'enum', ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'published']],
+  ['view', 'view', 'enum', ['sheet', 'density', 'spectra', 'variance', 'pdf', 'rsd', 'gradient', 'counterterms', 'published']],
   ['weight', 'weight', 'enum', ['volume', 'mass']], ['rotate', 'rotate', 'num', [-180, 180]], ['tilt', 'tilt', 'num', [-80, 80]],
   ['pubmodel', 'pubmodel', 'enum', ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody']], ['pubest', 'pubest', 'enum', ['sheet', 'cic']],
   ['pubr', 'pubr', 'num', [7, 42]], ['paired', 'paired', 'bool'],
+  ['uvSmoothing', 'Ruv', 'num', [0, 200]], ['irSmoothing', 'Rir', 'num', [-1, 200]], ['kMaxFit', 'kFit', 'num', [.01, .5]],
+  ['matchLinearVariance', 'mlv', 'bool'], ['pairFixedSoft', 'pfs', 'bool'],
 ]);
 const HASH_KEY = Object.freeze(Object.fromEntries(HASH_SCHEMA.map(([stateKey, hashKey]) => [stateKey, hashKey])));
 const ENUMS = new Set(['epoch', 'ic', 'transfer', 'view', 'weight', 'backend', 'pubmodel', 'pubest']);
+// irSmoothing = -1 means “auto-match σ_IR ≈ σ_UV/3” in the counterterms view.
 const GRID_CHOICES = new Set(['n', 'steps', 'mesh', 'forceMesh']);
 const INTEGER_RANGE = new Set(['dim', 'order', 'seed', 'initialCutoff', 'schemaVersion']);
 const ROTATION_RANGE = new Set(['rotate','tilt']);
+const BOOL_KEYS = new Set(['paired', 'matchLinearVariance', 'pairFixedSoft']);
 
 export function makeDefaults() { return { ...DEFAULTS }; }
 
 function normalize(key, value) {
   const rule = SCHEMA[key];
   if (!rule) return undefined;
-  if (key === 'paired') return value === true || value === '1' || value === 'true';
+  if (BOOL_KEYS.has(key)) return value === true || value === '1' || value === 'true';
   if (ENUMS.has(key)) return rule.includes(String(value)) ? String(value) : DEFAULTS[key];
   const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULTS[key];
@@ -108,7 +115,7 @@ export function decodeHash(hash) {
 export function copyState(state) { return { ...normalizeState(state) }; }
 
 export function coreRequest(state) {
-  const { view, weight, backend, rotate, tilt, pubmodel, pubest, pubr, paired, schemaVersion, ...request } = normalizeState(state);
+  const { view, weight, backend, rotate, tilt, pubmodel, pubest, pubr, paired, matchLinearVariance, pairFixedSoft, schemaVersion, ...request } = normalizeState(state);
   return request;
 }
 
