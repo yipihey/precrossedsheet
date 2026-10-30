@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261030align',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030pos',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -2172,7 +2172,7 @@ function renderCounterterms(d) {
   const puv4 = arr(o4.deltaPower).map((dp, i) => Number(pir4[i] || 0) + Number(dp || 0));
   const pct4 = arr(o4.irPlusCounterterm);
   // Absolute P(k) only inside the fit window — three aligned curves, no high-k cliff.
-  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4], kFit);
+  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4], kFit, true);
   const pkData = { kWin: pkWin.k, uv4: pkWin.y[0], ir4: pkWin.y[1], ctr4: pkWin.y[2] };
   addPlot(p, 'Companion density P(k) in the fit window', pkWin.k, [
     { key: 'uv4', xkey: 'kWin', label: '4LPT UV (target)', color: '#E45756', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
@@ -2251,7 +2251,7 @@ function renderCounterterms(d) {
   const sameK = kDel.length && kDel.length === kRes.length
     && kDel.every((v, i) => Math.abs(Number(v) - Number(kRes[i])) < 1e-12);
   if (sameK) {
-    const psiWin = clipAlignedToKMax(kDel, [pDel, pRes], kDispCap);
+    const psiWin = clipAlignedToKMax(kDel, [pDel, pRes], kDispCap, true);
     if (psiWin.k.length) {
       addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', psiWin.k, [
         { key: 'pDel', xkey: 'kPsi', label: 'P_Δψ = P(ψ_UV − ψ_IR)', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
