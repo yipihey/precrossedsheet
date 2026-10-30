@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261030fit',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030align',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -952,6 +952,25 @@ function clipSeriesToKMax(kArr, yArr, kMax) {
     if (!(ki > 0) || !Number.isFinite(yi)) continue;
     if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
     outK.push(ki); outY.push(yi);
+  }
+  return { k: outK, y: outY };
+}
+/** Shared-k clip of several y-series so all stay index-aligned (avoids axis blow-ups from mismatched lengths). */
+function clipAlignedToKMax(kArr, ySeries, kMax) {
+  const k = arr(kArr);
+  const ys = ySeries.map((s) => arr(s));
+  const lim = Number(kMax);
+  const outK = [];
+  const outY = ys.map(() => []);
+  const n = Math.min(k.length, ...ys.map((y) => y.length));
+  for (let i = 0; i < n; i++) {
+    const ki = Number(k[i]);
+    if (!(ki > 0)) continue;
+    if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
+    const vals = ys.map((y) => Number(y[i]));
+    if (!vals.every((v) => Number.isFinite(v))) continue;
+    outK.push(ki);
+    vals.forEach((v, j) => outY[j].push(v));
   }
   return { k: outK, y: outY };
 }
@@ -2152,17 +2171,14 @@ function renderCounterterms(d) {
   const pir4 = arr(o4.ir?.power);
   const puv4 = arr(o4.deltaPower).map((dp, i) => Number(pir4[i] || 0) + Number(dp || 0));
   const pct4 = arr(o4.irPlusCounterterm);
-  // Absolute P(k) only inside the fit window — three curves, no high-k cliff.
-  const uvWin = clipSeriesToKMax(k, puv4, kFit);
-  const irWin = clipSeriesToKMax(k, pir4, kFit);
-  const ctWin = clipSeriesToKMax(k, pct4, kFit);
-  const pkData = { kWin: uvWin.k, uv4: uvWin.y, ir4: irWin.y, ctr4: ctWin.y };
-  const seriesDefs = [
+  // Absolute P(k) only inside the fit window — three aligned curves, no high-k cliff.
+  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4], kFit);
+  const pkData = { kWin: pkWin.k, uv4: pkWin.y[0], ir4: pkWin.y[1], ctr4: pkWin.y[2] };
+  addPlot(p, 'Companion density P(k) in the fit window', pkWin.k, [
     { key: 'uv4', xkey: 'kWin', label: '4LPT UV (target)', color: '#E45756', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
     { key: 'ir4', xkey: 'kWin', label: '4LPT IR (baseline)', color: '#4C78A8', dash: '7 4', width: 2.2, opacity: 0.9, zOrder: 3, noResample: true },
-    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 1, zOrder: 5, noResample: true },
-  ];
-  addPlot(p, 'Companion density P(k) in the fit window', uvWin.k, seriesDefs, {
+    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 0.85, dash: '1 0', zOrder: 5, noResample: true },
+  ], {
     xlabel: 'k [h/Mpc]',
     ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
     xlog: true,
@@ -2175,13 +2191,17 @@ function renderCounterterms(d) {
   // Ratio: UV/IR vs (IR+ctr)/IR in the fit window — the clearest density diagnostic.
   const rawRatio = puv4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
   const ctrRatio = pct4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
-  const rawWin = clipSeriesToKMax(k, rawRatio, kFit);
-  const ctrRatioWin = clipSeriesToKMax(k, ctrRatio, kFit);
-  const ratioData = { kWin: rawWin.k, raw4: rawWin.y, fit4: ctrRatioWin.y, unity: rawWin.k.map(() => 1) };
-  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', rawWin.k, [
+  const ratioWin = clipAlignedToKMax(k, [rawRatio, ctrRatio], kFit);
+  const ratioData = {
+    kWin: ratioWin.k,
+    raw4: ratioWin.y[0],
+    fit4: ratioWin.y[1],
+    unity: ratioWin.k.map(() => 1),
+  };
+  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', ratioWin.k, [
     { key: 'unity', xkey: 'kWin', label: 'IR ≡ 1', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
     { key: 'raw4', xkey: 'kWin', label: '4LPT P_UV / P_IR', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
-    { key: 'fit4', xkey: 'kWin', label: '4LPT (IR+ctr) / P_IR', color: '#B279A2', dash: '6 3', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
+    { key: 'fit4', xkey: 'kWin', label: '4LPT (IR+ctr) / P_IR', color: '#B279A2', dash: '6 3', width: 2.8, opacity: 0.9, zOrder: 4, noResample: true },
   ], {
     xlabel: 'k [h/Mpc]',
     ylabel: 'P / P_IR',
@@ -2201,10 +2221,9 @@ function renderCounterterms(d) {
     const ir = Number(pir4[i]);
     return ir > 0 ? (v - ir) / ir : NaN;
   });
-  const residWin = clipSeriesToKMax(k, residFrac, kFit);
-  const deltaWin = clipSeriesToKMax(k, deltaFrac, kFit);
-  addPlot(p, 'Density residual after the counterterm', residWin.k, [
-    { key: 'delta', xkey: 'kR', label: '(P_UV − P_IR) / P_IR', color: '#E45756', width: 2.0, opacity: 0.55, zOrder: 2, noResample: true },
+  const residAligned = clipAlignedToKMax(k, [deltaFrac, residFrac], kFit);
+  addPlot(p, 'Density residual after the counterterm', residAligned.k, [
+    { key: 'delta', xkey: 'kR', label: '(P_UV − P_IR) / P_IR', color: '#E45756', width: 2.0, opacity: 0.45, zOrder: 2, noResample: true },
     { key: 'resid', xkey: 'kR', label: '(P_UV − [IR+ctr]) / P_IR', color: '#54A24B', width: 2.6, opacity: 1, zOrder: 4, noResample: true },
     { key: 'zero', xkey: 'kR', label: '0 (perfect CT)', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
   ], {
@@ -2214,53 +2233,63 @@ function renderCounterterms(d) {
     ylog: false,
     markers: kFitMark,
   }, {
-    kR: residWin.k,
-    resid: residWin.y,
-    delta: deltaWin.y,
-    zero: residWin.k.map(() => 0),
+    kR: residAligned.k,
+    delta: residAligned.y[0],
+    resid: residAligned.y[1],
+    zero: residAligned.k.map(() => 0),
   });
   $('p', 'panel-note', p,
     'Faint red is the raw UV−IR cutoff response; green is what remains after subtracting the fitted density counterterm. Closer to zero is better.');
 
   // Displacement shell power: Δψ vs residual after ψ_ct, fit neighborhood only.
   const kDispCap = Number.isFinite(kFit) && kFit > 0 ? 2.5 * kFit : undefined;
-  const delClip = clipSeriesToKMax(
-    arr(o4.displacement?.deltaPower?.k),
-    arr(o4.displacement?.deltaPower?.power),
-    kDispCap,
-  );
-  const resClip = clipSeriesToKMax(
-    arr(o4.displacement?.residualPower?.k),
-    arr(o4.displacement?.residualPower?.power),
-    kDispCap,
-  );
-  if (delClip.k.length || resClip.k.length) {
-    const psiData = {
-      kDel: delClip.k, pDel: delClip.y,
-      kRes: resClip.k, pRes: resClip.y,
-    };
-    const psiDefs = [];
-    if (delClip.k.length) {
-      psiDefs.push({
-        key: 'pDel', xkey: 'kDel', label: 'P_Δψ = P(ψ_UV − ψ_IR)',
-        color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true,
-      });
+  const kDel = arr(o4.displacement?.deltaPower?.k);
+  const pDel = arr(o4.displacement?.deltaPower?.power);
+  const kRes = arr(o4.displacement?.residualPower?.k);
+  const pRes = arr(o4.displacement?.residualPower?.power);
+  // Prefer residual-grid alignment when both share the same k sampling.
+  const sameK = kDel.length && kDel.length === kRes.length
+    && kDel.every((v, i) => Math.abs(Number(v) - Number(kRes[i])) < 1e-12);
+  if (sameK) {
+    const psiWin = clipAlignedToKMax(kDel, [pDel, pRes], kDispCap);
+    if (psiWin.k.length) {
+      addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', psiWin.k, [
+        { key: 'pDel', xkey: 'kPsi', label: 'P_Δψ = P(ψ_UV − ψ_IR)', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+        { key: 'pRes', xkey: 'kPsi', label: 'P_resid after ψ_ct', color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true },
+      ], {
+        xlabel: 'k [h/Mpc]',
+        ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
+        xlog: true,
+        ylog: true,
+        markers: kFitMark,
+      }, { kPsi: psiWin.k, pDel: psiWin.y[0], pRes: psiWin.y[1] });
+      $('p', 'panel-note', p,
+        'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
     }
-    if (resClip.k.length) {
-      psiDefs.push({
-        key: 'pRes', xkey: 'kRes', label: 'P_resid after ψ_ct',
-        color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true,
-      });
+  } else {
+    const delClip = clipSeriesToKMax(kDel, pDel, kDispCap);
+    const resClip = clipSeriesToKMax(kRes, pRes, kDispCap);
+    if (delClip.k.length || resClip.k.length) {
+      const psiDefs = [];
+      const psiData = {};
+      if (delClip.k.length) {
+        psiData.kDel = delClip.k; psiData.pDel = delClip.y;
+        psiDefs.push({ key: 'pDel', xkey: 'kDel', label: 'P_Δψ = P(ψ_UV − ψ_IR)', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true });
+      }
+      if (resClip.k.length) {
+        psiData.kRes = resClip.k; psiData.pRes = resClip.y;
+        psiDefs.push({ key: 'pRes', xkey: 'kRes', label: 'P_resid after ψ_ct', color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true });
+      }
+      addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', delClip.k.length ? delClip.k : resClip.k, psiDefs, {
+        xlabel: 'k [h/Mpc]',
+        ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
+        xlog: true,
+        ylog: true,
+        markers: kFitMark,
+      }, psiData);
+      $('p', 'panel-note', p,
+        'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
     }
-    addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', delClip.k.length ? delClip.k : resClip.k, psiDefs, {
-      xlabel: 'k [h/Mpc]',
-      ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
-      xlog: true,
-      ylog: true,
-      markers: kFitMark,
-    }, psiData);
-    $('p', 'panel-note', p,
-      'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
   }
   $('p', 'panel-note', p, d.convention || 'Convention: ψ_UV ≈ ψ_IR − cₛ² k² ψ_IR + stochastic residual with matched shell power.');
 }
