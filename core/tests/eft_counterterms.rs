@@ -82,7 +82,7 @@ fn dual_smoothing_p1_sheet_fits_finite_sound_speed_in_2d() {
         ..Default::default()
     };
     let uv = 5.0;
-    let out = run_dual_smoothing_counterterms(&base, uv, None, 0.08, false).expect("dual run");
+    let out = run_dual_smoothing_counterterms(&base, uv, None, 0.08, false, false).expect("dual run");
     assert_eq!(out["kind"], "eftCounterterms");
     let ratio = out["filters"]["sigmaRatio"].as_f64().unwrap();
     assert!(
@@ -185,7 +185,7 @@ fn dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit() {
         estimators: vec![],
         ..Default::default()
     };
-    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false).expect("3d dual");
+    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false, false).expect("3d dual");
     let o4 = &out["orders"][3];
     let inv = o4["uv"]["invertedElementFraction"].as_f64().unwrap();
     assert!(
@@ -240,8 +240,8 @@ fn match_linear_variance_scales_ir_sigma_to_uv() {
         estimators: vec![],
         ..Default::default()
     };
-    let native = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false).expect("native");
-    let matched = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, true).expect("matched");
+    let native = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false, false).expect("native");
+    let matched = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, true, false).expect("matched");
     let s_uv = matched["filters"]["sigmaLinUv"].as_f64().unwrap();
     let s_ir = matched["filters"]["sigmaLinIr"].as_f64().unwrap();
     let s_ir_native = matched["filters"]["sigmaLinIrNative"].as_f64().unwrap();
@@ -270,4 +270,82 @@ fn match_linear_variance_scales_ir_sigma_to_uv() {
         p_ir > p_uv,
         "matched IR soft power should exceed UV: IR={p_ir} UV={p_uv}"
     );
+    // Side-by-side amplitude conventions and k_max sweep are always present.
+    let o4 = &native["orders"][3];
+    assert!(o4["amplitudeCompare"]["native"]["ratio"].as_array().unwrap().len() > 0);
+    assert!(o4["amplitudeCompare"]["matched"]["ratio"].as_array().unwrap().len() > 0);
+    let sweep = o4["kMaxSweep"].as_array().unwrap();
+    assert!(sweep.len() >= 3, "expected k_max sweep points");
+    assert!(sweep.iter().all(|s| s["cs2Disp"].as_f64().unwrap().is_finite()));
+    let slice = &native["slicePreview"];
+    assert_eq!(slice["order"], 4);
+    let nx = slice["nx"].as_u64().unwrap() as usize;
+    let ny = slice["ny"].as_u64().unwrap() as usize;
+    assert_eq!(slice["uv"].as_array().unwrap().len(), nx * ny);
+    assert!(slice["draws"].as_array().unwrap().len() >= 1);
+}
+
+#[test]
+fn pair_fixed_soft_modes_share_linear_power_below_ir_cut() {
+    let base = LabRequest {
+        dim: 2,
+        n: 32,
+        mesh: 64,
+        force_mesh: 32,
+        ic: "gaussian".into(),
+        seed: 7,
+        box_size: 300.,
+        initial_cutoff: 4,
+        epoch: "scaleFactor".into(),
+        scale_factor: 1.0,
+        fraction: 1.0,
+        order: 4,
+        steps: 32,
+        smoothing: 0.0,
+        transfer: "smooth".into(),
+        estimators: vec![],
+        ..Default::default()
+    };
+    let r_uv = 5.0;
+    let r_ir = 15.0;
+    let out = run_dual_smoothing_counterterms(&base, r_uv, Some(r_ir), 0.08, false, true)
+        .expect("pair-fixed");
+    assert!(out["filters"]["pairFixedSoft"].as_bool().unwrap());
+    let k_ir = out["filters"]["kIrCut"].as_f64().unwrap();
+    assert!((k_ir - 1.0 / r_ir).abs() < 1e-12);
+    let k_uv = out["filters"]["kUvCut"].as_f64().unwrap();
+    assert!((k_uv - 1.0 / r_uv).abs() < 1e-12);
+    assert!(k_uv > k_ir);
+    // Soft bins with k < k_IR should have P_lin^UV ≈ P_lin^IR (identical modes).
+    let lin_uv_k = out["linear"]["uv"]["k"].as_array().unwrap();
+    let lin_uv_p = out["linear"]["uv"]["power"].as_array().unwrap();
+    let lin_ir_k = out["linear"]["ir"]["k"].as_array().unwrap();
+    let lin_ir_p = out["linear"]["ir"]["power"].as_array().unwrap();
+    let mut soft = 0usize;
+    for (i, kv) in lin_ir_k.iter().enumerate() {
+        let k = kv.as_f64().unwrap();
+        if !(k > 0. && k < 0.7 * k_ir) {
+            continue;
+        }
+        let pir = lin_ir_p[i].as_f64().unwrap();
+        let mut best = 0usize;
+        let mut bd = 1e99;
+        for (j, uk) in lin_uv_k.iter().enumerate() {
+            let d = (uk.as_f64().unwrap().ln() - k.ln()).abs();
+            if d < bd {
+                bd = d;
+                best = j;
+            }
+        }
+        let puv = lin_uv_p[best].as_f64().unwrap();
+        assert!(
+            (puv - pir).abs() / pir.max(1e-30) < 1e-8,
+            "soft-mode power mismatch at k={k}: UV={puv} IR={pir}"
+        );
+        soft += 1;
+    }
+    assert!(soft >= 1, "expected at least one soft linear bin below k_IR");
+    let o4 = &out["orders"][3];
+    assert!(o4["displacement"]["fit"]["cs2"].as_f64().unwrap().is_finite());
+    assert!(o4["kMaxSweep"].as_array().unwrap().len() >= 3);
 }

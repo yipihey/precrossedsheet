@@ -8,7 +8,7 @@ fn main() {
         transfer: "smooth".into(), estimators: vec![],
         ..Default::default()
     };
-    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false).unwrap();
+    let out = run_dual_smoothing_counterterms(&base, 5.0, None, 0.08, false, false).unwrap();
     println!("filters={}", out["filters"]);
     println!("convention={}", out["convention"]);
     for ord in &[1usize, 4] {

@@ -19,7 +19,7 @@ title: "Notation and conventions"
 | $r=1+\delta=\rho/\bar\rho$ | Dimensionless positive total density; stream contributions use absolute volume |
 | $L,N_q,N_e$ | Box side, vertices per axis, Eulerian cells per axis |
 | $R_f,R_s$ | Initial-condition filter scale and observable filter scale |
-| $R_{\rm UV},R_{\rm IR}$ | Dual Gaussian IC radii in the counterterm laboratory (@sec-eft-counterterms); $R_{\rm IR}$ may be auto-matched to $\sigma_{\rm IR}\approx\sigma_{\rm UV}/3$; optional match-linear-variance scales IR $\delta_0$ by $\sigma_{\rm UV}/\sigma_{\rm IR}$ before LPT |
+| $R_{\rm UV},R_{\rm IR}$ | Dual IC radii in the counterterm laboratory (@sec-eft-counterterms); $R_{\rm IR}$ may be auto-matched to $\sigma_{\rm IR}\approx\sigma_{\rm UV}/3$; optional match-linear-variance scales IR $\delta_0$ by $\sigma_{\rm UV}/\sigma_{\rm IR}$ before LPT; optional pair-fixed soft modes use sharp cuts $k=1/R$ so modes $|k|\le k_{\rm IR}$ are identical |
 
 | $c_s^2$ | Leading EFTofLSS / LEFT sound-speed counterterm coefficient in $(h^{-1}\mathrm{Mpc})^2$; density convention $P_{\rm UV}\approx P_{\rm IR}-2c_s^2 k^2 P_{\rm lin}^{\rm IR}$, displacement convention $\widehat{\boldsymbol\psi}_{\rm ct}=-c_s^2 k^2\widehat{\boldsymbol\psi}_{\rm IR}$ |
 | $\boldsymbol\psi_{\rm ct},\boldsymbol\psi_{\rm stoch}$ | Deterministic displacement counterterm and Gaussian stochastic residual draws matched to leftover $\Delta\boldsymbol\psi$ power (@sec-eft-displacement) |

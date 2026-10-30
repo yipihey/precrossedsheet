@@ -343,10 +343,12 @@ Implementation:
   (≈17.2 Mpc/h). Density companion: P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR.
   Displacement primary: ψ_UV ≈ ψ_IR + ψ_ct + ψ_stoch. No PM trajectory enters
   this path.
-- Lab view `counterterms` (schema keys Ruv, Rir, kFit, mlv; Rir=-1 means auto)
-  reports both density and vertex-level fits plus ensemble coverage.
-  `mlv=1` scales IR δ₀ by σ_UV/σ_IR(native) before LPT so continuum linear
-  variances match; density plots overlay P_lin UV/IR and (when mlv=0) the
-  filter-corrected nonlinear ratio.
+- Lab view `counterterms` (schema keys Ruv, Rir, kFit, mlv, pfs; Rir=-1 means
+  auto) reports density and vertex-level fits, ensemble coverage, a k_max
+  stability sweep, CSV export, and a mid-plane stochastic displacement slice.
+  `mlv=1` selects the primary IR amplitude (native vs σ-matched); both
+  conventions are always evolved for side-by-side density ratios.
+  `pfs=1` switches to a sharp-k split of one white-noise seed (k_cut=1/R) so
+  soft modes |k|≤k_IR are bitwise identical.
 - Chapter `chapters/05-eft.qmd` is explicitly a draft pedagogical section with
   provenance tests; it does not claim a production LEFT calibration.

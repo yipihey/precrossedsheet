@@ -22,6 +22,7 @@ export const SCHEMA = Object.freeze({
   weight: ['volume', 'mass'], backend: ['cpu', 'gpu', 'auto'], rotate: [-180, 180], tilt: [-80, 80], schemaVersion: [STATE_VERSION, STATE_VERSION],
   pubmodel: ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody'], pubest: ['sheet', 'cic'], pubr: [7, 14, 28, 42], paired: [true, false],
   uvSmoothing: [0, 200], irSmoothing: [-1, 200], kMaxFit: [.01, .5], matchLinearVariance: [true, false],
+  pairFixedSoft: [true, false],
 });
 const DEFAULTS = Object.freeze({
   dim: 2, n: 32, fraction: .5, epoch: 'fraction', scaleFactor: .5, order: 4, seed: 7,
@@ -29,7 +30,7 @@ const DEFAULTS = Object.freeze({
   boxSize: 300, initialSmoothing: 14, smoothing: .03, steps: 64, mesh: 32, forceMesh: 32,
   view: 'sheet', weight: 'volume', backend: 'cpu', rotate: 35, tilt: 25,
   pubmodel: '4lpt', pubest: 'sheet', pubr: 14, paired: true,
-  uvSmoothing: 5, irSmoothing: -1, kMaxFit: .08, matchLinearVariance: false, schemaVersion: STATE_VERSION,
+  uvSmoothing: 5, irSmoothing: -1, kMaxFit: .08, matchLinearVariance: false, pairFixedSoft: false, schemaVersion: STATE_VERSION,
 });
 
 // The long state key and compact fragment key are both part of the checked
@@ -50,7 +51,7 @@ export const HASH_SCHEMA = Object.freeze([
   ['pubmodel', 'pubmodel', 'enum', ['1lpt', '2lpt', '3lpt', '4lpt', 'nbody']], ['pubest', 'pubest', 'enum', ['sheet', 'cic']],
   ['pubr', 'pubr', 'num', [7, 42]], ['paired', 'paired', 'bool'],
   ['uvSmoothing', 'Ruv', 'num', [0, 200]], ['irSmoothing', 'Rir', 'num', [-1, 200]], ['kMaxFit', 'kFit', 'num', [.01, .5]],
-  ['matchLinearVariance', 'mlv', 'bool'],
+  ['matchLinearVariance', 'mlv', 'bool'], ['pairFixedSoft', 'pfs', 'bool'],
 ]);
 const HASH_KEY = Object.freeze(Object.fromEntries(HASH_SCHEMA.map(([stateKey, hashKey]) => [stateKey, hashKey])));
 const ENUMS = new Set(['epoch', 'ic', 'transfer', 'view', 'weight', 'backend', 'pubmodel', 'pubest']);
@@ -58,7 +59,7 @@ const ENUMS = new Set(['epoch', 'ic', 'transfer', 'view', 'weight', 'backend', '
 const GRID_CHOICES = new Set(['n', 'steps', 'mesh', 'forceMesh']);
 const INTEGER_RANGE = new Set(['dim', 'order', 'seed', 'initialCutoff', 'schemaVersion']);
 const ROTATION_RANGE = new Set(['rotate','tilt']);
-const BOOL_KEYS = new Set(['paired', 'matchLinearVariance']);
+const BOOL_KEYS = new Set(['paired', 'matchLinearVariance', 'pairFixedSoft']);
 
 export function makeDefaults() { return { ...DEFAULTS }; }
 
@@ -114,7 +115,7 @@ export function decodeHash(hash) {
 export function copyState(state) { return { ...normalizeState(state) }; }
 
 export function coreRequest(state) {
-  const { view, weight, backend, rotate, tilt, pubmodel, pubest, pubr, paired, matchLinearVariance, schemaVersion, ...request } = normalizeState(state);
+  const { view, weight, backend, rotate, tilt, pubmodel, pubest, pubr, paired, matchLinearVariance, pairFixedSoft, schemaVersion, ...request } = normalizeState(state);
   return request;
 }
 
