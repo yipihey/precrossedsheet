@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261030pos',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030gate',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -955,8 +955,12 @@ function clipSeriesToKMax(kArr, yArr, kMax) {
   }
   return { k: outK, y: outY };
 }
-/** Shared-k clip of several y-series so all stay index-aligned (avoids axis blow-ups from mismatched lengths). */
-function clipAlignedToKMax(kArr, ySeries, kMax) {
+/**
+ * Shared-k clip of several y-series so all stay index-aligned (avoids axis
+ * blow-ups from mismatched lengths). When `positive` is true, every y must be > 0
+ * (for log-y charts).
+ */
+function clipAlignedToKMax(kArr, ySeries, kMax, positive = false) {
   const k = arr(kArr);
   const ys = ySeries.map((s) => arr(s));
   const lim = Number(kMax);
@@ -969,6 +973,7 @@ function clipAlignedToKMax(kArr, ySeries, kMax) {
     if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
     const vals = ys.map((y) => Number(y[i]));
     if (!vals.every((v) => Number.isFinite(v))) continue;
+    if (positive && !vals.every((v) => v > 0)) continue;
     outK.push(ki);
     vals.forEach((v, j) => outY[j].push(v));
   }
