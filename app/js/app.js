@@ -468,7 +468,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261029plot',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030fit',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -2118,7 +2118,7 @@ function renderCounterterms(d) {
   const orders = Array.isArray(d.orders) ? d.orders : [];
   const p = panel(
     'Lagrangian UV response: displacement counterterm and stochastic residual',
-    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc; density P(k) is a companion diagnostic. Residual Δψ power seeds a Gaussian stochastic ensemble.`,
+    `Exact P₁ sheets for 1–4LPT at two Gaussian IC filters of one seed. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}, ratio ${num(filters.sigmaRatio,4)}). Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc. Density charts are clipped to that fit window (UV, IR, IR+ctr only); residual Δψ power seeds the stochastic ensemble.`,
   );
   if (!orders.length) {
     $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
@@ -2129,7 +2129,6 @@ function renderCounterterms(d) {
   for (const h of ['Order', 'Inv. UV', 'Inv. IR', 'cₛ² disp.', 'RMS↓', 'Explained', '1σ cov.', 'cₛ² P(k)']) {
     $('th', '', head, h);
   }
-  const colors = { 1: '#4C78A8', 2: '#F58518', 3: '#54A24B', 4: '#E45756' };
   for (const entry of orders) {
     const tr = $('tr', '', table);
     const fitPk = entry.fit || {};
@@ -2148,45 +2147,22 @@ function renderCounterterms(d) {
   const k = arr(o4.ir?.k);
   const kFit = Number(d.request?.kMaxFit ?? S.kMaxFit);
   const kFitMark = Number.isFinite(kFit) && kFit > 0
-    ? [{ x: kFit, label: `k_max fit = ${num(kFit, 3)}`, color: '#697586' }]
+    ? [{ x: kFit, label: `k_max = ${num(kFit, 3)}`, color: '#697586' }]
     : [];
-  // Companion P(k): only the readable trio — 4LPT UV (target), 4LPT IR (baseline),
-  // IR+counterterm inside the fit window — plus faint lower-order UV ghosts.
-  const pkData = { k };
-  const seriesDefs = [];
-  for (const entry of orders) {
-    const ord = Number(entry.order);
-    const pir = arr(entry.ir?.power);
-    const delta = arr(entry.deltaPower);
-    pkData[`uv${ord}`] = pir.map((v, i) => Number(v) + Number(delta[i] || 0));
-    if (ord === 4) pkData[`ir${ord}`] = pir;
-  }
-  for (const entry of orders) {
-    const ord = Number(entry.order);
-    if (ord === 4) continue;
-    seriesDefs.push({
-      key: `uv${ord}`, label: `${ord}LPT UV`, color: colors[ord] || '#333',
-      width: 1.1, opacity: 0.28, zOrder: 1, noResample: true,
-    });
-  }
-  seriesDefs.push({
-    key: 'uv4', label: '4LPT UV (target)', color: '#E45756',
-    width: 2.8, opacity: 1, zOrder: 4,
-  });
-  seriesDefs.push({
-    key: 'ir4', label: '4LPT IR (baseline)', color: '#4C78A8',
-    dash: '7 4', width: 2.2, opacity: 0.95, zOrder: 3,
-  });
-  const ctrClip = clipSeriesToKMax(k, arr(o4.irPlusCounterterm), kFit);
-  if (ctrClip.k.length) {
-    pkData.kCtr = ctrClip.k;
-    pkData.ctr4 = ctrClip.y;
-    seriesDefs.push({
-      key: 'ctr4', xkey: 'kCtr', label: '4LPT IR + −2 cₛ² k² P_lin (fit window)',
-      color: '#B279A2', width: 3.0, opacity: 1, zOrder: 5, noResample: true,
-    });
-  }
-  addPlot(p, 'Companion density P(k): UV target vs IR + counterterm', k, seriesDefs, {
+  const pir4 = arr(o4.ir?.power);
+  const puv4 = arr(o4.deltaPower).map((dp, i) => Number(pir4[i] || 0) + Number(dp || 0));
+  const pct4 = arr(o4.irPlusCounterterm);
+  // Absolute P(k) only inside the fit window — three curves, no high-k cliff.
+  const uvWin = clipSeriesToKMax(k, puv4, kFit);
+  const irWin = clipSeriesToKMax(k, pir4, kFit);
+  const ctWin = clipSeriesToKMax(k, pct4, kFit);
+  const pkData = { kWin: uvWin.k, uv4: uvWin.y, ir4: irWin.y, ctr4: ctWin.y };
+  const seriesDefs = [
+    { key: 'uv4', xkey: 'kWin', label: '4LPT UV (target)', color: '#E45756', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
+    { key: 'ir4', xkey: 'kWin', label: '4LPT IR (baseline)', color: '#4C78A8', dash: '7 4', width: 2.2, opacity: 0.9, zOrder: 3, noResample: true },
+    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 1, zOrder: 5, noResample: true },
+  ];
+  addPlot(p, 'Companion density P(k) in the fit window', uvWin.k, seriesDefs, {
     xlabel: 'k [h/Mpc]',
     ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
     xlog: true,
@@ -2194,40 +2170,19 @@ function renderCounterterms(d) {
     markers: kFitMark,
   }, pkData);
   $('p', 'panel-note', p,
-    'Essentials only: thick red = 4LPT UV sheet, thick blue dashed = 4LPT IR sheet, thick purple = IR plus the fitted density counterterm (drawn only for k ≤ k_max). Faint thin lines are lower-order UV for context. The vertical marker is the fit window edge.');
+    'Three curves only, all clipped to k ≤ k_max: thick red = UV target, blue dashed = IR baseline, purple = IR plus the fitted density counterterm. Purple should sit near red if the companion density fit is working.');
 
-  // Ratio in the fit window: 4LPT UV/IR vs (IR+ctr)/IR; lower orders faint.
-  const ratioClip = clipSeriesToKMax(k, arr(o4.ir?.power), kFit);
-  const ratioData = { kFit: ratioClip.k };
-  const ratioDefs = [];
-  for (const entry of orders) {
-    const ord = Number(entry.order);
-    const pir = arr(entry.ir?.power);
-    const puv = arr(entry.deltaPower).map((dp, i) => Number(pir[i] || 0) + Number(dp || 0));
-    const raw = puv.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
-    const clipped = clipSeriesToKMax(k, raw, kFit);
-    ratioData[`raw${ord}`] = clipped.y;
-    if (ord < 4) {
-      ratioDefs.push({
-        key: `raw${ord}`, xkey: 'kFit', label: `${ord}LPT P_UV/P_IR`,
-        color: colors[ord] || '#333', width: 1.2, opacity: 0.3, zOrder: 1, noResample: true,
-      });
-    } else {
-      ratioDefs.push({
-        key: `raw${ord}`, xkey: 'kFit', label: '4LPT P_UV/P_IR',
-        color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true,
-      });
-      const pred = arr(entry.irPlusCounterterm);
-      const fitRatio = pred.map((v, i) => (Number(pir[i]) > 0 ? v / Number(pir[i]) : NaN));
-      const fitClip = clipSeriesToKMax(k, fitRatio, kFit);
-      ratioData.fit4 = fitClip.y;
-      ratioDefs.push({
-        key: 'fit4', xkey: 'kFit', label: '4LPT (IR+ctr)/IR',
-        color: '#B279A2', dash: '6 3', width: 2.8, opacity: 1, zOrder: 4, noResample: true,
-      });
-    }
-  }
-  addPlot(p, 'Cutoff response in the fit window (k ≤ k_max)', ratioClip.k, ratioDefs, {
+  // Ratio: UV/IR vs (IR+ctr)/IR in the fit window — the clearest density diagnostic.
+  const rawRatio = puv4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
+  const ctrRatio = pct4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
+  const rawWin = clipSeriesToKMax(k, rawRatio, kFit);
+  const ctrRatioWin = clipSeriesToKMax(k, ctrRatio, kFit);
+  const ratioData = { kWin: rawWin.k, raw4: rawWin.y, fit4: ctrRatioWin.y, unity: rawWin.k.map(() => 1) };
+  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', rawWin.k, [
+    { key: 'unity', xkey: 'kWin', label: 'IR ≡ 1', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
+    { key: 'raw4', xkey: 'kWin', label: '4LPT P_UV / P_IR', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+    { key: 'fit4', xkey: 'kWin', label: '4LPT (IR+ctr) / P_IR', color: '#B279A2', dash: '6 3', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
+  ], {
     xlabel: 'k [h/Mpc]',
     ylabel: 'P / P_IR',
     xlog: true,
@@ -2235,29 +2190,77 @@ function renderCounterterms(d) {
     markers: kFitMark,
   }, ratioData);
   $('p', 'panel-note', p,
-    'Restricted to the fit window so the high-k filter roll-off no longer dominates the axis. Purple should track red if the density counterterm absorbs the UV−IR difference.');
+    'Purple should track red across the fit window. Departure of purple from red is the density residual the leading −2 cₛ² k² P_lin operator does not absorb.');
 
-  const resK = arr(o4.displacement?.residualPower?.k);
-  const delK = arr(o4.displacement?.deltaPower?.k);
-  if (resK.length || delK.length) {
-    const psiData = {};
+  // Fractional residual after the density CT (same window).
+  const residFrac = puv4.map((v, i) => {
+    const ir = Number(pir4[i]), ct = Number(pct4[i]);
+    return ir > 0 && Number.isFinite(ct) ? (v - ct) / ir : NaN;
+  });
+  const deltaFrac = puv4.map((v, i) => {
+    const ir = Number(pir4[i]);
+    return ir > 0 ? (v - ir) / ir : NaN;
+  });
+  const residWin = clipSeriesToKMax(k, residFrac, kFit);
+  const deltaWin = clipSeriesToKMax(k, deltaFrac, kFit);
+  addPlot(p, 'Density residual after the counterterm', residWin.k, [
+    { key: 'delta', xkey: 'kR', label: '(P_UV − P_IR) / P_IR', color: '#E45756', width: 2.0, opacity: 0.55, zOrder: 2, noResample: true },
+    { key: 'resid', xkey: 'kR', label: '(P_UV − [IR+ctr]) / P_IR', color: '#54A24B', width: 2.6, opacity: 1, zOrder: 4, noResample: true },
+    { key: 'zero', xkey: 'kR', label: '0 (perfect CT)', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
+  ], {
+    xlabel: 'k [h/Mpc]',
+    ylabel: 'fractional ΔP / P_IR',
+    xlog: true,
+    ylog: false,
+    markers: kFitMark,
+  }, {
+    kR: residWin.k,
+    resid: residWin.y,
+    delta: deltaWin.y,
+    zero: residWin.k.map(() => 0),
+  });
+  $('p', 'panel-note', p,
+    'Faint red is the raw UV−IR cutoff response; green is what remains after subtracting the fitted density counterterm. Closer to zero is better.');
+
+  // Displacement shell power: Δψ vs residual after ψ_ct, fit neighborhood only.
+  const kDispCap = Number.isFinite(kFit) && kFit > 0 ? 2.5 * kFit : undefined;
+  const delClip = clipSeriesToKMax(
+    arr(o4.displacement?.deltaPower?.k),
+    arr(o4.displacement?.deltaPower?.power),
+    kDispCap,
+  );
+  const resClip = clipSeriesToKMax(
+    arr(o4.displacement?.residualPower?.k),
+    arr(o4.displacement?.residualPower?.power),
+    kDispCap,
+  );
+  if (delClip.k.length || resClip.k.length) {
+    const psiData = {
+      kDel: delClip.k, pDel: delClip.y,
+      kRes: resClip.k, pRes: resClip.y,
+    };
     const psiDefs = [];
-    if (delK.length) {
-      psiData.kDel = delK;
-      psiData.pDel = arr(o4.displacement.deltaPower.power);
-      psiDefs.push({ key: 'pDel', xkey: 'kDel', label: 'P_Δψ (UV−IR)', color: '#E45756', width: 1.8, noResample: true });
+    if (delClip.k.length) {
+      psiDefs.push({
+        key: 'pDel', xkey: 'kDel', label: 'P_Δψ = P(ψ_UV − ψ_IR)',
+        color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true,
+      });
     }
-    if (resK.length) {
-      psiData.kRes = resK;
-      psiData.pRes = arr(o4.displacement.residualPower.power);
-      psiDefs.push({ key: 'pRes', xkey: 'kRes', label: 'P_resid after CT', color: '#4C78A8', dash: '4 2', width: 1.8, noResample: true });
+    if (resClip.k.length) {
+      psiDefs.push({
+        key: 'pRes', xkey: 'kRes', label: 'P_resid after ψ_ct',
+        color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true,
+      });
     }
-    addPlot(p, 'Displacement power: cutoff response vs residual after ψ_ct', resK.length ? resK : delK, psiDefs, {
+    addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', delClip.k.length ? delClip.k : resClip.k, psiDefs, {
       xlabel: 'k [h/Mpc]',
-      ylabel: 'P_ψ [(Mpc/h)⁵]',
+      ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
       xlog: true,
       ylog: true,
+      markers: kFitMark,
     }, psiData);
+    $('p', 'panel-note', p,
+      'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
   }
   $('p', 'panel-note', p, d.convention || 'Convention: ψ_UV ≈ ψ_IR − cₛ² k² ψ_IR + stochastic residual with matched shell power.');
 }

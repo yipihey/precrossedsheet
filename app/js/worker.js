@@ -72,7 +72,7 @@ function start(data) {
 async function execute(task) {
   const started = performance.now();
   const inBrowserWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
-  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261029plot', import.meta.url) }) : init();
+  if (!wasmReady) wasmReady = inBrowserWorker ? init({ module_or_path: new URL('../pkg/hcc_core_bg.wasm?v=20261030fit', import.meta.url) }) : init();
   try { await wasmReady; } catch (error) { wasmReady = null; throw error; }
   const wasm = wasmApi;
   if (cancelled(task)) return {};
