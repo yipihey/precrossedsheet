@@ -1,11 +1,11 @@
-"""Two orbits of one galaxy, then a path through other draws.
+"""Two tilts of one galaxy, then a path through other draws.
 
-Each orbit lifts off the face-on view, circles a full 360° of azimuth at fixed
-inclination, and sets back down. An axisymmetric disk would look the same at
-every azimuth; structure carried from the image is what makes the circuit visible.
-The synthetic movie walks exponential scale heights. The observed movie walks
-spherical clouds through other line-of-sight arrangements. Face-on frames of
-those arrangements agree; the inclined frames show the depth.
+Each pass continues the opening tilt through a full 360° of inclination, with
+the line of nodes held fixed. The disk goes edge-on, through the far side, and
+back to the same face-on view. The synthetic movie walks exponential scale
+heights. The observed movie walks spherical clouds through other line-of-sight
+arrangements. Face-on frames of those arrangements agree; the inclined frames
+show the depth.
 """
 
 from __future__ import annotations
@@ -30,36 +30,35 @@ PRIOR_COLOR = (88, 104, 128)
 LINE = (42, 48, 62)
 
 
-ORBIT_INCLINATION = 58.0
-ORBIT_LIFTOFF = 0.14
+TILT_EASE = 0.08
 
 
-def _smoothstep(u: float) -> float:
-    u = float(np.clip(u, 0.0, 1.0))
-    return u * u * (3.0 - 2.0 * u)
-
-
-def orbit_pose(
-    t: float,
-    i_cruise: float = ORBIT_INCLINATION,
-    liftoff: float = ORBIT_LIFTOFF,
-) -> tuple[float, float]:
-    """Camera inclination and azimuth for one closed orbit. t is in [0, 1].
-
-    The view starts and ends face-on at azimuth 0. Between the liftoff and the
-    landing the inclination is constant and the azimuth advances exactly 360°,
-    with zero angular speed at both ends of that cruise so the joins do not jerk.
-    """
+def _tilt_fraction(t: float, edge: float = TILT_EASE) -> float:
+    """Map t in [0, 1] onto a full turn. Speed is zero at the ends and constant between."""
     if t <= 0.0:
-        return 0.0, 0.0
+        return 0.0
     if t >= 1.0:
-        return 0.0, 360.0
-    if t < liftoff:
-        return i_cruise * _smoothstep(t / liftoff), 0.0
-    if t > 1.0 - liftoff:
-        return i_cruise * _smoothstep((1.0 - t) / liftoff), 360.0
-    u = (t - liftoff) / (1.0 - 2.0 * liftoff)
-    return i_cruise, 360.0 * _smoothstep(u)
+        return 1.0
+    speed = 1.0 / (1.0 - edge)
+
+    def ramp(s: float) -> float:
+        s = float(np.clip(s, 0.0, 1.0))
+        return s**3 - 0.5 * s**4
+
+    if t < edge:
+        return speed * edge * ramp(t / edge)
+    if t > 1.0 - edge:
+        return 1.0 - speed * edge * ramp((1.0 - t) / edge)
+    return speed * (t - 0.5 * edge)
+
+
+def orbit_pose(t: float) -> tuple[float, float]:
+    """Camera inclination and azimuth for one closed tilt. t is in [0, 1].
+
+    Azimuth stays on the opening line of nodes. Inclination advances a full
+    360°, so the disk tips through edge-on and returns to the same face-on view.
+    """
+    return 360.0 * _tilt_fraction(t), 0.0
 
 
 def zoom_extents(inclination_deg: float) -> tuple[float, float]:
@@ -189,7 +188,7 @@ def compose_frame(
     if cloud_lines is not None:
         lines += cloud_lines
     elif disk is None:
-        lines += ["parameters follow", "once the orbit starts"]
+        lines += ["parameters follow", "once the tilt starts"]
     else:
         lines += [
             f"h_R          {disk.h_R:5.2f} kpc",
@@ -415,11 +414,11 @@ def write_movie(
                 inclination, azimuth = orbit_pose(t)
                 if cloud is None:
                     main_rgb, zoom_rgb = _render_pair(reference, inclination, azimuth, scale, steps, extent, extinction)
-                    phase, detail = "First orbit", "Arms from the image, one full turn"
+                    phase, detail = "First tilt", "Inclination through a full turn"
                     disk = reference
                 else:
                     main_rgb, zoom_rgb = _render_cloud_pair(cloud, inclination, azimuth, scale, extent, extinction)
-                    phase, detail = "First orbit", "Spherical clouds, one full turn"
+                    phase, detail = "First tilt", "Tilting through 360°"
                     disk = None
             else:
                 t = (index - (hold + fade + spin)) / spin
@@ -427,13 +426,13 @@ def write_movie(
                 if cloud is None:
                     disk = blend_disks(path_disks, t)
                     main_rgb, zoom_rgb = _render_pair(disk, inclination, azimuth, scale, steps, extent, extinction)
-                    phase, detail = "Second orbit", "Same arms, other scale heights"
+                    phase, detail = "Second tilt", "Same arms, other scale heights"
                 else:
                     assert depth_draws is not None
                     star_z, dust_z = blend_depth(depth_draws, t)
                     shown = cloud.with_z(star_z, dust_z)
                     main_rgb, zoom_rgb = _render_cloud_pair(shown, inclination, azimuth, scale, extent, extinction)
-                    phase, detail = "Second orbit", "Same clouds, other depths"
+                    phase, detail = "Second tilt", "Same clouds, other depths"
                     disk = None
             frame = compose_frame(
                 main_rgb,

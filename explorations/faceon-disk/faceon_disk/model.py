@@ -240,10 +240,11 @@ class AttenuationGrid:
 
 
 def camera_basis(inclination_deg: float, azimuth_deg: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sky basis. ``n_obs`` points toward the observer; +Y is galactic north at high inclination.
+    """Sky basis. ``n_obs`` points toward the observer.
 
-    The line of nodes is continuous through face-on, and a two-armed spiral is
-    unchanged by the 180° rotation this limit applies to the face-on sky.
+    The line of nodes stays fixed while inclination runs through a full turn,
+    so the picture rolls continuously through edge-on and through the far
+    face-on view instead of flipping when the line of sight crosses the plane.
     """
     inc = np.deg2rad(inclination_deg)
     az = np.deg2rad(azimuth_deg)
@@ -252,11 +253,6 @@ def camera_basis(inclination_deg: float, azimuth_deg: float) -> tuple[np.ndarray
         dtype=np.float64,
     )
     e_x = np.array([-np.cos(az), np.sin(az), 0.0], dtype=np.float64)
-    # Tilt the node vector off the exact face-on limit only through n_obs × e_x.
-    # At i = 0 this equals the expression above.
-    if abs(np.sin(inc)) >= 1e-10:
-        raw = np.array([-n_obs[1], n_obs[0], 0.0], dtype=np.float64)
-        e_x = raw / np.linalg.norm(raw)
     e_y = np.cross(n_obs, e_x)
     return e_x, e_y, n_obs
 

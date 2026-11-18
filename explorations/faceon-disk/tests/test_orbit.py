@@ -1,4 +1,4 @@
-"""The camera circles a full turn instead of nodding in place."""
+"""The camera tips through a full turn instead of spinning in azimuth."""
 
 import sys
 import unittest
@@ -8,40 +8,55 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from faceon_disk.model import Disk, faceon_image, render  # noqa: E402
-from faceon_disk.movie import ORBIT_INCLINATION, ORBIT_LIFTOFF, orbit_pose  # noqa: E402
+from faceon_disk.model import Disk, camera_basis, faceon_image, render  # noqa: E402
+from faceon_disk.movie import orbit_pose  # noqa: E402
 
 
 class OrbitPoseTests(unittest.TestCase):
-    def test_closed_full_turn_at_constant_inclination(self):
+    def test_tilt_runs_through_a_full_turn_at_fixed_azimuth(self):
         self.assertEqual(orbit_pose(0.0), (0.0, 0.0))
-        self.assertEqual(orbit_pose(1.0), (0.0, 360.0))
-        cruise = np.linspace(ORBIT_LIFTOFF, 1.0 - ORBIT_LIFTOFF, 401)
+        end_inc, end_az = orbit_pose(1.0)
+        self.assertAlmostEqual(end_inc, 360.0, places=6)
+        self.assertEqual(end_az, 0.0)
+        times = np.linspace(0.0, 1.0, 721)
         inclinations = []
         azimuths = []
-        for t in cruise:
+        for t in times:
             inc, az = orbit_pose(float(t))
             inclinations.append(inc)
             azimuths.append(az)
         inclinations = np.array(inclinations)
         azimuths = np.array(azimuths)
-        self.assertTrue(np.allclose(inclinations, ORBIT_INCLINATION))
-        self.assertAlmostEqual(azimuths[0], 0.0, places=6)
-        self.assertAlmostEqual(azimuths[-1], 360.0, places=6)
-        self.assertGreaterEqual(np.min(np.diff(azimuths)), -1e-9)
-        for quadrant in (90.0, 180.0, 270.0):
-            self.assertTrue(np.any(azimuths >= quadrant))
-        # Landing is face-on again, still at the end of the turn.
-        late_inc, late_az = orbit_pose(0.97)
-        self.assertLess(late_inc, 15.0)
-        self.assertEqual(late_az, 360.0)
+        self.assertTrue(np.allclose(azimuths, 0.0))
+        self.assertGreaterEqual(np.min(np.diff(inclinations)), -1e-9)
+        for angle in (90.0, 180.0, 270.0):
+            self.assertTrue(np.any(inclinations >= angle))
+        # The ends ease in, so a step near the middle is larger than one at the start.
+        self.assertLess(inclinations[1] - inclinations[0], 0.05)
+        self.assertGreater(np.max(np.diff(inclinations)), 0.4)
 
     def test_joins_have_no_step_in_pose(self):
         times = np.linspace(0.0, 1.0, 2001)
         poses = np.array([orbit_pose(float(t)) for t in times])
         self.assertLess(np.max(np.abs(np.diff(poses[:, 0]))), 0.5)
-        # Azimuth is flat, then advances, then flat. No single step jumps by tens of degrees.
-        self.assertLess(np.max(np.diff(poses[:, 1])), 2.0)
+        self.assertTrue(np.allclose(poses[:, 1], 0.0))
+
+    def test_tilt_through_the_far_side_does_not_flip(self):
+        knot = np.array([1.5, 4.0, 0.3])
+        angles = np.linspace(0.0, 360.0, 73)
+        sky = []
+        for inc in angles:
+            e_x, e_y, _ = camera_basis(float(inc), 0.0)
+            sky.append((float(knot @ e_x), float(knot @ e_y)))
+        sky = np.array(sky)
+        step = np.hypot(*np.diff(sky, axis=0).T)
+        self.assertLess(np.max(step), 0.4)
+        np.testing.assert_allclose(sky[0], sky[-1], atol=1e-8)
+        # Edge-on, the in-plane offset is across the sky and the height is vertical.
+        e_x, e_y, n_obs = camera_basis(90.0, 0.0)
+        self.assertAlmostEqual(float(knot @ e_y), knot[2], places=6)
+        self.assertGreater(abs(float(knot @ e_x)), 1.0)
+        self.assertAlmostEqual(abs(n_obs[2]), 0.0, places=6)
 
 
 class AzimuthVisibilityTests(unittest.TestCase):
