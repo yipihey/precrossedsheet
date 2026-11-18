@@ -30,6 +30,7 @@ from .model import AttenuationGrid, Disk, display_scale
 from .movie import write_movie
 from .observe import DISTANCE_MPC, arm_pattern, load_ngc628
 from .report import save_summary
+from .splats import exponential_tau, fit_cloud, prepare_observed
 
 
 def main() -> None:
@@ -125,6 +126,29 @@ def main() -> None:
 
     if args.no_movie:
         return
+    cloud = None
+    if galaxy is not None:
+        filled = prepare_observed(galaxy.display, galaxy.star_mask)
+        tau = exponential_tau(template.h_R, template.tau_V0, filled.shape[1:], obs.extent)
+        print("Fitting spherical clouds to the face-on image", flush=True)
+        started_cloud = time.perf_counter()
+        cloud = fit_cloud(filled, obs.extent, tau, obs.band_extinction())
+        print(
+            f"Clouds  stars {len(cloud.star_sigma)}  dust {len(cloud.dust_sigma)}  "
+            f"median σ {float(np.median(cloud.star_sigma)):.2f} kpc  "
+            f"in {time.perf_counter() - started_cloud:.0f}s",
+            flush=True,
+        )
+        np.savez(
+            args.output / "clouds.npz",
+            star_mu=cloud.star_mu,
+            star_sigma=cloud.star_sigma,
+            star_luminosity=cloud.star_luminosity,
+            dust_mu=cloud.dust_mu,
+            dust_sigma=cloud.dust_sigma,
+            dust_tau=cloud.dust_tau,
+        )
+        subhead = f"DECaLS DR10 g, r, z · {DISTANCE_MPC:.2f} Mpc · spherical clouds"
     rng = np.random.default_rng(11)
     prior_heights = np.exp(prior_mu[3:5] + prior_sig[3:5] * rng.normal(size=(1800, 2)))
     posterior_heights = np.exp(samples[:, 3:5])
@@ -142,6 +166,7 @@ def main() -> None:
         heading=heading,
         subhead=subhead,
         observed_detail=observed_detail,
+        cloud=cloud,
     )
     print(f"Wrote {movie}", flush=True)
 
