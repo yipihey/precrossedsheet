@@ -1,8 +1,10 @@
-"""Two-orbit movie of one posterior disk, then a path through other draws.
+"""Two orbits of one posterior disk, then a path through other draws.
 
-The camera inclination rises and falls during each orbit. The second orbit
-moves the scale heights through posterior realizations. Face-on frames of
-those realizations agree; inclined frames show the height prior.
+Each orbit lifts off the face-on view, circles a full 360° of azimuth at fixed
+inclination, and sets back down. An axisymmetric disk would look the same at
+every azimuth; the arms carried from the image are what make the circuit visible.
+The second orbit moves the scale heights through posterior realizations.
+Face-on frames of those realizations agree; the inclined frames show the heights.
 """
 
 from __future__ import annotations
@@ -26,11 +28,36 @@ PRIOR_COLOR = (88, 104, 128)
 LINE = (42, 48, 62)
 
 
-def orbit_pose(t: float, i_max: float = 74.0) -> tuple[float, float]:
-    """t in [0, 1). Inclination is zero at both ends and peaks halfway."""
-    azimuth = 360.0 * t
-    inclination = i_max * np.sin(np.pi * t) ** 2
-    return float(inclination), float(azimuth)
+ORBIT_INCLINATION = 58.0
+ORBIT_LIFTOFF = 0.14
+
+
+def _smoothstep(u: float) -> float:
+    u = float(np.clip(u, 0.0, 1.0))
+    return u * u * (3.0 - 2.0 * u)
+
+
+def orbit_pose(
+    t: float,
+    i_cruise: float = ORBIT_INCLINATION,
+    liftoff: float = ORBIT_LIFTOFF,
+) -> tuple[float, float]:
+    """Camera inclination and azimuth for one closed orbit. t is in [0, 1].
+
+    The view starts and ends face-on at azimuth 0. Between the liftoff and the
+    landing the inclination is constant and the azimuth advances exactly 360°,
+    with zero angular speed at both ends of that cruise so the joins do not jerk.
+    """
+    if t <= 0.0:
+        return 0.0, 0.0
+    if t >= 1.0:
+        return 0.0, 360.0
+    if t < liftoff:
+        return i_cruise * _smoothstep(t / liftoff), 0.0
+    if t > 1.0 - liftoff:
+        return i_cruise * _smoothstep((1.0 - t) / liftoff), 360.0
+    u = (t - liftoff) / (1.0 - 2.0 * liftoff)
+    return i_cruise, 360.0 * _smoothstep(u)
 
 
 def zoom_extents(inclination_deg: float) -> tuple[float, float]:
@@ -97,17 +124,26 @@ def compose_frame(
     phase: str,
     detail: str,
     inclination: float,
+    azimuth: float | None,
     disk: Disk | None,
     prior: np.ndarray,
     posterior: np.ndarray,
+    heading: str,
+    subhead: str,
 ) -> np.ndarray:
     canvas = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(canvas)
     _paste_rgb(canvas, main_rgb, (24, 24, 776, 776))
-    _paste_rgb(canvas, zoom_rgb, (796, 24, 1256, 236))
-    draw.text((796, 244), phase, font=_font(24, bold=True), fill=INK)
-    draw.text((796, 276), detail, font=_font(15), fill=MUTED)
+    _paste_rgb(canvas, zoom_rgb, (796, 24, 1256, 220))
+    draw.text((796, 232), heading, font=_font(22, bold=True), fill=INK)
+    draw.text((796, 260), subhead, font=_font(14), fill=MUTED)
+    draw.text((796, 286), phase, font=_font(20, bold=True), fill=GOLD)
+    draw.text((796, 314), detail, font=_font(14), fill=MUTED)
     lines = [f"inclination   {inclination:5.1f}°"]
+    if azimuth is None:
+        lines.append("azimuth         —")
+    else:
+        lines.append(f"azimuth       {azimuth:5.0f}°")
     if disk is None:
         lines += ["parameters follow", "once the orbit starts"]
     else:
@@ -118,36 +154,60 @@ def compose_frame(
             f"h dust       {disk.h_dust:5.2f} kpc",
             f"h★ / h dust  {disk.h_star / disk.h_dust:5.2f}",
         ]
-    y = 304
+    y = 344
     for line in lines:
-        draw.text((796, y), line, font=_font(18), fill=INK)
-        y += 24
+        draw.text((796, y), line, font=_font(17), fill=INK)
+        y += 22
     current = None if disk is None else (disk.h_star, disk.h_dust)
-    _scatter(draw, (796, 508, 1256, 776), prior, posterior, current)
+    _scatter(draw, (796, 530, 1256, 776), prior, posterior, current)
     return np.asarray(canvas)
 
 
-def _render_pair(disk: Disk, inclination: float, azimuth: float, scale: float, steps: int) -> tuple[np.ndarray, np.ndarray]:
-    main = render(disk, inclination, azimuth, npix_x=340, extent_x=12.0, steps=steps)
+def _zoom_box(inclination: float, extent: float) -> tuple[float, float]:
     extent_x, extent_y = zoom_extents(inclination)
-    npix_y = max(96, int(round(260 * extent_y / extent_x)))
+    extent_x = min(extent_x, extent * 0.72)
+    extent_y = min(extent_y, extent_x)
+    return extent_x, float(extent_y)
+
+
+def _render_pair(
+    disk: Disk,
+    inclination: float,
+    azimuth: float,
+    scale: float,
+    steps: int,
+    extent: float,
+    extinction: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    main = render(
+        disk,
+        inclination,
+        azimuth % 360.0,
+        npix_x=320,
+        extent_x=extent,
+        steps=steps,
+        extinction=extinction,
+    )
+    extent_x, extent_y = _zoom_box(inclination, extent)
+    npix_y = max(96, int(round(220 * extent_y / extent_x)))
     zoom = render(
         disk,
         inclination,
-        azimuth,
-        npix_x=260,
+        azimuth % 360.0,
+        npix_x=220,
         npix_y=npix_y,
         extent_x=extent_x,
         extent_y=extent_y,
         steps=steps,
+        extinction=extinction,
     )
-    blur = 0.6
+    blur = 0.3
     return tonemap(convolve_gaussian(main, blur), scale=scale), tonemap(convolve_gaussian(zoom, blur), scale=scale)
 
 
-def _crop_observation(obs_rgb: np.ndarray, inclination: float, extent: float = 12.0) -> np.ndarray:
+def _crop_observation(obs_rgb: np.ndarray, inclination: float, extent: float) -> np.ndarray:
     """Cut the inner sky out of the face-on observation for the side panel."""
-    extent_x, extent_y = zoom_extents(inclination)
+    extent_x, extent_y = _zoom_box(inclination, extent)
     ny, nx = obs_rgb.shape[:2]
     # Sky Y is up in the image; row 0 is +extent.
     x0 = int(round((extent - extent_x) / (2 * extent) * nx))
@@ -164,14 +224,24 @@ def write_movie(
     prior_heights: np.ndarray,
     posterior_heights: np.ndarray,
     scale: float,
-    fps: int = 12,
-    steps: int = 160,
+    fps: int = 10,
+    steps: int = 130,
+    observed_linear: np.ndarray | None = None,
+    extent: float = 12.0,
+    extinction: np.ndarray | None = None,
+    heading: str = "Synthetic disk",
+    subhead: str = "Exponential star and dust atmospheres",
+    observed_detail: str = "Synthetic g, r, i image",
+    orbit_seconds: float = 8.0,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    observed = _observed_frame(scale)
-    hold = int(1.5 * fps)
-    fade = fps // 2
-    spin = 6 * fps
+    if observed_linear is None:
+        observed = _observed_frame(scale, extent=extent)
+    else:
+        observed = tonemap(observed_linear, scale=scale)
+    hold = int(1.6 * fps)
+    fade = max(fps // 2, 1)
+    spin = int(round(orbit_seconds * fps))
     frames = hold + fade + spin + spin
     command = [
         "ffmpeg",
@@ -198,54 +268,64 @@ def write_movie(
     ]
     process = subprocess.Popen(command, stdin=subprocess.PIPE)
     assert process.stdin is not None
-    face_main, face_zoom = _render_pair(reference, 0.0, 0.0, scale, steps)
+    face_main, face_zoom = _render_pair(reference, 0.0, 0.0, scale, steps, extent, extinction)
     print(f"Writing {frames} frames to {path}", flush=True)
     try:
         for index in range(frames):
+            azimuth: float | None
             if index < hold:
                 main_rgb = observed
-                zoom_rgb = _crop_observation(observed, 0.0, extent=12.0)
-                phase, detail, inclination, disk = (
+                zoom_rgb = _crop_observation(observed, 0.0, extent)
+                phase, detail, inclination, azimuth, disk = (
                     "Observed face-on",
-                    "Synthetic g, r, i image",
+                    observed_detail,
                     0.0,
+                    None,
                     None,
                 )
             elif index < hold + fade:
                 u = (index - hold + 1) / fade
                 main_rgb = _blend(observed, face_main, u)
-                zoom_rgb = _blend(_crop_observation(observed, 0.0, extent=12.0), face_zoom, u)
-                phase, detail, inclination, disk = (
+                zoom_rgb = _blend(_crop_observation(observed, 0.0, extent), face_zoom, u)
+                phase, detail, inclination, azimuth, disk = (
                     "Observed face-on",
                     "Fading to one posterior draw",
+                    0.0,
                     0.0,
                     reference,
                 )
             elif index < hold + fade + spin:
                 t = (index - (hold + fade)) / spin
                 inclination, azimuth = orbit_pose(t)
-                main_rgb, zoom_rgb = _render_pair(reference, inclination, azimuth, scale, steps)
-                phase, detail = "First orbit", "One draw consistent with the image"
+                main_rgb, zoom_rgb = _render_pair(reference, inclination, azimuth, scale, steps, extent, extinction)
+                phase, detail = "First orbit", "Arms from the image, one full turn"
                 disk = reference
             else:
                 t = (index - (hold + fade + spin)) / spin
                 inclination, azimuth = orbit_pose(t)
                 disk = blend_disks(path_disks, t)
-                main_rgb, zoom_rgb = _render_pair(disk, inclination, azimuth, scale, steps)
-                phase, detail = "Second orbit", "Blending draws from the same posterior"
+                main_rgb, zoom_rgb = _render_pair(disk, inclination, azimuth, scale, steps, extent, extinction)
+                phase, detail = "Second orbit", "Same arms, other scale heights"
             frame = compose_frame(
                 main_rgb,
                 zoom_rgb,
                 phase=phase,
                 detail=detail,
                 inclination=inclination,
+                azimuth=azimuth,
                 disk=disk,
                 prior=prior_heights,
                 posterior=posterior_heights,
+                heading=heading,
+                subhead=subhead,
             )
             process.stdin.write(frame.tobytes())
-            if index % 12 == 0:
-                print(f"  frame {index + 1}/{frames}  {phase}  i={inclination:.0f}°", flush=True)
+            if index % fps == 0:
+                az_text = "—" if azimuth is None else f"{azimuth:.0f}°"
+                print(
+                    f"  frame {index + 1}/{frames}  {phase}  i={inclination:.0f}°  az={az_text}",
+                    flush=True,
+                )
     finally:
         process.stdin.close()
         code = process.wait()
