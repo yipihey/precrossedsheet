@@ -11,7 +11,7 @@ curve at R_V = 3.1. There is no scattering and no emission from the dust.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -25,10 +25,17 @@ BANDS = (
 
 
 def ccm_extinction(wavelength_nm: float, r_v: float = 3.1) -> float:
-    """A_λ / A_V from the optical piece of Cardelli, Clayton, and Mathis (1989)."""
+    """A_λ / A_V from Cardelli, Clayton, and Mathis (1989).
+
+    The infrared piece covers 0.3 ≤ x ≤ 1.1 µm^-1, which includes DECam z.
+    The optical piece covers 1.1 < x ≤ 3.3 µm^-1.
+    """
     x = 1000.0 / wavelength_nm  # µm^-1
-    if not 1.1 <= x <= 3.3:
-        raise ValueError(f"wavelength {wavelength_nm} nm is outside the optical CCM piece")
+    if 0.3 <= x <= 1.1:
+        power = x**1.61
+        return float(0.574 * power - 0.527 * power / r_v)
+    if not 1.1 < x <= 3.3:
+        raise ValueError(f"wavelength {wavelength_nm} nm is outside the CCM pieces used here")
     y = x - 1.82
     a = (
         1.0
@@ -59,10 +66,15 @@ EXTINCTION = np.array([ccm_extinction(w) for _, w in BANDS], dtype=np.float64)
 class Disk:
     """Axisymmetric exponential disk plus a fixed logarithmic spiral.
 
-    ``I0`` is the unattenuated face-on central surface brightness, the same in
-    every band, so an unattenuated galaxy is white in f_ν. ``tau_V0`` is the
-    total vertical V-band optical depth through the center, spiral included
-    only through the shared pattern.
+    ``I0`` is the unattenuated face-on central surface brightness in the middle
+    band. ``color_g`` and ``color_red`` are the intrinsic f_ν of the blue and
+    red bands relative to that middle band, before dust. An unattenuated disk
+    with both colors equal to one is white in f_ν. ``tau_V0`` is the total
+    vertical V-band optical depth through the center.
+
+    ``pattern_map`` replaces the analytic spiral for the stars when it is set.
+    It is the stellar pattern on a face-on grid. The dust then stays the smooth
+    exponential. With no map, the analytic spiral is shared by stars and dust.
     """
 
     h_R: float = 3.2
@@ -73,22 +85,34 @@ class Disk:
     spiral_amplitude: float = 0.38
     pitch_deg: float = 18.0
     arm_count: int = 2
+    color_g: float = 1.0
+    color_red: float = 1.0
+    pattern_map: np.ndarray | None = None
+    pattern_extent: float = 14.0
 
     def log_params(self) -> np.ndarray:
-        return np.log(np.array([self.h_R, self.I0, self.tau_V0, self.h_star, self.h_dust], dtype=np.float64))
+        return np.log(
+            np.array(
+                [self.h_R, self.I0, self.tau_V0, self.h_star, self.h_dust, self.color_g, self.color_red],
+                dtype=np.float64,
+            )
+        )
 
     def with_log_params(self, theta: np.ndarray) -> "Disk":
-        h_R, I0, tau, h_star, h_dust = np.exp(np.asarray(theta, dtype=np.float64))
-        return Disk(
+        h_R, I0, tau, h_star, h_dust, color_g, color_red = np.exp(np.asarray(theta, dtype=np.float64))
+        return replace(
+            self,
             h_R=float(h_R),
             I0=float(I0),
             tau_V0=float(tau),
             h_star=float(h_star),
             h_dust=float(h_dust),
-            spiral_amplitude=self.spiral_amplitude,
-            pitch_deg=self.pitch_deg,
-            arm_count=self.arm_count,
+            color_g=float(color_g),
+            color_red=float(color_red),
         )
+
+    def with_pattern(self, pattern_map: np.ndarray, extent: float) -> "Disk":
+        return replace(self, pattern_map=np.asarray(pattern_map, dtype=np.float64), pattern_extent=float(extent))
 
 
 def pattern(R: np.ndarray, phi: np.ndarray, disk: Disk) -> np.ndarray:
@@ -100,6 +124,54 @@ def pattern(R: np.ndarray, phi: np.ndarray, disk: Disk) -> np.ndarray:
     fade = np.clip(R / (0.18 * disk.h_R), 0.0, 1.0)
     phase = disk.arm_count * (phi - np.log(np.maximum(R, 1e-6 * disk.h_R) / disk.h_R) / np.tan(pitch))
     return radial * (1.0 + disk.spiral_amplitude * fade * np.cos(phase))
+
+
+def spatial_pattern(x: np.ndarray, y: np.ndarray, disk: Disk) -> np.ndarray:
+    """Stellar face-on pattern. A map, when set, replaces the spiral."""
+    if disk.pattern_map is None:
+        return pattern(np.hypot(x, y), np.arctan2(y, x), disk)
+    return _sample_pattern(x, y, disk.pattern_map, disk.pattern_extent)
+
+
+def dust_pattern(x: np.ndarray, y: np.ndarray, disk: Disk) -> np.ndarray:
+    """Dust pattern. A painted stellar map does not thicken the dust in the arms.
+
+    The analytic spiral is shared by stars and dust. An image-derived map is the
+    stellar light only; the dust stays the smooth exponential atmosphere.
+    """
+    if disk.pattern_map is None:
+        return spatial_pattern(x, y, disk)
+    return np.exp(-np.hypot(x, y) / disk.h_R)
+
+
+def _sample_pattern(x: np.ndarray, y: np.ndarray, image: np.ndarray, extent: float) -> np.ndarray:
+    """Bilinear sample of a face-on map.
+
+    The map uses the same pixel convention as ``faceon_image`` at azimuth 0.
+    Row 0 is sky Y = +extent. Galactic (x, y) equals (−X, −Y) in that frame,
+    so a feature stored in the map rotates on the sky when the camera's azimuth changes.
+    """
+    ny, nx = image.shape
+    sky_x = -np.asarray(x, dtype=np.float64)
+    sky_y = -np.asarray(y, dtype=np.float64)
+    fx = (sky_x + extent) / (2.0 * extent) * nx - 0.5
+    fy = (extent - sky_y) / (2.0 * extent) * ny - 0.5
+    fx = np.clip(fx, 0.0, nx - 1.001)
+    fy = np.clip(fy, 0.0, ny - 1.001)
+    x0 = np.floor(fx).astype(np.int64)
+    y0 = np.floor(fy).astype(np.int64)
+    wx = fx - x0
+    wy = fy - y0
+    x1 = np.minimum(x0 + 1, nx - 1)
+    y1 = np.minimum(y0 + 1, ny - 1)
+    top = (1.0 - wx) * image[y0, x0] + wx * image[y0, x1]
+    bottom = (1.0 - wx) * image[y1, x0] + wx * image[y1, x1]
+    return (1.0 - wy) * top + wy * bottom
+
+
+def band_scales(disk: Disk) -> np.ndarray:
+    """Intrinsic f_ν multipliers for the blue, middle, and red bands."""
+    return np.array([disk.color_g, 1.0, disk.color_red], dtype=np.float64)
 
 
 def column_factors(tau: np.ndarray, alpha: float, n_z: int = 2400, steep: float = 4.5) -> np.ndarray:
@@ -168,10 +240,11 @@ class AttenuationGrid:
 
 
 def camera_basis(inclination_deg: float, azimuth_deg: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sky basis. ``n_obs`` points toward the observer; +Y is galactic north at high inclination.
+    """Sky basis. ``n_obs`` points toward the observer.
 
-    The line of nodes is continuous through face-on, and a two-armed spiral is
-    unchanged by the 180° rotation this limit applies to the face-on sky.
+    The line of nodes stays fixed while inclination runs through a full turn,
+    so the picture rolls continuously through edge-on and through the far
+    face-on view instead of flipping when the line of sight crosses the plane.
     """
     inc = np.deg2rad(inclination_deg)
     az = np.deg2rad(azimuth_deg)
@@ -180,11 +253,6 @@ def camera_basis(inclination_deg: float, azimuth_deg: float) -> tuple[np.ndarray
         dtype=np.float64,
     )
     e_x = np.array([-np.cos(az), np.sin(az), 0.0], dtype=np.float64)
-    # Tilt the node vector off the exact face-on limit only through n_obs × e_x.
-    # At i = 0 this equals the expression above.
-    if abs(np.sin(inc)) >= 1e-10:
-        raw = np.array([-n_obs[1], n_obs[0], 0.0], dtype=np.float64)
-        e_x = raw / np.linalg.norm(raw)
     e_y = np.cross(n_obs, e_x)
     return e_x, e_y, n_obs
 
@@ -206,25 +274,27 @@ def faceon_image(
     grid: AttenuationGrid | None = None,
     azimuth_deg: float = 0.0,
     n_z: int = 2400,
+    extinction: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Face-on surface brightness, shape (3, npix, npix), bands g, r, i."""
+    """Face-on surface brightness, shape (3, npix, npix), in the band order of ``extinction``."""
+    extinction = EXTINCTION if extinction is None else np.asarray(extinction, dtype=np.float64)
     X, Y, _, _ = sky_grid(npix, npix, extent, extent)
     e_x, e_y, _ = camera_basis(0.0, azimuth_deg)
     x = X * e_x[0] + Y * e_y[0]
     y = X * e_x[1] + Y * e_y[1]
-    R = np.hypot(x, y)
-    phi = np.arctan2(y, x)
-    pat = pattern(R, phi, disk)
-    I_thin = disk.I0 * pat
-    tau_V = np.maximum(disk.tau_V0 * pat, 0.0)
+    stars = spatial_pattern(x, y, disk)
+    dust = dust_pattern(x, y, disk)
+    scales = band_scales(disk)
+    tau_V = np.maximum(disk.tau_V0 * dust, 0.0)
     alpha = disk.h_star / disk.h_dust
     image = np.empty((3, npix, npix), dtype=np.float64)
     if grid is None:
-        for b, k_ext in enumerate(EXTINCTION):
-            image[b] = I_thin * column_factors(k_ext * tau_V.ravel(), alpha, n_z=n_z).reshape(tau_V.shape)
+        for b, k_ext in enumerate(extinction):
+            factor = column_factors(k_ext * tau_V.ravel(), alpha, n_z=n_z).reshape(tau_V.shape)
+            image[b] = disk.I0 * scales[b] * stars * factor
     else:
-        for b, k_ext in enumerate(EXTINCTION):
-            image[b] = I_thin * grid.at(alpha, k_ext * tau_V)
+        for b, k_ext in enumerate(extinction):
+            image[b] = disk.I0 * scales[b] * stars * grid.at(alpha, k_ext * tau_V)
     return image
 
 
@@ -248,6 +318,7 @@ def render(
     extent_x: float = 14.0,
     extent_y: float | None = None,
     steps: int = 220,
+    extinction: np.ndarray | None = None,
 ) -> np.ndarray:
     """Line-of-sight integral of stellar emissivity with foreground dust absorption.
 
@@ -259,6 +330,8 @@ def render(
         npix_y = npix_x
     if extent_y is None:
         extent_y = extent_x
+    extinction = EXTINCTION if extinction is None else np.asarray(extinction, dtype=np.float64)
+    scales = band_scales(disk)
     X, Y, _, _ = sky_grid(npix_x, npix_y, extent_x, extent_y)
     e_x, e_y, n_obs = camera_basis(inclination_deg, azimuth_deg)
     base = X[..., None] * e_x + Y[..., None] * e_y
@@ -273,20 +346,20 @@ def render(
         ds = span / steps
         pos = base + s[..., None] * n_obs
         x, y, z = pos[..., 0], pos[..., 1], pos[..., 2]
-        R = np.hypot(x, y)
-        phi = np.arctan2(y, x)
-        pat = pattern(R, phi, disk)
-        emit = disk.I0 * pat * np.exp(-np.abs(z) / disk.h_star) / (2.0 * disk.h_star) * ds
-        dtau_V = disk.tau_V0 * pat * np.exp(-np.abs(z) / disk.h_dust) / (2.0 * disk.h_dust) * ds
+        stars = spatial_pattern(x, y, disk)
+        dust = dust_pattern(x, y, disk)
+        vertical = np.exp(-np.abs(z) / disk.h_star) / (2.0 * disk.h_star)
+        emit = disk.I0 * stars * vertical * ds
+        dtau_V = disk.tau_V0 * dust * np.exp(-np.abs(z) / disk.h_dust) / (2.0 * disk.h_dust) * ds
         dtau_V = np.clip(dtau_V, 0.0, 80.0)
-        for b, k_ext in enumerate(EXTINCTION):
+        for b, k_ext in enumerate(extinction):
             dtau = np.minimum(k_ext * dtau_V, 80.0)
             atten = np.exp(-dtau)
             cell = np.empty_like(dtau)
             small = dtau < 1e-4
             cell[small] = 1.0 - 0.5 * dtau[small] + dtau[small] ** 2 / 6.0
             cell[~small] = (1.0 - atten[~small]) / dtau[~small]
-            image[b] += emit * cell * transmission[b]
+            image[b] += scales[b] * emit * cell * transmission[b]
             transmission[b] *= atten
     return image
 
@@ -304,6 +377,8 @@ def _ray_segment(
     the observer. Rays that miss the disk get a zero-length segment.
     """
     R_cut = 7.0 * disk.h_R
+    if disk.pattern_map is not None:
+        R_cut = max(R_cut, 0.98 * disk.pattern_extent)
     z_cut = 12.0 * max(disk.h_star, disk.h_dust, 0.05)
     bx, by, bz = base[..., 0], base[..., 1], base[..., 2]
     nx, ny, nz = (float(v) for v in n_obs)

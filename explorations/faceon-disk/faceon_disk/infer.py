@@ -12,14 +12,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .model import AttenuationGrid, Disk, convolve_gaussian, faceon_image
+from .model import EXTINCTION, AttenuationGrid, Disk, convolve_gaussian, faceon_image
 
-# Medians are intentionally offset from the truth so the image has to move
-# the dust column and the scale-height ratio. Widths on the two heights are
-# the prior the inclined views are sampling.
-PRIOR_MU = np.log(np.array([3.0, 1.0, 1.0, 0.32, 0.20], dtype=np.float64))
-PRIOR_SIG = np.array([0.16, 0.28, 0.62, 0.50, 0.58], dtype=np.float64)
-PARAM_NAMES = ("h_R", "I0", "tau_V0", "h_star", "h_dust")
+# Medians are intentionally offset from the synthetic truth so the image has to
+# move the dust column and the scale-height ratio. Widths on the two heights are
+# the prior the inclined views are sampling. The last two entries are the
+# intrinsic g and red-band colors relative to r; the synthetic galaxy is white.
+PRIOR_MU = np.log(np.array([3.0, 1.0, 1.0, 0.32, 0.20, 1.0, 1.0], dtype=np.float64))
+PRIOR_SIG = np.array([0.16, 0.28, 0.62, 0.50, 0.58, 0.12, 0.12], dtype=np.float64)
+PARAM_NAMES = ("h_R", "I0", "tau_V0", "h_star", "h_dust", "color_g", "color_red")
 
 TRUTH = Disk(
     h_R=3.2,
@@ -40,6 +41,14 @@ class Observation:
     extent: float
     psf_sigma: float
     clean: np.ndarray
+    extinction: np.ndarray | None = None
+    mask: np.ndarray | None = None
+    bands: tuple[str, str, str] = ("g", "r", "i")
+
+    def band_extinction(self) -> np.ndarray:
+        if self.extinction is None:
+            return EXTINCTION
+        return np.asarray(self.extinction, dtype=np.float64)
 
 
 def make_observation(
@@ -62,28 +71,47 @@ def make_observation(
 
 
 def predict(disk: Disk, grid: AttenuationGrid, obs: Observation) -> np.ndarray:
-    image = faceon_image(disk, npix=obs.npix, extent=obs.extent, grid=grid)
+    image = faceon_image(
+        disk,
+        npix=obs.npix,
+        extent=obs.extent,
+        grid=grid,
+        extinction=obs.band_extinction(),
+    )
     return convolve_gaussian(image, obs.psf_sigma)
 
 
-def log_probability(theta: np.ndarray, grid: AttenuationGrid, obs: Observation, template: Disk = TRUTH) -> float:
+def log_probability(
+    theta: np.ndarray,
+    grid: AttenuationGrid,
+    obs: Observation,
+    template: Disk = TRUTH,
+    prior_mu: np.ndarray | None = None,
+    prior_sig: np.ndarray | None = None,
+) -> float:
     theta = np.asarray(theta, dtype=np.float64)
-    if not np.all(np.isfinite(theta)):
+    mu = PRIOR_MU if prior_mu is None else np.asarray(prior_mu, dtype=np.float64)
+    sig = PRIOR_SIG if prior_sig is None else np.asarray(prior_sig, dtype=np.float64)
+    if theta.shape != mu.shape or not np.all(np.isfinite(theta)):
         return -np.inf
-    h_R, I0, tau, h_star, h_dust = np.exp(theta)
+    h_R, I0, tau, h_star, h_dust, color_g, color_red = np.exp(theta)
     alpha = h_star / h_dust
     if not (
-        0.5 < h_R < 10.0
-        and 0.08 < I0 < 6.0
-        and 0.03 < tau < 10.0
+        0.4 < h_R < 12.0
+        and 0.05 < I0 < 15.0
+        and 0.03 < tau < 12.0
         and 0.05 < h_star < 2.2
         and 0.025 < h_dust < 1.2
+        and 0.15 < color_g < 4.0
+        and 0.15 < color_red < 5.0
         and grid.ln_alpha[0] < np.log(alpha) < grid.ln_alpha[-1]
     ):
         return -np.inf
-    prior = -0.5 * np.sum(((theta - PRIOR_MU) / PRIOR_SIG) ** 2)
+    prior = -0.5 * np.sum(((theta - mu) / sig) ** 2)
     model = predict(template.with_log_params(theta), grid, obs)
     residual = (obs.data - model) / obs.sigma
+    if obs.mask is not None:
+        residual = residual[:, obs.mask]
     return float(prior - 0.5 * np.dot(residual.ravel(), residual.ravel()))
 
 
@@ -94,14 +122,18 @@ def run_sampler(
     nsteps: int = 500,
     seed: int = 7,
     template: Disk = TRUTH,
+    prior_mu: np.ndarray | None = None,
+    prior_sig: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Ensemble stretch move. Returns chain (step, walker, param), log-prob, acceptance."""
-    if nwalkers < 2 * len(PRIOR_MU) or nwalkers % 2:
+    mu = PRIOR_MU if prior_mu is None else np.asarray(prior_mu, dtype=np.float64)
+    sig = PRIOR_SIG if prior_sig is None else np.asarray(prior_sig, dtype=np.float64)
+    if nwalkers < 2 * len(mu) or nwalkers % 2:
         raise ValueError("nwalkers must be even and at least twice the parameter count")
     rng = np.random.default_rng(seed)
-    ndim = len(PRIOR_MU)
-    pos = PRIOR_MU + PRIOR_SIG * rng.normal(size=(nwalkers, ndim))
-    lp = np.array([log_probability(p, grid, obs, template) for p in pos])
+    ndim = len(mu)
+    pos = mu + sig * rng.normal(size=(nwalkers, ndim))
+    lp = np.array([log_probability(p, grid, obs, template, mu, sig) for p in pos])
     chain = np.empty((nsteps, nwalkers, ndim), dtype=np.float64)
     lp_chain = np.empty((nsteps, nwalkers), dtype=np.float64)
     accepts = 0
@@ -113,7 +145,7 @@ def run_sampler(
             partners = complement[rng.integers(0, len(complement), size=len(group))]
             z = ((2.0 - 1.0) * rng.random(len(group)) + 1.0) ** 2 / 2.0
             proposal = pos[partners] + z[:, None] * (pos[group] - pos[partners])
-            lp_prop = np.array([log_probability(p, grid, obs, template) for p in proposal])
+            lp_prop = np.array([log_probability(p, grid, obs, template, mu, sig) for p in proposal])
             log_acc = (ndim - 1) * np.log(z) + lp_prop - lp[group]
             accept = np.log(rng.random(len(group))) < log_acc
             pos[group[accept]] = proposal[accept]
@@ -127,7 +159,8 @@ def run_sampler(
             print(
                 f"  step {step + 1:4d}/{nsteps}  mean lnP {np.mean(lp):.1f}  "
                 f"accept {accepts / proposals:.2f}  "
-                f"median τ {med[2]:.2f}  h★/h dust {med[3] / med[4]:.2f}  h★ {med[3]:.2f}",
+                f"median τ {med[2]:.2f}  h★/h dust {med[3] / med[4]:.2f}  h★ {med[3]:.2f}  "
+                f"h_R {med[0]:.2f}  g/r {med[5]:.2f}",
                 flush=True,
             )
     return chain, lp_chain, accepts / max(proposals, 1)

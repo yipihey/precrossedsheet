@@ -11,23 +11,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .infer import PRIOR_MU, PRIOR_SIG, Observation, predict
-from .model import EXTINCTION, AttenuationGrid, Disk, render, tonemap
+from .model import AttenuationGrid, Disk, render, tonemap
 
 
 def save_summary(
     path: Path,
     obs: Observation,
-    truth: Disk,
+    template: Disk,
     samples: np.ndarray,
     grid: AttenuationGrid,
     scale: float,
+    truth: Disk | None = None,
+    title: str = "Face-on exponential disk",
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(3)
     pick = rng.choice(len(samples), size=min(8, len(samples)), replace=False)
-    disks = [truth.with_log_params(samples[i]) for i in pick]
-    median = truth.with_log_params(np.median(samples, axis=0))
+    disks = [template.with_log_params(samples[i]) for i in pick]
+    median = template.with_log_params(np.median(samples, axis=0))
     model = predict(median, grid, obs)
+    extinction = obs.band_extinction()
 
     fig = plt.figure(figsize=(12.4, 7.6), layout="constrained")
     grid_spec = fig.add_gridspec(2, 3)
@@ -54,7 +57,8 @@ def save_summary(
     prior = np.exp(PRIOR_MU[3:5] + PRIOR_SIG[3:5] * rng.normal(size=(2500, 2)))
     ax.scatter(prior[:, 0], prior[:, 1], s=6, c="#b7c0cc", linewidths=0, label="prior", rasterized=True)
     ax.scatter(np.exp(samples[:, 3]), np.exp(samples[:, 4]), s=10, c="#c9842a", linewidths=0, label="posterior", rasterized=True)
-    ax.scatter([truth.h_star], [truth.h_dust], s=60, c="black", marker="+", label="truth")
+    if truth is not None:
+        ax.scatter([truth.h_star], [truth.h_dust], s=60, c="black", marker="+", label="truth")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("stellar scale height (kpc)")
@@ -67,18 +71,19 @@ def save_summary(
     npix = 140
     center = npix // 2
     for disk in disks:
-        edge = render(disk, 78.0, azimuth_deg=8.0, npix_x=npix, extent_x=extent, steps=180)
+        edge = render(disk, 78.0, azimuth_deg=8.0, npix_x=npix, extent_x=extent, steps=140, extinction=extinction)
         column = edge[1, :, center]
         y = np.linspace(extent, -extent, npix)
         ax.plot(y, column, color="#c9842a", alpha=0.45, lw=1.2)
-    truth_edge = render(truth, 78.0, azimuth_deg=8.0, npix_x=npix, extent_x=extent, steps=180)
-    y = np.linspace(extent, -extent, npix)
-    ax.plot(y, truth_edge[1, :, center], color="black", lw=1.6, label="truth")
+    if truth is not None:
+        truth_edge = render(truth, 78.0, azimuth_deg=8.0, npix_x=npix, extent_x=extent, steps=140, extinction=extinction)
+        y = np.linspace(extent, -extent, npix)
+        ax.plot(y, truth_edge[1, :, center], color="black", lw=1.6, label="truth")
+        ax.legend(frameon=False, fontsize=8)
     ax.set_xlim(-3.5, 3.5)
     ax.set_xlabel("height on the sky at 78° (kpc)")
     ax.set_ylabel("r-band surface brightness")
     ax.set_title("Same draws, inclined")
-    ax.legend(frameon=False, fontsize=8)
 
     ax = fig.add_subplot(grid_spec[1, 2])
     radius = _pixel_radius(obs.npix, obs.extent)
@@ -98,11 +103,12 @@ def save_summary(
     ax.legend(frameon=False, fontsize=8)
 
     ratio = np.exp(samples[:, 3] - samples[:, 4])
+    truth_note = "" if truth is None else f"   ·   truth {truth.h_star / truth.h_dust:.2f}"
     fig.suptitle(
-        "Face-on exponential disk"
+        f"{title}"
         f"   ·   posterior h★/h dust = {np.median(ratio):.2f}"
-        f"   ·   truth {truth.h_star / truth.h_dust:.2f}"
-        f"   ·   A_g/A_V = {EXTINCTION[0]:.2f}",
+        f"{truth_note}"
+        f"   ·   A_blue/A_V = {extinction[0]:.2f}",
         fontsize=12,
     )
     fig.savefig(path, dpi=140)
