@@ -62,73 +62,83 @@ def fit_cloud(
     extent: float,
     tau_v: np.ndarray,
     extinction: np.ndarray,
-    star_sigmas: tuple[float, ...] = (0.14, 0.32, 0.75, 1.8),
-    dust_sigmas: tuple[float, ...] = (0.90, 2.0, 4.0),
+    star_sigmas: tuple[float, ...] | None = None,
+    dust_sigmas: tuple[float, ...] = (0.10, 0.22, 0.45),
     cluster_excess: float = 0.42,
 ) -> GaussianCloud:
     """Non-negative spherical clouds whose mixed face-on layer matches ``image``.
 
     ``image`` is observed surface brightness in three bands, already the
-    emergent light. ``tau_v`` is the face-on V-band optical-depth map. Star
+    emergent light. Dust is read from the image: a lane that is darker and
+    redder than the surrounding disk, not a smooth exponential. Star
     luminosities are the intrinsic columns that, mixed with that dust, return
-    the image. Dust is its own set of spherical clouds, not a slab.
+    the image. ``tau_v`` is used only when the image has no such lanes.
 
-    Each bright compact knot is given one cloud from ``CLUSTER_SIGMAS``. The
-    grid that follows is kept off that knot, so the cluster's light stays in
-    that one small cloud and the wider clouds fit the disk around it.
+    By default every bright pixel is one small cloud, so the arms stay as
+    sharp as the image and each knot is a few clouds rather than a stack of
+    wide ones. Passing ``star_sigmas`` builds a multi-scale grid instead, and
+    then each bright compact knot is still one cloud from ``CLUSTER_SIGMAS``.
     """
     extinction = np.asarray(extinction, dtype=np.float64)
     observed = np.clip(image, 0.0, None)
-    tau = np.clip(tau_v, 0.0, None)
+    tau = tau_from_image(observed, extinction, extent)
+    if float(np.quantile(tau, 0.995)) < 0.05:
+        tau = np.clip(tau_v, 0.0, None)
     dust_mu, dust_sigma, dust_tau = _fit_map(
         tau,
         extent,
         dust_sigmas,
-        min_frac=(0.03, 0.015, 0.008),
-        spacing_factor=1.35,
+        min_frac=(0.08, 0.05, 0.03),
+        spacing_factor=1.25,
         iterations=6,
     )
     intrinsic = _intrinsic_columns(observed, tau, extinction)
-    cluster_mu, cluster_sigma, cluster_lum = _place_clusters(observed, intrinsic, extent, cluster_excess)
-    residual = intrinsic
-    if len(cluster_sigma):
-        residual = np.array(intrinsic, copy=True)
-        ny, nx = intrinsic.shape[1:]
-        for band in range(3):
-            placed = _splat(
-                -cluster_mu[:, 0],
-                -cluster_mu[:, 1],
-                cluster_sigma,
-                cluster_lum[:, band],
-                nx,
-                ny,
-                extent,
-                extent,
-                _KERNEL_CACHE,
-            )
-            residual[band] = np.clip(intrinsic[band] - placed, 0.0, None)
-    star_mu, star_sigma, star_r = _fit_map(
-        residual[1],
-        extent,
-        star_sigmas,
-        min_frac=(0.10, 0.05, 0.025, 0.012),
-        spacing_factor=1.25,
-        iterations=8,
-        avoid=None if len(cluster_mu) == 0 else cluster_mu[:, :2],
-        avoid_radius=0.22,
-        avoid_below=0.50,
-    )
+    if star_sigmas is None:
+        cluster_mu = np.zeros((0, 3))
+        cluster_sigma = np.zeros(0)
+        cluster_lum = np.zeros((0, 3))
+        star_mu, star_sigma, grid_lum = _pixel_stars(intrinsic, extent)
+    else:
+        cluster_mu, cluster_sigma, cluster_lum = _place_clusters(observed, intrinsic, extent, cluster_excess)
+        residual = intrinsic
+        if len(cluster_sigma):
+            residual = np.array(intrinsic, copy=True)
+            ny, nx = intrinsic.shape[1:]
+            for band in range(3):
+                placed = _splat(
+                    -cluster_mu[:, 0],
+                    -cluster_mu[:, 1],
+                    cluster_sigma,
+                    cluster_lum[:, band],
+                    nx,
+                    ny,
+                    extent,
+                    extent,
+                    _KERNEL_CACHE,
+                )
+                residual[band] = np.clip(intrinsic[band] - placed, 0.0, None)
+        star_mu, star_sigma, star_r = _fit_map(
+            residual[1],
+            extent,
+            star_sigmas,
+            min_frac=(0.025, 0.015, 0.01),
+            spacing_factor=1.15,
+            iterations=6,
+            avoid=None if len(cluster_mu) == 0 else cluster_mu[:, :2],
+            avoid_radius=0.22,
+            avoid_below=0.50,
+        )
+        if len(star_sigma):
+            color_g = _sample(residual[0], extent, star_mu[:, 0], star_mu[:, 1])
+            color_z = _sample(residual[2], extent, star_mu[:, 0], star_mu[:, 1])
+            base_r = _sample(residual[1], extent, star_mu[:, 0], star_mu[:, 1])
+            color_g = np.clip(color_g / np.maximum(base_r, 1e-4), 0.12, 6.0)
+            color_z = np.clip(color_z / np.maximum(base_r, 1e-4), 0.15, 8.0)
+            grid_lum = star_r[:, None] * np.stack([color_g, np.ones_like(star_r), color_z], axis=1)
+        else:
+            grid_lum = np.zeros((0, 3))
     if len(star_sigma) == 0 and len(cluster_sigma) == 0:
         raise RuntimeError("no star clouds were placed on the image")
-    if len(star_sigma):
-        color_g = _sample(residual[0], extent, star_mu[:, 0], star_mu[:, 1])
-        color_z = _sample(residual[2], extent, star_mu[:, 0], star_mu[:, 1])
-        base_r = _sample(residual[1], extent, star_mu[:, 0], star_mu[:, 1])
-        color_g = np.clip(color_g / np.maximum(base_r, 1e-4), 0.2, 3.5)
-        color_z = np.clip(color_z / np.maximum(base_r, 1e-4), 0.25, 4.0)
-        grid_lum = star_r[:, None] * np.stack([color_g, np.ones_like(star_r), color_z], axis=1)
-    else:
-        grid_lum = np.zeros((0, 3))
     cloud = GaussianCloud(
         star_mu=np.concatenate([cluster_mu, star_mu], axis=0),
         star_sigma=np.concatenate([cluster_sigma, star_sigma]),
@@ -223,21 +233,37 @@ def render_cloud(
     return image
 
 
+def _depth_field(xy: np.ndarray, rng: np.random.Generator, length: float = 2.2) -> np.ndarray:
+    """Unit-variance depth, smooth on a scale of ``length`` kpc."""
+    if len(xy) == 0:
+        return np.zeros(0)
+    extent = max(float(np.max(np.abs(xy))) * 1.08, 1.0)
+    n = 64
+    field = rng.normal(size=(n, n))
+    pix = 2.0 * extent / n
+    field = convolve_gaussian(field, max(length / pix, 1.0))
+    field = field / max(float(np.std(field)), 1e-6)
+    return _sample(field, extent, xy[:, 0], xy[:, 1])
+
+
 def depth_route(cloud: GaussianCloud, n_draws: int = 4, amplitude: float = 1.2, seed: int = 5) -> list[tuple[np.ndarray, np.ndarray]]:
     """Closed path of z offsets. Zero at both ends, so face-on frames agree.
 
-    The offset scales with each cloud's own radius, so a knot stays near the
-    plane and a large cloud can move by about its own size.
+    The offset scales with each cloud's own radius, with a thin-disk floor so a
+    pixel-sized cloud can still change depth. Neighboring clouds share a smooth
+    depth field, so an inclined view warps instead of breaking into speckle.
     """
     rng = np.random.default_rng(seed)
     zero_s = np.zeros(len(cloud.star_sigma))
     zero_d = np.zeros(len(cloud.dust_sigma))
+    star_width = np.maximum(cloud.star_sigma, 0.10)
+    dust_width = np.maximum(cloud.dust_sigma, 0.16)
     route = [(zero_s, zero_d)]
     for _ in range(n_draws):
         route.append(
             (
-                amplitude * cloud.star_sigma * rng.normal(size=len(cloud.star_sigma)),
-                amplitude * cloud.dust_sigma * rng.normal(size=len(cloud.dust_sigma)),
+                amplitude * star_width * _depth_field(cloud.star_mu[:, :2], rng),
+                amplitude * dust_width * _depth_field(cloud.dust_mu[:, :2], rng),
             )
         )
     route.append((zero_s, zero_d))
@@ -282,6 +308,37 @@ def _match_emergent(
     return replace(cloud, star_luminosity=np.clip(luminosity, 0.0, None))
 
 
+def tau_from_image(image: np.ndarray, extinction: np.ndarray, extent: float) -> np.ndarray:
+    """V-band optical depth from the part of the color that follows the extinction curve.
+
+    The residual against the local disk is split into a reddening component and
+    the color that remains. Bright peaks are left out, so a blue or pink knot
+    stays a stellar cloud. A light smooth joins neighboring dusty pixels into
+    lanes without rebuilding a featureless screen.
+    """
+    extinction = np.asarray(extinction, dtype=np.float64)
+    bands = np.clip(image, 0.0, None)
+    r = bands[1]
+    ny, nx = r.shape
+    pix = 2.0 * extent / max(nx, 1)
+    sigma = max(0.40 / pix, 2.0)
+    smooth = np.stack([convolve_gaussian(bands[b], sigma) for b in range(3)])
+    gr = np.log(np.clip(bands[0], 1e-3, None) / np.clip(r, 1e-3, None))
+    zr = np.log(np.clip(bands[2], 1e-3, None) / np.clip(r, 1e-3, None))
+    grs = np.log(np.clip(smooth[0], 1e-3, None) / np.clip(smooth[1], 1e-3, None))
+    zrs = np.log(np.clip(smooth[2], 1e-3, None) / np.clip(smooth[1], 1e-3, None))
+    # One unit of τ moves (log g/r, log z/r) along the CCM curve.
+    direction = np.array([-(extinction[0] - extinction[1]), -(extinction[2] - extinction[1])])
+    residual_gr = gr - grs
+    residual_zr = zr - zrs
+    with np.errstate(divide="ignore", invalid="ignore"):
+        tau = (residual_gr * direction[0] + residual_zr * direction[1]) / float(direction @ direction)
+    tau = np.nan_to_num(tau, nan=0.0, posinf=0.0, neginf=0.0)
+    tau = np.where((smooth[1] > 0.05) & (r < smooth[1] * 1.15), tau, 0.0)
+    tau = np.clip(tau, 0.0, 2.5)
+    return convolve_gaussian(tau, max(0.12 / pix, 0.8))
+
+
 def _intrinsic_columns(observed: np.ndarray, tau_v: np.ndarray, extinction: np.ndarray) -> np.ndarray:
     """Invert a mixed slab so face-on radiative transfer returns ``observed``."""
     intrinsic = np.empty_like(observed)
@@ -292,6 +349,27 @@ def _intrinsic_columns(observed: np.ndarray, tau_v: np.ndarray, extinction: np.n
         factor[thick] = kt[thick] / (1.0 - np.exp(-kt[thick]))
         intrinsic[band] = observed[band] * factor
     return intrinsic
+
+
+def _pixel_stars(intrinsic: np.ndarray, extent: float, floor: float = 0.04) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One cloud per bright pixel, small enough that the face-on image stays sharp.
+
+    The luminosity is the intrinsic surface brightness times the pixel area, so
+    a knot that covers a few pixels is a few clouds and keeps that pixel's color.
+    """
+    r = intrinsic[1]
+    ny, nx = r.shape
+    yy, xx = np.nonzero(r > floor)
+    if len(yy) == 0:
+        return np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3))
+    pix = 2.0 * extent / nx
+    sky_x = -extent + (xx + 0.5) / nx * 2.0 * extent
+    sky_y = extent - (yy + 0.5) / ny * 2.0 * extent
+    mu = np.stack([-sky_x, -sky_y, np.zeros(len(xx))], axis=1)
+    sigma = np.full(len(xx), 0.55 * pix)
+    area = pix * pix
+    luminosity = np.stack([np.clip(intrinsic[b, yy, xx], 0.0, None) * area for b in range(3)], axis=1)
+    return mu, sigma, luminosity
 
 
 def _place_clusters(

@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faceon_disk.model import convolve_gaussian  # noqa: E402
-from faceon_disk.splats import GaussianCloud, fit_cloud, prepare_observed, render_cloud  # noqa: E402
+from faceon_disk.splats import GaussianCloud, fit_cloud, prepare_observed, render_cloud, tau_from_image  # noqa: E402
 
 
 def _axis_ratio(image: np.ndarray) -> float:
@@ -176,3 +176,40 @@ class SplatTests(unittest.TestCase):
         rendered = render_cloud(cloud, 0.0, 0.0, npix, extent, extinction=np.ones(3), n_slices=1)
         self.assertGreater(float(rendered[1, 20, 30]), 1.2)
         self.assertLess(float(rendered[1, 20, 30]), 2.6)
+
+    def test_dust_follows_the_red_lane_and_the_blue_knot_stays_blue(self):
+        extent = 6.0
+        npix = 72
+        yy, xx = np.mgrid[:npix, :npix]
+        radius = np.hypot(yy - 36, xx - 36)
+        disk = np.exp(-((radius / 16.0) ** 2))
+        image = np.stack([0.85 * disk, disk, 1.15 * disk])
+        lane = (np.abs(xx - 46) <= 1) & (radius < 22)
+        image[0, lane] *= 0.40
+        image[1, lane] *= 0.62
+        image[2, lane] *= 0.85
+        image[0, 28, 24] += 0.9
+        image[1, 28, 24] += 0.45
+        image[2, 28, 24] += 0.25
+        extinction = np.array([1.18, 0.84, 0.46])
+        tau = tau_from_image(image, extinction, extent)
+        self.assertGreater(float(tau[36, 46]), float(tau[36, 26]) + 0.05)
+        self.assertLess(float(tau[28, 24]), 0.05)
+        cloud = fit_cloud(
+            image,
+            extent,
+            tau_v=np.zeros((npix, npix)),
+            extinction=extinction,
+            star_sigmas=(0.18, 0.40),
+            dust_sigmas=(0.16, 0.35),
+            cluster_excess=5.0,
+        )
+        self.assertGreater(len(cloud.dust_sigma), 0)
+        sky_x = -extent + (np.arange(npix) + 0.5) / npix * 2.0 * extent
+        lane_x = sky_x[46]
+        dust_x = -cloud.dust_mu[:, 0]
+        self.assertGreater(float(np.average(np.exp(-((dust_x - lane_x) ** 2)))), 0.15)
+        rendered = render_cloud(cloud, 0.0, 0.0, npix, extent, extinction=extinction, n_slices=1)
+        blue = rendered[0, 28, 24] / max(rendered[1, 28, 24], 1e-4)
+        red_lane = rendered[0, 36, 46] / max(rendered[1, 36, 46], 1e-4)
+        self.assertGreater(blue, red_lane * 1.3)

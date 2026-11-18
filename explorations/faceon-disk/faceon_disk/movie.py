@@ -265,10 +265,10 @@ def _render_cloud_pair(
         cloud,
         inclination,
         az,
-        npix_x=360,
+        npix_x=400,
         extent_x=extent,
         extinction=extinction,
-        n_slices=16,
+        n_slices=12,
     )
     extent_x, extent_y = _zoom_box(inclination, extent)
     npix_y = max(96, int(round(220 * extent_y / extent_x)))
@@ -283,16 +283,13 @@ def _render_cloud_pair(
         extinction=extinction,
         n_slices=16,
     )
-    blur = 0.25
-    return tonemap(convolve_gaussian(main, blur), scale=scale), tonemap(convolve_gaussian(zoom, blur), scale=scale)
+    return tonemap(main, scale=scale), tonemap(zoom, scale=scale)
 
 
 def _cloud_caption(cloud: GaussianCloud) -> list[str]:
     median_sigma = float(np.median(cloud.star_sigma)) if len(cloud.star_sigma) else 0.0
-    n_cluster = int(np.sum(cloud.star_sigma <= 0.13))
     return [
         f"stars        {len(cloud.star_sigma):5d}",
-        f"clusters     {n_cluster:5d}",
         f"dust clouds  {len(cloud.dust_sigma):5d}",
         f"median σ     {median_sigma:5.2f} kpc",
         f"z rms        {cloud.z_rms:5.2f} kpc",
@@ -305,7 +302,7 @@ def _depth_prior_points(cloud: GaussianCloud, n: int = 2400, amplitude: float = 
     if len(sigma) == 0:
         return np.zeros((0, 2))
     pick = rng.integers(0, len(sigma), size=n)
-    z_abs = np.abs(amplitude * sigma[pick] * rng.normal(size=n))
+    z_abs = np.abs(amplitude * np.maximum(sigma[pick], 0.10) * rng.normal(size=n))
     return np.stack([sigma[pick], z_abs], axis=1)
 
 
