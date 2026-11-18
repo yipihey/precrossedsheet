@@ -227,7 +227,7 @@ impl Lpt {
     }
 
     /// Solve ∇·S = Ŝ for a potential field: Ŝ_a = -i k_a Ŝ / k².
-    fn solve_longitudinal(&self, shat: &[C64]) -> Vec<Vec<C64>> {
+    pub(crate) fn solve_longitudinal(&self, shat: &[C64]) -> Vec<Vec<C64>> {
         let grid = &self.grid;
         let d = grid.dim;
         let mut out = vec![vec![C64::new(0.0, 0.0); grid.size]; d];
@@ -240,7 +240,7 @@ impl Lpt {
         out
     }
     /// Solve ∇×S = T for a divergence-free field: Ŝ = i (k × T̂)/k².
-    fn solve_transverse(&self, that: &[Vec<C64>]) -> Vec<Vec<C64>> {
+    pub(crate) fn solve_transverse(&self, that: &[Vec<C64>]) -> Vec<Vec<C64>> {
         let grid = &self.grid;
         let d = grid.dim;
         let mut out = vec![vec![C64::new(0.0, 0.0); grid.size]; d];
