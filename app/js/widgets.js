@@ -5,7 +5,7 @@ import { encodeHash, makeDefaults, decodeHash } from './state.js';
 import { mountTwoPointWidget } from './two-point.js';
 import { mountIntroSheetWidget } from './intro-sheet.js';
 
-const VIEW_BY_WIDGET = { curve: 'sheet', sheet: 'sheet', density: 'density', spectra: 'spectra', pdf: 'pdf', gradient: 'gradient', published: 'published' };
+const VIEW_BY_WIDGET = { curve: 'sheet', sheet: 'sheet', density: 'density', spectra: 'spectra', pdf: 'pdf', gradient: 'gradient', counterterms: 'counterterms', published: 'published' };
 for (const host of document.querySelectorAll('.qd-widget')) {
   if (host.dataset.widget === 'two-point') {
     mountTwoPointWidget(host);

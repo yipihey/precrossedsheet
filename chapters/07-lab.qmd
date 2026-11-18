@@ -41,6 +41,7 @@ The laboratory is structured around eight canonical numerical experiments design
 | **7. Volume vs Mass PDFs** | Weighting measure; observation filter $R_s$ | Contrast between void-dominated volume PDFs ($p_V$) and peak-dominated mass PDFs ($p_M = r p_V$); environmental smoothing. |
 | **8. Power Spectrum Derivatives** | Amplitude tangent; LPT order | Exact automatic differentiation of continuous Fourier power via confluent divided differences. |
 | **9. Published Cosmological Replay** | Observation radius $R_s$, model order | Empirical verification of sub-percent 4LPT accuracy on large, pre-crossing scales in $\Lambda$CDM. |
+| **10. EFT sound-speed counterterms (draft)** | Dual filters $R_{\rm UV}$, $R_{\rm IR}$ (or auto $\sigma/3$); fit $k_{\rm max}$ | Compare 1–4LPT exact-P1 spectra at a mildly crossed UV filter versus a safer IR filter; fit $-2c_s^2 k^2 P_{\rm lin}$ (@sec-eft-counterterms). |
 
 ::: {.callout-tip title="Start with a gentle three-dimensional field"}
 Launch the 3D laboratory experiment. Rotate the tetrahedral sheet to inspect the cosmic web. Toggle between the continuous sheet density and the CIC particle density to witness the dramatic elimination of void shot noise.

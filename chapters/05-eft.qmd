@@ -1,0 +1,117 @@
+---
+title: "UV Response, Sound Speed, and Lagrangian Counterterms"
+---
+
+## Why Small Scales Feed Large Scales {#sec-eft-counterterms}
+
+The first formulations of the Effective Field Theory of Large Scale Structure (EFTofLSS) make a precise claim: modes below a cutoff $\Lambda$ are not simply discarded. Their gravitational influence on the long-wavelength fluid is reorganized into a finite set of local operators whose leading coefficient is an effective sound speed $c_s^2$ [@carrasco2012; @porto2014]. In Eulerian language the counterterm density is proportional to $\nabla^2\delta$; in the one-loop power spectrum it appears as
+
+$$
+P_{\rm EFT}(k) = P_{\rm tree}(k) + P_{22}(k) + P_{13}(k) - 2\,c_s^2\,k^2\,P_{\rm lin}(k) + \cdots.
+$$ {#eq-eft-power-counterterm}
+
+Lagrangian-space EFT (LEFT) organizes the same physics as a multipole expansion of extended objects on the initial sheet [@porto2014; @schmidt2021]. The operators absorb ultraviolet (UV) sensitivity of long-wavelength observables to short-distance dynamics, including the back-reaction of modes that have already shell-crossed.
+
+Mirbabayi & Zaldarriaga reformulate the Eulerian EFT so that the stress $\tau_{ij}$ sources the **displacement** of fluid elements rather than the Eulerian density alone [@mirbabayi2016]. That bookkeeping is the natural language of this report: the laboratory already carries the nLPT map $\mathbf x(\mathbf q)= \mathbf q+\boldsymbol\psi(\mathbf q)$, so a fitted counterterm is a prediction for how UV modes move each vertex relative to a safer IR filter of the same seed.
+
+This chapter is a **draft laboratory section**. It does not replace a calibrated one-loop LEFT pipeline. Instead it uses the pre-crossed sheet machinery—the four LPT solutions of @sec-lpt and the exact P1 deposit of @sec-meshing—to (i) measure the UV→IR response, (ii) fit $c_s^2$ from that response, (iii) compare the resulting displacement prediction vertex-by-vertex, and (iv) sample a stochastic residual ensemble consistent with the leftover power.
+
+## Dual Gaussian Smoothings as a Lagrangian Cutoff Pair {#sec-eft-dual-filters}
+
+Our laboratory never applies an Eulerian sharp-$k$ cutoff after displacement. Ultraviolet content is controlled by the Gaussian initial filter $R_f$ that multiplies the linear power by $e^{-k^2 R_f^2}$ (@sec-cosmology). Two radii of the **same seeded realization** therefore share long-wavelength phases and differ only in the band of modes between them:
+
+* **UV filter $R_{\rm UV}$.** Chosen so that about one percent of Kuhn tetrahedra are inverted at $a=1$. On the draft $32^3$ laboratory volume with seed $7$, $R_{\rm UV}=5\,h^{-1}\mathrm{Mpc}$ yields an inverted-element fraction $\approx 0.99\%$ at 4LPT{{< test dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit "∼1% UV tetrahedra" >}}.
+* **IR filter $R_{\rm IR}$.** Chosen so that the continuum linear RMS satisfies $\sigma_{\rm IR}\approx\sigma_{\rm UV}/3$. The matching radius is $R_{\rm IR}\approx 17.2\,h^{-1}\mathrm{Mpc}$ for the default Planck-like parameters{{< test ir_filter_matches_one_third_linear_sigma "σ_IR = σ_UV/3" >}}.
+
+The IR sheet is essentially uncrossed. The UV sheet is still mostly single-stream, but it carries the nonlinear response of the intermediate band that the IR filter removed. That band is precisely what an EFT counterterm is designed to encode—and because both sheets share the same seed, the difference $\Delta\boldsymbol\psi=\boldsymbol\psi_{\rm UV}-\boldsymbol\psi_{\rm IR}$ is a concrete training signal for the free coefficients.
+
+A subtlety: the two filters also change the *linear* variance. At fixed cosmology $\sigma_8$, $P_{\rm lin}^{\rm UV}/P_{\rm lin}^{\rm IR}=\mathrm{e}^{k^2(R_{\rm IR}^2-R_{\rm UV}^2)}$ to leading order has the same $k^2 P_{\rm lin}$ shape as the sound-speed operator, so a density-only $c_s^2$ fit is partly degenerate with the linear filter. The laboratory therefore:
+
+* Offers a **match linear variance** toggle (`mlv=1`) that scales the IR $\delta_0$ by $\sigma_{\rm UV}/\sigma_{\rm IR}$ before LPT for the *primary* fit, while always returning both native and matched density ratios for side-by-side comparison{{< test match_linear_variance_scales_ir_sigma_to_uv "mlv + side-by-side" >}}.
+* Optionally replaces Gaussian filters with **pair-fixed soft modes** (`pfs=1`): a sharp-$k$ split of one white-noise seed with $k_{\rm UV}=1/R_{\rm UV}$ and $k_{\rm IR}=1/R_{\rm IR}$, so every mode with $|k|\le k_{\rm IR}$ is bitwise identical{{< test pair_fixed_soft_modes_share_linear_power_below_ir_cut "pair-fixed soft modes" >}}.
+* Refits $c_s^2$ across a ladder of $k_{\rm max}$ without re-running LPT (operator stability), exports the fit table as CSV, and previews a mid-plane slice of $\boldsymbol\psi_{\rm UV}$ against $\boldsymbol\psi_{\rm IR}+\boldsymbol\psi_{\rm ct}$ plus a few stochastic draws.
+
+## Exact P1 Spectra for 1LPT–4LPT {#sec-eft-p1-spectra}
+
+For each filter and each order $n=1,\ldots,4$ the laboratory:
+
+1. Builds the nLPT displacement at the chosen epoch (@sec-lpt).
+2. Deposits the sheet with the **exact P1** estimator (piecewise-linear vertex Jacobians) onto a fine Eulerian mesh, typically $N_e=2N_q$.
+3. Measures the isotropic FFT power spectrum $P_n(k;R_f)$ in physical units.
+
+P1 is preferred here because it suppresses the high-$k$ facet floor of P0 while remaining a conservative, shot-noise-free sheet deposit (@sec-meshing). No particle CIC/TSC spectrum enters the fit: the comparison isolates Lagrangian UV content, not estimator discreteness. The density $P(k)$ path remains a companion diagnostic; the primary EFT comparison below is at the displacement level.
+
+## Fitting the Sound Speed from Spectra {#sec-eft-fit}
+
+Write $P_{\rm UV}(k)$ and $P_{\rm IR}(k)$ for a fixed LPT order. On large scales the leading cutoff response is absorbed by the same operator that appears in @eq-eft-power-counterterm:
+
+$$
+P_{\rm UV}(k)\;\approx\;P_{\rm IR}(k) - 2\,c_s^2\,k^2\,P_{\rm lin}^{\rm IR}(k),
+$$ {#eq-dual-smoothing-cs2}
+
+where $P_{\rm lin}^{\rm IR}$ is the realized linear power of the IR-filtered seed at the output epoch. A mode-count-weighted least-squares fit of @eq-dual-smoothing-cs2 over $0<k\le k_{\rm max}$ recovers $c_s^2$ in $(h^{-1}\mathrm{Mpc})^2${{< src eft::fit_sound_speed >}}. On synthetic spectra the solver returns an injected coefficient to machine precision{{< test sound_speed_fit_recovers_injected_counterterm "injected cₛ² recovery" >}}.
+
+Two interpretive remarks connect the laboratory to the classical papers:
+
+1. **Sign.** Extra UV modes typically *increase* nonlinear power relative to the IR sheet at intermediate $k$, so the fitted $c_s^2$ in @eq-dual-smoothing-cs2 is negative when the UV run is treated as the more complete theory. In the standard SPT-versus-$N$-body calibration the same operator often carries the opposite role (reducing one-loop SPT toward the simulation). Both are cutoff-matching statements; only the reference theory changes.
+2. **Higher derivatives.** A pure $k^2$ template cannot absorb the full band between $R_{\rm UV}$ and $R_{\rm IR}$. Residuals in the draft fit diagnose the size of $k^4$ and stochastic operators that a production LEFT analysis would float next [@carrasco2012; @porto2014].
+
+## Displacement Counterterm and Vertex Prediction {#sec-eft-displacement}
+
+The density operator of @eq-dual-smoothing-cs2 is a projection of a more elementary statement about fluid trajectories. Following the Mirbabayi–Zaldarriaga bookkeeping, the stress sources a counterterm displacement; the leading local operator used here is
+
+$$
+\widehat{\boldsymbol\psi}_{\rm ct}(\mathbf k) = -\,c_s^2\,k_{\rm phys}^2\,\widehat{\boldsymbol\psi}_{\rm IR}(\mathbf k),
+$$ {#eq-displacement-ct}
+
+so that the UV sheet is predicted from the IR sheet by
+
+$$
+\boldsymbol\psi_{\rm UV}(\mathbf q)\;\approx\;\boldsymbol\psi_{\rm IR}(\mathbf q)+\boldsymbol\psi_{\rm ct}(\mathbf q)+\boldsymbol\psi_{\rm stoch}(\mathbf q).
+$$ {#eq-displacement-prediction}
+
+The coefficient $c_s^2$ is fit by least squares of $\Delta\boldsymbol\psi\approx\boldsymbol\psi_{\rm ct}$ on Fourier modes with $k\le k_{\rm max}${{< src eft::fit_displacement_sound_speed >}}. On a synthetic field with an injected $\alpha$ the recovery is exact and the vertex residual RMS collapses{{< test displacement_counterterm_fit_reduces_vertex_rms "injected displacement cₛ²" >}}. On the dual-smoothing 3D draft, the same fit reduces the UV−IR vertex RMS and explains a measurable fraction of $\Delta\boldsymbol\psi$ variance{{< test dual_smoothing_3d_tetrahedra_near_percent_crossing_and_cs2_fit "vertex RMS after CT" >}}.
+
+This is the direct prediction comparison the density $P(k)$ alone cannot give: each Lagrangian vertex carries a concrete $\boldsymbol\psi_{\rm IR}+\boldsymbol\psi_{\rm ct}$ that can be scored against $\boldsymbol\psi_{\rm UV}$. The density fit of @sec-eft-fit remains useful as a companion check that the same $c_s^2$ scale also organizes $P(k)$, but it does not substitute for the vertex-level residual.
+
+## Stochastic Residual as an Ensemble {#sec-eft-stochastic}
+
+The deterministic operator @eq-displacement-ct cannot exhaust $\Delta\boldsymbol\psi$: modes between the two filters, higher-derivative stress, and genuinely stochastic stress leave a residual field $\boldsymbol\psi_{\rm resid}=\boldsymbol\psi_{\rm UV}-(\boldsymbol\psi_{\rm IR}+\boldsymbol\psi_{\rm ct})$. In the EFT that leftover is not a bug—it is the stochastic sector of the statistical theory. The laboratory therefore:
+
+1. Measures the shell-averaged power of $\boldsymbol\psi_{\rm resid}$ on $k\le k_{\rm max}$.
+2. Draws an ensemble of Gaussian realizations $\{\boldsymbol\psi_{\rm stoch}^{(r)}\}$ with that shell power{{< src eft::draw_stochastic_displacement_ensemble >}}.
+3. Treats $\boldsymbol\psi_{\rm IR}+\boldsymbol\psi_{\rm ct}$ as the ensemble mean and reports the fraction of UV−IR vertex components that fall inside the $1\sigma$ cloud of the draws.
+
+Each draw is a realization consistent with the fitted statistical theory (deterministic $c_s^2$ plus residual power). It is not a claim that the stochastic stress is Gaussian in a production LEFT pipeline—only that once the residual spectrum is known, an ensemble of displacements with that spectrum is the natural Monte Carlo counterpart of the stochastic term.
+
+## How the Two Approaches Meet {#sec-eft-dictionary}
+
+| Laboratory sheet construction | EFTofLSS / LEFT |
+|---|---|
+| Gaussian $R_f$ on initial modes | Cutoff $\Lambda\sim 1/R_f$ on the Wilsonian fluid |
+| Exact $1+\delta=1/J$ on tetrahedra | Density operators expanded about long-wavelength fields |
+| Dual $R_{\rm UV},R_{\rm IR}$ difference $\Delta\boldsymbol\psi$ | Explicit UV sensitivity of trajectories to short modes |
+| Fit of @eq-displacement-ct | Measurement of $c_s^2(\Lambda)$ from cutoff variation |
+| Residual $\boldsymbol\psi_{\rm stoch}$ ensemble | Stochastic stress sector with matched residual power |
+| 4LPT + P1 on a fine mesh | High-order LEFT forward model before stochastic terms |
+
+The pre-crossed sheet therefore does not *replace* the counterterm: it **computes the deterministic infrared backbone** that LEFT parameterizes, then scores the prediction at the same vertices the EFT equation of motion is written for. Once $R_f$ is large enough that $J>0$ almost everywhere, 4LPT plus exact deposition already carries voids, filaments, and BAO through the nonlinear map (@sec-validation). Modes removed by a safer filter—or genuine multi-stream / baryonic physics below $R_f$—re-enter as the local operators whose leading piece is the sound speed studied here, plus a stochastic residual that the laboratory samples rather than discards.
+
+::: {.callout-tip title="Try it: dual-smoothing displacement laboratory"}
+Open the counterterms view on the draft $32^3\to 64^3$ P1 experiment. Inspect inverted fractions, the side-by-side native/matched density ratios, the $k_{\rm max}$ stability sweep, the vertex-level $c_s^2$ fit, the stochastic slice preview, and the CSV export. Set `Rir=-1` to keep $\sigma_{\rm IR}=\sigma_{\rm UV}/3$ automatically; try `pfs=1` for pair-fixed soft modes.
+
+{{< lab "v=3&view=counterterms&dim=3&n=32&mesh=64&force=32&ic=gaussian&cutoff=4&a=1&epoch=scaleFactor&order=4&Ruv=5&Rir=-1&kFit=0.08&mlv=0&pfs=0&smoothing=0&L=300&seed=7" "Open the EFT counterterms experiment" >}}
+:::
+
+## Key Takeaways
+
+1. Small-scale modes back-react on large-scale trajectories; EFTofLSS encodes that response in $c_s^2$, higher operators, and a stochastic residual.
+2. Two Lagrangian filters of one seed—Gaussian or sharp-$k$ pair-fixed—give a concrete training signal $\Delta\boldsymbol\psi$ for fitting @eq-displacement-ct and scoring the prediction vertex-by-vertex.
+3. Leftover residual power after the deterministic fit seeds an ensemble of realizations consistent with the statistical theory; the $k_{\rm max}$ sweep diagnoses whether $c_s^2$ is a robust local operator.
+
+### Exercises
+
+1. **Cutoff dictionary.** Using $W_G(k)=\mathrm{e}^{-k^2 R_f^2/2}$, show that the half-power wavenumber of the filtered *power* is $k_{1/2}=(\ln 2)^{1/2}/R_f$. Compare $1/R_{\rm UV}$ and $1/R_{\rm IR}$ for the default laboratory pair.
+2. **Fit algebra.** Starting from @eq-dual-smoothing-cs2, derive the normal equation $c_s^2=\sum_i w_i k_i^2 y_i/\sum_i w_i k_i^4$ with $y_i=-(P_{\rm UV}-P_{\rm IR})_i/(2P_{\rm lin,i})$.
+3. **Displacement vs density.** In the laboratory, compare the $c_s^2$ recovered from @eq-displacement-ct with the companion density fit at fixed filters. Why can they differ even when both are well-defined?
+4. **Stochastic coverage.** Halve $k_{\rm max}$ and recompute the ensemble coverage. Does shrinking the fit window move more of $\Delta\boldsymbol\psi$ into the stochastic sector, or into the unexplained high-$k$ residual?

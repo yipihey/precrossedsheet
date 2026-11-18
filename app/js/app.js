@@ -62,9 +62,10 @@ function saveSelectedEstimators() {
 const root = document.querySelector('#lab'), status = document.querySelector('#run-state');
 const VIEWS = [
   ['sheet', 'Phase-space sheet'], ['density', 'Density'], ['spectra', 'Power spectra'],
-  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['rsd', 'Redshift space (RSD)'], ['gradient', 'Differentiability'], ['published', 'Published replay'],
+  ['variance', 'Variance vs scale'], ['pdf', 'PDFs'], ['rsd', 'Redshift space (RSD)'], ['gradient', 'Differentiability'],
+  ['counterterms', 'EFT counterterms'], ['published', 'Published replay'],
 ];
-const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', rsd: '../chapters/05-rsd.html#sec-rsd', gradient: '../chapters/06-inference.html#sec-inference', published: '../chapters/07-lab.html#sec-lab' };
+const chapterRefs = { sheet: '../chapters/01-sheet.html#sec-sheet', density: '../chapters/03-meshing.html#sec-meshing', spectra: '../chapters/04-validation.html#sec-validation', variance: '../chapters/05-pdfs.html#sec-pdfs', pdf: '../chapters/05-pdfs.html#sec-pdfs', rsd: '../chapters/05-rsd.html#sec-rsd', gradient: '../chapters/06-inference.html#sec-inference', counterterms: '../chapters/05-eft.html#sec-eft-counterterms', published: '../chapters/07-lab.html#sec-lab' };
 const $ = (tag, cls, parent, value) => { const e = document.createElement(tag); if (cls) e.className = cls; if (value != null) e.textContent = value; parent.append(e); return e; };
 const row = (parent, cls = '') => $('div', `lab-control ${cls}`, parent);
 
@@ -334,11 +335,49 @@ numberControl('h','Reduced Hubble parameter h',.4,1,.001,'H₀ = 100 h km s⁻¹
 numberControl('ns','Primordial spectral index ns',.8,1.2,.001,'Tilt of the primordial scalar spectrum.');
 numberControl('sigma8','Linear amplitude σ₈',.1,1.5,.001,'Gaussian ICs are normalized to this RMS before initial filtering and cutoff. Deterministic mode benchmarks use fixed amplitudes independent of σ₈.');
 numberControl('boxSize','Periodic box length L (Mpc/h)',50,2000,1,'Physical comoving box length. Coordinates in the sheet output are fractions of L.');
-numberControl('initialSmoothing','Initial-condition smoothing Rini (Mpc/h)',0,200,.1,'Gaussian initial power smoothing, separate from the observation smoothing below.');
+numberControl('initialSmoothing','Initial-condition smoothing Rini (Mpc/h)',0,200,.1,'Gaussian initial power smoothing, separate from the observation smoothing below. In the counterterms view the dual filters Ruv/Rir replace this single radius.');
 selectControl('ic', 'Initial conditions', [['waves','Deterministic modes'],['gaussian','Gaussian ΛCDM field']], 'Gaussian initial conditions draw mode-keyed random phases from the selected Eisenstein–Hu linear spectrum.');
 selectControl('transfer', 'Linear transfer function', [['smooth','EH98 no-wiggle (smooth)'],['bao','EH98 with BAO wiggles']], 'Used only by Gaussian initial conditions. The full Eisenstein–Hu fit adds the baryon acoustic oscillations and Silk damping; the smooth fit keeps only the broad baryon suppression. The power view overlays the filtered linear input spectrum.');
 numberControl('seed', 'Gaussian random seed', 0, 9999, 1, 'Integer mode-keyed seed, used only by Gaussian initial conditions.');
-selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction.');
+selectControl('order', 'LPT perturbative order', [[1,'1st order'],[2,'2nd order'],[3,'3rd order'],[4,'4th order']], 'Order used for the sheet prediction. The counterterms view always compares orders 1–4 together.');
+activeControlGroup=controlSection('EFT dual-smoothing filters');
+numberControl('uvSmoothing','UV filter Ruv (Mpc/h)',0,200,.1,'Gaussian IC radius for the UV (mildly crossed) sheet. Default 5 Mpc/h targets ∼1% inverted tetrahedra at a=1 on the 32³ draft laboratory volume.');
+numberControl('irSmoothing','IR filter Rir (Mpc/h); −1 = auto σ/3',-1,200,.1,'Safer Gaussian IC radius. Set to −1 to auto-match continuum linear σ_IR ≈ σ_UV/3.');
+numberControl('kMaxFit','Sound-speed fit kmax (h/Mpc)',.01,.5,.005,'Largest wavenumber retained when fitting P_UV ≈ P_IR − 2 cₛ² k² P_lin^IR. A stability sweep around this value is always reported.');
+{
+  const mlvWrap = $('label', 'control-field', activeControlGroup);
+  const mlvRow = $('span', 'control-top', mlvWrap);
+  $('span', 'control-name', mlvRow, 'Match linear variance (scale IR δ₀ up to σ_UV)');
+  const mlvCb = $('input', '', mlvRow);
+  mlvCb.type = 'checkbox';
+  mlvCb.checked = Boolean(S.matchLinearVariance);
+  mlvCb.setAttribute('aria-label', 'Scale IR initial conditions so continuum linear σ matches UV');
+  $('small', 'control-help', mlvWrap, 'Primary IR amplitude convention. Both native and matched density ratios are always returned for side-by-side comparison. Soft-mode IR power is boosted above UV when on; P_lin shapes still differ.');
+  mlvCb.addEventListener('change', () => {
+    S.matchLinearVariance = mlvCb.checked;
+    S = normalizeState(S);
+    controls.sync();
+    changed(true);
+  });
+  controlHandles.matchLinearVariance = { set: (v) => { mlvCb.checked = Boolean(v); }, el: mlvCb };
+}
+{
+  const pfsWrap = $('label', 'control-field', activeControlGroup);
+  const pfsRow = $('span', 'control-top', pfsWrap);
+  $('span', 'control-name', pfsRow, 'Pair-fixed soft modes (sharp-k split)');
+  const pfsCb = $('input', '', pfsRow);
+  pfsCb.type = 'checkbox';
+  pfsCb.checked = Boolean(S.pairFixedSoft);
+  pfsCb.setAttribute('aria-label', 'Use sharp-k pair-fixed soft modes instead of Gaussian filters');
+  $('small', 'control-help', pfsWrap, 'Shared white-noise seed with sharp cuts k_UV = 1/R_UV and k_IR = 1/R_IR. Every mode with |k| ≤ k_IR is bitwise identical in UV and IR — cleaner than total-σ matching for isolating hard-mode response.');
+  pfsCb.addEventListener('change', () => {
+    S.pairFixedSoft = pfsCb.checked;
+    S = normalizeState(S);
+    controls.sync();
+    changed(true);
+  });
+  controlHandles.pairFixedSoft = { set: (v) => { pfsCb.checked = Boolean(v); }, el: pfsCb };
+}
 activeControlGroup=controlSection('Evolution and observation grids');
 selectControl('steps', 'PM integration steps', STEPS.map(v=>[v,`${v} steps`]), 'Number of √a-spaced canonical KDK time steps for the deconvolved TSC particle-mesh trajectory (≥ 64 recommended).');
 selectControl('mesh', 'Observation grid cells per axis', GRIDS.map(v=>[v,`${v} cells`]), 'Eulerian grid resolution used to deposit density, compute PDFs, and evaluate FFT power spectra.');
@@ -411,6 +450,16 @@ function run() {
   if (S.view === 'published') { retireWorker(); activeKey=''; current = null; execution=null; exportJsonButton.disabled=true; loadPublished(); return; }
   const key = physicsKey();
   if (lastResultKey === key && lastResult && !lastResult.error) {
+    if (S.view === 'counterterms' || lastResult.kind === 'eftCounterterms') {
+      cancelObsoleteForCachedResult();
+      current = lastResult;
+      execution = current.execution || null;
+      computedFor = key;
+      exportJsonButton.disabled = false;
+      status.textContent = 'Ready';
+      render();
+      return;
+    }
     const missing = selectedEstimators.filter(k => !lastResult.customSeries?.[k]);
     const pmNeededNow = missing.some(k => k.startsWith('pm:')) && !lastResult._pmComputed;
     if (missing.length === 0) {
@@ -432,6 +481,20 @@ function run() {
     }
   }
   const isExt = Boolean(extendedMode || requiresExtendedLimits(S));
+  if (S.view === 'counterterms') {
+    const job = {
+      key,
+      eftCounterterms: true,
+      estimatorsOnly: false,
+      allEstimators: [],
+      state: { ...S },
+      request: { ...coreRequest(S), ic: 'gaussian', estimators: [], extended: isExt },
+      policy: executionPolicy({ ...S, backend: 'cpu' }),
+    };
+    if (activeRequestId != null) { pendingRun = job; cancelActiveRun(); return; }
+    dispatchRun(job);
+    return;
+  }
   const job={key,estimatorsOnly:false,allEstimators:[...selectedEstimators],state:{...S},request:{...coreRequest(S),estimators:selectedEstimators,extended:isExt},policy:executionPolicy(S)};
   if(activeRequestId!=null){pendingRun=job;cancelActiveRun();return;}
   dispatchRun(job);
@@ -439,7 +502,7 @@ function run() {
 
 function ensureWorker(){
   if(worker)return worker;
-  worker=new Worker('./js/worker.js?v=20261028d',{type:'module'});
+  worker=new Worker('./js/worker.js?v=20261030lab',{type:'module'});
   worker.onmessage=({data})=>{
     if(data.type==='phase'&&data.requestId===activeRequestId){activePhase=data.cancellable===false?`${data.phase||''}-sync`:data.phase||'';status.textContent=({preparing:'Preparing trajectories…',direct:'Evaluating direct modes…', 'direct-sync':'Evaluating CPU direct modes…','direct-recovery-sync':'Recovering direct modes on CPU…','finite-difference':'Evaluating GPU finite differences…','finite-difference-sync':'Checking the CPU finite difference…','lpt-construction':'Constructing nLPT fields on GPU…','lpt-recovery-sync':'Recovering nLPT construction on CPU…','pm-evolution':'Evolving PM trajectories on GPU…','pm-recovery-sync':'Recovering PM trajectories on CPU…','exact-deposit':'Clipping the exact sheet on GPU…','observations-sync':'Depositing the sheet and computing observables…','analytic-recovery':'Recovering weak analytic modes on GPU…',finalizing:'Finalizing observables…'}[activePhase]||'Computing…');notice.textContent=data.message||'Running the ΛCDM Lagrangian calculation in a background worker.';return;}
     if(data.type==='progress'&&data.requestId===activeRequestId){if(data.phase)activePhase=data.phase;const completed=data.completed??data.step??data.caseIndex,total=data.total??data.steps??data.cases;status.textContent=`${data.stage||'Evaluating GPU modes'}${completed!=null?` (${completed}/${total})`:''}…`;return;}
@@ -479,7 +542,7 @@ function ensureWorker(){
   worker.onerror=(event)=>{clearTimeout(cancelTimer);cancelTimer=0;worker?.terminate();worker=null;activeRequestId=null;activePhase='';activeKey='';computedFor='';current={error:event.message||'Could not start the numerical worker.'};status.textContent='Run failed';render();};
   return worker;
 }
-function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;if(!job.estimatorsOnly)execution=null;exportJsonButton.disabled=true;status.textContent=job.estimatorsOnly?'Updating estimators…':'Preparing…';notice.textContent=job.estimatorsOnly?'Depositing newly selected trajectory/estimator fields from retained particle positions.':'Preparing the ΛCDM trajectories and observations in a background worker.';w.postMessage({type:'run',requestId:id,key:job.key,estimatorsOnly:Boolean(job.estimatorsOnly),allEstimators:job.allEstimators||null,state:job.request,policy:job.policy});}
+function dispatchRun(job){const w=ensureWorker(),id=++requestId;activeRequestId=id;activePhase='queued';activeKey=job.key;runMilliseconds=null;if(!job.estimatorsOnly)execution=null;exportJsonButton.disabled=true;status.textContent=job.estimatorsOnly?'Updating estimators…':(job.eftCounterterms?'Fitting counterterms…':'Preparing…');notice.textContent=job.estimatorsOnly?'Depositing newly selected trajectory/estimator fields from retained particle positions.':(job.eftCounterterms?'Running dual-smoothing 1–4LPT P₁ sheet spectra and fitting the sound-speed counterterm.':'Preparing the ΛCDM trajectories and observations in a background worker.');w.postMessage({type:'run',requestId:id,key:job.key,estimatorsOnly:Boolean(job.estimatorsOnly),eftCounterterms:Boolean(job.eftCounterterms),allEstimators:job.allEstimators||null,state:job.request,policy:job.policy});}
 function cancelActiveRun(){if(!worker||activeRequestId==null)return;const id=activeRequestId;worker.postMessage({type:'cancel',requestId:id});status.textContent='Updating calculation…';clearTimeout(cancelTimer);cancelTimer=setTimeout(()=>{if(activeRequestId!==id)return;hardTerminateWorker();activeRequestId=null;activePhase='';activeKey='';if(pendingRun){const next=pendingRun;pendingRun=null;dispatchRun(next);}},8000);}
 function cancelObsoleteForCachedResult(){pendingRun=null;if(activeRequestId!=null&&worker){const id=activeRequestId;activeRequestId=null;activePhase='';activeKey='';clearTimeout(cancelTimer);cancelTimer=0;worker.postMessage({type:'cancel',requestId:id});}}
 function retireWorker(){clearTimeout(cancelTimer);cancelTimer=0;const old=worker;worker=null;pendingRun=null;activeRequestId=null;activePhase='';activeKey='';if(!old)return;old.onmessage=({data})=>{if(data?.type==='shutdown-ack')old.terminate();};old.onerror=()=>old.terminate();try{old.postMessage({type:'shutdown'});}catch(_){old.terminate();return;}setTimeout(()=>old.terminate(),5000);}
@@ -499,6 +562,7 @@ function explain() {
     rsd: 'Map the phase-space sheet into redshift space s = x + (v_∥ / aH) n̂ along the line of sight. Compare the exact redshifted simplicial sheet (which shell-crosses in redshift space wherever ∂_∥ v_∥ < −aH) with a simplex velocity-gradient Gaussian packet construction that fits a d-dimensional Gaussian to each simplex using the exact velocity divergence and velocity-gradient tensor across the simplex.',
     gradient: 'Compare the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch against a finite difference. This does not differentiate clipped or deposited density.',
     published: 'This panel replays packaged reference data. These curves retain the original simulation conditions and estimator conventions; the live laboratory runs the independently specified cosmology and resolution.',
+    counterterms: 'Dual Gaussian initial filters of the same seed: a UV radius near ∼1% inverted simplices and an IR radius with ∼⅓ the linear σ. The leading displacement counterterm ψ_ct = −cₛ² k² ψ_IR is fit on modes k≤k_max and scored vertex-by-vertex; leftover residual power seeds a Gaussian stochastic ensemble. Density P(k) is retained as a companion diagnostic.',
   };
   viewHelp.textContent = messages[S.view];
 }
@@ -510,10 +574,16 @@ function panel(title, description = '') { const p = $('section', 'result-panel',
 function addPngButton(canvas, name) { const b = $('button', 'export-button', canvas.parentElement, 'Save PNG'); b.type = 'button'; b.setAttribute('aria-label', `Save ${name} image as PNG`); b.addEventListener('click', () => canvas.toBlob((blob) => { if (blob) { downloadBlob(blob, `${name}.png`); flash(b, 'Saved'); } })); }
 function canvasFor(parent, label, wide = false) { const c = $('canvas', `lab-canvas${wide ? ' canvas-wide' : ''}`, parent); c.width = 960; c.height = wide ? 560 : 680; c.setAttribute('role', 'img'); c.setAttribute('aria-label', label); return c; }
 function paintCanvas(c, draw) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); ctx.fillStyle = getComputedStyle(c).backgroundColor; ctx.fillRect(0,0,c.width,c.height); draw(ctx,c.width,c.height); }
-function hasScientificOutput(d){return Boolean(d&&(d.q||d.x||d.rho||d.spectra||d.pdf||d.gradient));}
+function hasScientificOutput(d){return Boolean(d&&(d.q||d.x||d.rho||d.spectra||d.pdf||d.gradient||d.kind==='eftCounterterms'||d.orders));}
 function guarded() {
   if (current?.error || current?.errorMessage) { setNotice(`The numerical worker could not complete this run: ${current.error || current.errorMessage}`, 'error'); return false; }
   if (!current) { setNotice('Waiting for the calculation to finish.'); return false; }
+  if (current.kind === 'eftCounterterms' || S.view === 'counterterms') {
+    const o4 = Array.isArray(current.orders) ? current.orders.find((o) => Number(o.order) === 4) : null;
+    const inv = o4?.uv?.invertedElementFraction;
+    setNotice(`Dual-smoothing counterterm draft: UV inverted fraction ${num(inv,4)}; IR auto/manual filter reported in the panel. Inverted elements are retained with positive stream mass.`, inv > 0 ? 'guard' : 'success');
+    return hasScientificOutput(current);
+  }
   if (current.guard?.ok === false) { const why = current.guard.reason || 'A simplex changed orientation.'; setNotice(`Post-crossing diagnostic: ${why} Minimum LPT vertex Jacobian: ${num(current.guard.minimumJacobian,4)}. Outputs are shown with caution; they no longer represent an everywhere one-to-one single-stream map.`, 'guard'); return hasScientificOutput(current); }
   if (current.error) { setNotice(current.error, 'error'); return false; }
   setNotice('Resolved LPT vertex and simplex orientations remained positive throughout the evolution.', 'success'); return true;
@@ -530,6 +600,7 @@ function render() {
   else if (S.view === 'pdf') renderPdfs(current);
   else if (S.view === 'rsd') renderRsd(current);
   else if (S.view === 'gradient') renderGradient(current);
+  else if (S.view === 'counterterms') renderCounterterms(current);
   showDiagnostics(current);
   renderTheory();
 }
@@ -901,8 +972,46 @@ function addPlot(parent,title,x,seriesDefs,axes,d) {
   const xs=arr(x); if(!xs.length){$('p','panel-note',box,'This run did not return data for this chart.');return null;}
   const series=[]; for(const def of seriesDefs){const ys=arr(d?.[def.key] ?? d?.spectra?.[def.key] ?? d?.pdf?.[def.key] ?? d?.gradient?.[def.key]);const sx=arr(def.xkey?(d?.[def.xkey]??d?.spectra?.[def.xkey]??d?.gradient?.[def.xkey]):xs);if(ys.length&&sx.length)series.push({...def,x:sx.slice(0,Math.min(sx.length,ys.length)),y:ys.slice(0,Math.min(sx.length,ys.length)),label:def.label});}
   if(!series.length){$('p','panel-note',box,'The selected output did not include the requested curves.');return null;}
-  plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);plot.draw();
+  plot.setAxes({...axes,title,xlog:axes.xlog??false,ylog:axes.ylog??false});plot.setSeries(series);
+  if (Array.isArray(axes?.markers) && axes.markers.length) plot.setMarkers(axes.markers);
+  plot.draw();
   return plot;
+}
+/** Keep (x,y) pairs with finite x in (0, kMax]; used to stop counterterm curves outside the fit window. */
+function clipSeriesToKMax(kArr, yArr, kMax) {
+  const k = arr(kArr), y = arr(yArr), outK = [], outY = [];
+  const lim = Number(kMax);
+  for (let i = 0; i < Math.min(k.length, y.length); i++) {
+    const ki = Number(k[i]), yi = Number(y[i]);
+    if (!(ki > 0) || !Number.isFinite(yi)) continue;
+    if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
+    outK.push(ki); outY.push(yi);
+  }
+  return { k: outK, y: outY };
+}
+/**
+ * Shared-k clip of several y-series so all stay index-aligned (avoids axis
+ * blow-ups from mismatched lengths). When `positive` is true, every y must be > 0
+ * (for log-y charts).
+ */
+function clipAlignedToKMax(kArr, ySeries, kMax, positive = false) {
+  const k = arr(kArr);
+  const ys = ySeries.map((s) => arr(s));
+  const lim = Number(kMax);
+  const outK = [];
+  const outY = ys.map(() => []);
+  const n = Math.min(k.length, ...ys.map((y) => y.length));
+  for (let i = 0; i < n; i++) {
+    const ki = Number(k[i]);
+    if (!(ki > 0)) continue;
+    if (Number.isFinite(lim) && lim > 0 && ki > lim) continue;
+    const vals = ys.map((y) => Number(y[i]));
+    if (!vals.every((v) => Number.isFinite(v))) continue;
+    if (positive && !vals.every((v) => v > 0)) continue;
+    outK.push(ki);
+    vals.forEach((v, j) => outY[j].push(v));
+  }
+  return { k: outK, y: outY };
 }
 function sheetPositiveRange(arrays) {
   let lo = Infinity, hi = 0;
@@ -2062,6 +2171,370 @@ function renderRsd(d) {
   }
 }
 function renderGradient(d) {const p=panel('Initial-amplitude response at fixed epoch','This compares continuous P₀ Fourier power as initial amplitude A changes. The derivative is not taken through clipped or deposited density. The finite-difference check validates the exact sheet-LPT tangent.');addPlot(p,'Amplitude derivative by wavenumber',d.gradient?.k,[{key:'power',label:'P₀ power'},{key:'tangent',label:'Sheet-LPT tangent'},{key:'finiteDifference',label:'Sheet-LPT finite difference'},{key:'pmTangent',label:'PM-sheet tangent'}],{xlabel:'k [h/Mpc]',ylabel:`P₀ and ∂P₀/∂A [(Mpc/h)^${S.dim}]`,xlog:true},d);const err=arr(d.gradient?.relativeError);if(err.length)$('p','panel-note',p,`Maximum sheet-LPT tangent relative error: ${num(err.reduce((m,v)=>Math.max(m,Number(v)||0),0),4)}.`);}
+function renderCounterterms(d) {
+  const filters = d.filters || {};
+  const orders = Array.isArray(d.orders) ? d.orders : [];
+  const matched = Boolean(filters.matchLinearVariance);
+  const pairFixed = Boolean(filters.pairFixedSoft);
+  const ampScale = Number(filters.amplitudeScale ?? 1);
+  const filterKind = pairFixed
+    ? `sharp-k pair-fixed soft modes (k_UV = ${num(filters.kUvCut, 4)}, k_IR = ${num(filters.kIrCut, 4)} h/Mpc)`
+    : 'two Gaussian IC filters of one seed';
+  const p = panel(
+    'Lagrangian UV response: displacement counterterm and stochastic residual',
+    `Exact P₁ sheets for 1–4LPT at ${filterKind}. UV Rᵤᵥ = ${num(filters.uvSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinUv,4)}), IR Rᵢᵣ = ${num(filters.irSmoothing,4)} Mpc/h (σ_lin = ${num(filters.sigmaLinIr,4)}${matched ? `, scaled ×${num(ampScale,4)} from native ${num(filters.sigmaLinIrNative,4)}` : ''}, ratio ${num(filters.sigmaRatio,4)}). ${matched ? 'Match-linear-variance is ON for the primary IR. ' : ''}Both native and matched density ratios are shown below. Primary fit: ψ_ct = −cₛ² k² ψ_IR on modes k ≤ ${num(d.request?.kMaxFit ?? S.kMaxFit,3)} h/Mpc.`,
+  );
+  if (!orders.length) {
+    $('p', 'panel-note', p, 'No dual-smoothing orders were returned. Rebuild the Wasm package if this persists.');
+    return;
+  }
+  const csvBtn = $('button', 'export-button', p, 'Export cₛ² table CSV');
+  csvBtn.type = 'button';
+  csvBtn.setAttribute('aria-label', 'Download fitted sound-speed table and k_max sweep as CSV');
+  csvBtn.addEventListener('click', () => {
+    const lines = ['order,inv_uv,inv_ir,cs2_disp,rms_reduction,variance_explained,coverage_1sig,cs2_pk,k_max'];
+    for (const entry of orders) {
+      const fitPk = entry.fit || {};
+      const fitD = entry.displacement?.fit || {};
+      const stoch = entry.displacement?.stochastic || {};
+      lines.push([
+        entry.order, entry.uv?.invertedElementFraction, entry.ir?.invertedElementFraction,
+        fitD.cs2, fitD.rmsReduction, fitD.varianceExplained, stoch.ensembleCoverageWithin1Sigma,
+        fitPk.cs2, fitPk.kMax ?? d.request?.kMaxFit,
+      ].map((v) => (v == null || Number.isNaN(Number(v)) ? '' : String(v))).join(','));
+    }
+    lines.push('');
+    lines.push('order,k_max,cs2_disp,cs2_pk,rms_reduction,variance_explained,n_modes,n_bins');
+    for (const entry of orders) {
+      for (const sw of (entry.kMaxSweep || [])) {
+        lines.push([
+          entry.order, sw.kMax, sw.cs2Disp, sw.cs2Pk, sw.rmsReduction, sw.varianceExplained, sw.nModes, sw.nBins,
+        ].map((v) => (v == null || Number.isNaN(Number(v)) ? '' : String(v))).join(','));
+      }
+    }
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `eft-cs2-Ruv${num(filters.uvSmoothing, 2)}-Rir${num(filters.irSmoothing, 2)}-kmax${num(d.request?.kMaxFit, 3)}.csv`);
+    flash(csvBtn, 'Saved');
+  });
+  const table = $('table', 'estimator-matrix-table', p);
+  const head = $('tr', '', table);
+  for (const h of ['Order', 'Inv. UV', 'Inv. IR', 'cₛ² disp.', 'RMS↓', 'Explained', '1σ cov.', 'cₛ² P(k)']) {
+    $('th', '', head, h);
+  }
+  for (const entry of orders) {
+    const tr = $('tr', '', table);
+    const fitPk = entry.fit || {};
+    const fitD = entry.displacement?.fit || {};
+    const stoch = entry.displacement?.stochastic || {};
+    $('td', '', tr, `${entry.order}LPT`);
+    $('td', '', tr, num(entry.uv?.invertedElementFraction, 4));
+    $('td', '', tr, num(entry.ir?.invertedElementFraction, 4));
+    $('td', '', tr, num(fitD.cs2, 5));
+    $('td', '', tr, fitD.rmsReduction != null ? num(fitD.rmsReduction, 3) : '—');
+    $('td', '', tr, fitD.varianceExplained != null ? num(fitD.varianceExplained, 3) : '—');
+    $('td', '', tr, stoch.ensembleCoverageWithin1Sigma != null ? num(stoch.ensembleCoverageWithin1Sigma, 3) : '—');
+    $('td', '', tr, num(fitPk.cs2, 5));
+  }
+  const o4 = orders.find((o) => Number(o.order) === 4) || orders[orders.length - 1];
+  const k = arr(o4.ir?.k);
+  const kFit = Number(d.request?.kMaxFit ?? S.kMaxFit);
+  const kFitMark = Number.isFinite(kFit) && kFit > 0
+    ? [{ x: kFit, label: `k_max = ${num(kFit, 3)}`, color: '#697586' }]
+    : [];
+  const pir4 = arr(o4.ir?.power);
+  const puv4 = arr(o4.deltaPower).map((dp, i) => Number(pir4[i] || 0) + Number(dp || 0));
+  const pct4 = arr(o4.irPlusCounterterm);
+  // Absolute P(k) in the fit window: nonlinear trio + faint linear filter curves.
+  const linUvK = arr(d.linear?.uv?.k);
+  const linUvP = arr(d.linear?.uv?.power);
+  const linIrK = arr(d.linear?.ir?.k);
+  const linIrP = arr(d.linear?.ir?.power);
+  const linUvOnIr = k.map((ki) => {
+    const kk = Number(ki);
+    if (!(kk > 0) || !linUvK.length) return NaN;
+    let best = 0, bd = Infinity;
+    for (let j = 0; j < linUvK.length; j++) {
+      const dln = Math.abs(Math.log(Number(linUvK[j])) - Math.log(kk));
+      if (dln < bd) { bd = dln; best = j; }
+    }
+    return Number(linUvP[best]);
+  });
+  const linIrOnIr = k.map((ki) => {
+    const kk = Number(ki);
+    if (!(kk > 0) || !linIrK.length) return NaN;
+    let best = 0, bd = Infinity;
+    for (let j = 0; j < linIrK.length; j++) {
+      const dln = Math.abs(Math.log(Number(linIrK[j])) - Math.log(kk));
+      if (dln < bd) { bd = dln; best = j; }
+    }
+    return Number(linIrP[best]);
+  });
+  const pkWin = clipAlignedToKMax(k, [puv4, pir4, pct4, linUvOnIr, linIrOnIr], kFit, true);
+  const pkData = {
+    kWin: pkWin.k,
+    uv4: pkWin.y[0], ir4: pkWin.y[1], ctr4: pkWin.y[2],
+    linUv: pkWin.y[3], linIr: pkWin.y[4],
+  };
+  addPlot(p, 'Companion density P(k) in the fit window', pkWin.k, [
+    { key: 'linUv', xkey: 'kWin', label: 'P_lin UV (filter)', color: '#E45756', dash: '2 2', width: 1.4, opacity: 0.35, zOrder: 1, noResample: true },
+    { key: 'linIr', xkey: 'kWin', label: 'P_lin IR (filter)', color: '#4C78A8', dash: '2 2', width: 1.4, opacity: 0.35, zOrder: 1, noResample: true },
+    { key: 'uv4', xkey: 'kWin', label: '4LPT UV (target)', color: '#E45756', width: 2.8, opacity: 1, zOrder: 4, noResample: true },
+    { key: 'ir4', xkey: 'kWin', label: '4LPT IR (baseline)', color: '#4C78A8', dash: '7 4', width: 2.2, opacity: 0.9, zOrder: 3, noResample: true },
+    { key: 'ctr4', xkey: 'kWin', label: '4LPT IR + −2 cₛ² k² P_lin', color: '#B279A2', width: 3.0, opacity: 0.85, zOrder: 5, noResample: true },
+  ], {
+    xlabel: 'k [h/Mpc]',
+    ylabel: `P(k) [(Mpc/h)^${S.dim}]`,
+    xlog: true,
+    ylog: true,
+    markers: kFitMark,
+  }, pkData);
+  $('p', 'panel-note', p,
+    'Thick: 4LPT UV / IR / IR+ctr. Faint dotted: linear filter spectra (same seed). Clipped to k ≤ k_max. Purple should sit near red if the density counterterm works.');
+
+  // Ratio: nonlinear UV/IR, (IR+ctr)/IR, and linear filter UV/IR.
+  const rawRatio = puv4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
+  const ctrRatio = pct4.map((v, i) => (Number(pir4[i]) > 0 ? v / Number(pir4[i]) : NaN));
+  const linRatio = linUvOnIr.map((v, i) => (Number(linIrOnIr[i]) > 0 ? v / Number(linIrOnIr[i]) : NaN));
+  const filtCorr = rawRatio.map((v, i) => (Number(linRatio[i]) > 0 ? v / Number(linRatio[i]) : NaN));
+  const ratioWin = clipAlignedToKMax(k, [rawRatio, ctrRatio, linRatio, filtCorr], kFit);
+  const ratioData = {
+    kWin: ratioWin.k,
+    raw4: ratioWin.y[0],
+    fit4: ratioWin.y[1],
+    linR: ratioWin.y[2],
+    corr: ratioWin.y[3],
+    unity: ratioWin.k.map(() => 1),
+  };
+  const ratioSeries = [
+    { key: 'unity', xkey: 'kWin', label: 'IR ≡ 1', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
+    { key: 'linR', xkey: 'kWin', label: 'P_lin UV / P_lin IR (filter)', color: '#697586', dash: '2 2', width: 1.8, opacity: 0.75, zOrder: 2, noResample: true },
+    { key: 'raw4', xkey: 'kWin', label: '4LPT P_UV / P_IR', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+    { key: 'fit4', xkey: 'kWin', label: '4LPT (IR+ctr) / P_IR', color: '#B279A2', dash: '6 3', width: 2.8, opacity: 0.9, zOrder: 4, noResample: true },
+  ];
+  if (!matched) {
+    ratioSeries.push({
+      key: 'corr', xkey: 'kWin', label: '(P_UV/P_IR) / (P_lin UV/IR)', color: '#54A24B', width: 2.2, opacity: 0.95, zOrder: 5, noResample: true,
+    });
+  }
+  addPlot(p, 'Density cutoff response: UV/IR vs (IR+ctr)/IR', ratioWin.k, ratioSeries, {
+    xlabel: 'k [h/Mpc]',
+    ylabel: 'P / P_IR',
+    xlog: true,
+    ylog: false,
+    markers: kFitMark,
+  }, ratioData);
+  $('p', 'panel-note', p,
+    matched
+      ? 'Grey dotted = linear filter ratio after σ matching (soft IR is boosted). Red = nonlinear UV/IR; purple = IR+ctr. Departure of red from grey is dynamical.'
+      : 'Grey dotted = pure linear filter UV/IR. Green = filter-corrected nonlinear ratio (should sit near 1 if dynamics add no extra). Purple tracks red if the density CT absorbs the raw UV−IR difference.');
+
+  // Side-by-side native vs matched amplitude conventions (always computed).
+  const amp = o4.amplitudeCompare || {};
+  const kn = arr(amp.native?.k);
+  const rn = arr(amp.native?.ratio);
+  const cn = arr(amp.native?.filterCorrectedRatio);
+  const km = arr(amp.matched?.k);
+  const rm = arr(amp.matched?.ratio);
+  const cm = arr(amp.matched?.filterCorrectedRatio);
+  if (kn.length && km.length) {
+    const sideWinN = clipAlignedToKMax(kn, [rn, cn], kFit);
+    const sideWinM = clipAlignedToKMax(km, [rm, cm], kFit);
+    // Resample matched onto native k grid for a shared plot when lengths differ.
+    const kSide = sideWinN.k;
+    const interp = (xk, yk, xq) => xq.map((x) => {
+      const xx = Number(x);
+      if (!(xx > 0) || !xk.length) return NaN;
+      let best = 0, bd = Infinity;
+      for (let j = 0; j < xk.length; j++) {
+        const dln = Math.abs(Math.log(Number(xk[j])) - Math.log(xx));
+        if (dln < bd) { bd = dln; best = j; }
+      }
+      return Number(yk[best]);
+    });
+    const rmOn = interp(sideWinM.k, sideWinM.y[0], kSide);
+    const cmOn = interp(sideWinM.k, sideWinM.y[1], kSide);
+    addPlot(p, 'Side-by-side: native vs matched-σ UV/IR ratios', kSide, [
+      { key: 'unity', xkey: 'kS', label: '1', color: '#9e9e9e', dash: '2 3', width: 1.1, opacity: 0.65, zOrder: 1, noResample: true },
+      { key: 'rn', xkey: 'kS', label: 'native P_UV/P_IR', color: '#E45756', width: 2.4, opacity: 1, zOrder: 3, noResample: true },
+      { key: 'rm', xkey: 'kS', label: 'matched-σ P_UV/P_IR', color: '#F58518', dash: '6 3', width: 2.4, opacity: 0.95, zOrder: 3, noResample: true },
+      { key: 'cn', xkey: 'kS', label: 'native filter-corrected', color: '#54A24B', width: 2.0, opacity: 0.9, zOrder: 4, noResample: true },
+      { key: 'cm', xkey: 'kS', label: 'matched filter-corrected', color: '#4C78A8', dash: '5 3', width: 2.0, opacity: 0.9, zOrder: 4, noResample: true },
+    ], {
+      xlabel: 'k [h/Mpc]',
+      ylabel: 'P_UV / P_IR',
+      xlog: true,
+      ylog: false,
+      markers: kFitMark,
+    }, {
+      kS: kSide,
+      rn: sideWinN.y[0],
+      cn: sideWinN.y[1],
+      rm: rmOn,
+      cm: cmOn,
+      unity: kSide.map(() => 1),
+    });
+    $('p', 'panel-note', p,
+      'One run, both amplitude conventions. Red/orange = raw UV/IR; green/blue = divided by the linear filter ratio. Primary displacement fit uses the Match-linear-variance toggle.');
+  }
+
+  // k_max stability sweep (4LPT).
+  const sweep = Array.isArray(o4.kMaxSweep) ? o4.kMaxSweep : [];
+  if (sweep.length) {
+    const kSw = sweep.map((s) => Number(s.kMax));
+    const csD = sweep.map((s) => Number(s.cs2Disp));
+    const csP = sweep.map((s) => Number(s.cs2Pk));
+    addPlot(p, 'Operator stability: fitted cₛ² vs k_max', kSw, [
+      { key: 'csD', xkey: 'kSw', label: 'cₛ² displacement', color: '#4C78A8', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+      { key: 'csP', xkey: 'kSw', label: 'cₛ² density P(k)', color: '#B279A2', dash: '6 3', width: 2.4, opacity: 0.9, zOrder: 2, noResample: true },
+    ], {
+      xlabel: 'fit k_max [h/Mpc]',
+      ylabel: 'cₛ² [(Mpc/h)²]',
+      xlog: false,
+      ylog: false,
+      markers: kFitMark,
+    }, { kSw, csD, csP });
+    $('p', 'panel-note', p,
+      'Refits only — no re-LPT. A flat plateau near the chosen k_max means the operator is robust; a strong drift warns that the window is contaminated by higher-derivative or stochastic terms.');
+  }
+
+  // Fractional residual after the density CT (same window).
+  const residFrac = puv4.map((v, i) => {
+    const ir = Number(pir4[i]), ct = Number(pct4[i]);
+    return ir > 0 && Number.isFinite(ct) ? (v - ct) / ir : NaN;
+  });
+  const deltaFrac = puv4.map((v, i) => {
+    const ir = Number(pir4[i]);
+    return ir > 0 ? (v - ir) / ir : NaN;
+  });
+  const residAligned = clipAlignedToKMax(k, [deltaFrac, residFrac], kFit);
+  addPlot(p, 'Density residual after the counterterm', residAligned.k, [
+    { key: 'delta', xkey: 'kR', label: '(P_UV − P_IR) / P_IR', color: '#E45756', width: 2.0, opacity: 0.45, zOrder: 2, noResample: true },
+    { key: 'resid', xkey: 'kR', label: '(P_UV − [IR+ctr]) / P_IR', color: '#54A24B', width: 2.6, opacity: 1, zOrder: 4, noResample: true },
+    { key: 'zero', xkey: 'kR', label: '0 (perfect CT)', color: '#9e9e9e', dash: '2 3', width: 1.2, opacity: 0.7, zOrder: 1, noResample: true },
+  ], {
+    xlabel: 'k [h/Mpc]',
+    ylabel: 'fractional ΔP / P_IR',
+    xlog: true,
+    ylog: false,
+    markers: kFitMark,
+  }, {
+    kR: residAligned.k,
+    delta: residAligned.y[0],
+    resid: residAligned.y[1],
+    zero: residAligned.k.map(() => 0),
+  });
+  $('p', 'panel-note', p,
+    'Faint red is the raw UV−IR cutoff response; green is what remains after subtracting the fitted density counterterm. Closer to zero is better.');
+
+  // Displacement shell power: Δψ vs residual after ψ_ct, fit neighborhood only.
+  const kDispCap = Number.isFinite(kFit) && kFit > 0 ? 2.5 * kFit : undefined;
+  const kDel = arr(o4.displacement?.deltaPower?.k);
+  const pDel = arr(o4.displacement?.deltaPower?.power);
+  const kRes = arr(o4.displacement?.residualPower?.k);
+  const pRes = arr(o4.displacement?.residualPower?.power);
+  // Prefer residual-grid alignment when both share the same k sampling.
+  const sameK = kDel.length && kDel.length === kRes.length
+    && kDel.every((v, i) => Math.abs(Number(v) - Number(kRes[i])) < 1e-12);
+  if (sameK) {
+    const psiWin = clipAlignedToKMax(kDel, [pDel, pRes], kDispCap, true);
+    if (psiWin.k.length) {
+      addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', psiWin.k, [
+        { key: 'pDel', xkey: 'kPsi', label: 'P_Δψ = P(ψ_UV − ψ_IR)', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true },
+        { key: 'pRes', xkey: 'kPsi', label: 'P_resid after ψ_ct', color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true },
+      ], {
+        xlabel: 'k [h/Mpc]',
+        ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
+        xlog: true,
+        ylog: true,
+        markers: kFitMark,
+      }, { kPsi: psiWin.k, pDel: psiWin.y[0], pRes: psiWin.y[1] });
+      $('p', 'panel-note', p,
+        'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
+    }
+  } else {
+    const delClip = clipSeriesToKMax(kDel, pDel, kDispCap);
+    const resClip = clipSeriesToKMax(kRes, pRes, kDispCap);
+    if (delClip.k.length || resClip.k.length) {
+      const psiDefs = [];
+      const psiData = {};
+      if (delClip.k.length) {
+        psiData.kDel = delClip.k; psiData.pDel = delClip.y;
+        psiDefs.push({ key: 'pDel', xkey: 'kDel', label: 'P_Δψ = P(ψ_UV − ψ_IR)', color: '#E45756', width: 2.6, opacity: 1, zOrder: 3, noResample: true });
+      }
+      if (resClip.k.length) {
+        psiData.kRes = resClip.k; psiData.pRes = resClip.y;
+        psiDefs.push({ key: 'pRes', xkey: 'kRes', label: 'P_resid after ψ_ct', color: '#4C78A8', dash: '6 3', width: 2.6, opacity: 0.95, zOrder: 4, noResample: true });
+      }
+      addPlot(p, 'Displacement power: Δψ vs residual after ψ_ct', delClip.k.length ? delClip.k : resClip.k, psiDefs, {
+        xlabel: 'k [h/Mpc]',
+        ylabel: S.dim === 3 ? 'P_ψ [(Mpc/h)⁵]' : `P_ψ [(Mpc/h)^${S.dim + 2}]`,
+        xlog: true,
+        ylog: true,
+        markers: kFitMark,
+      }, psiData);
+      $('p', 'panel-note', p,
+        'Primary EFT diagnostic: red is the UV−IR displacement difference; blue is what remains after the deterministic ψ_ct = −cₛ² k² ψ_IR. The blue spectrum seeds the stochastic ensemble. Vertical marker is k_max.');
+    }
+  }
+  // Stochastic displacement slice: UV vs IR+CT vs a few IR+CT+noise draws.
+  const slice = d.slicePreview;
+  if (slice && Array.isArray(slice.uv) && slice.nx && slice.ny) {
+    const nx = Number(slice.nx), ny = Number(slice.ny);
+    const fields = [
+      { label: 'ψ_UV', data: arr(slice.uv), color: '#E45756' },
+      { label: 'ψ_IR + ψ_ct', data: arr(slice.irPlusCt), color: '#4C78A8' },
+    ];
+    for (const draw of (slice.draws || []).slice(0, 3)) {
+      fields.push({ label: `draw ${Number(draw.index) + 1}`, data: arr(draw.psiX), color: '#54A24B' });
+    }
+    const block = $('div', 'panel-plot', p);
+    $('h3', 'panel-subheading', block, `Stochastic displacement slice (${slice.component || 'ψ_x'}, ${slice.plane || 'mid-plane'})`);
+    const row = $('div', '', block);
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.gap = '10px';
+    row.style.alignItems = 'flex-start';
+    let vmin = Infinity, vmax = -Infinity;
+    for (const f of fields) {
+      for (const v of f.data) {
+        const x = Number(v);
+        if (Number.isFinite(x)) { vmin = Math.min(vmin, x); vmax = Math.max(vmax, x); }
+      }
+    }
+    if (!(vmax > vmin)) { vmin = -1; vmax = 1; }
+    const span = vmax - vmin || 1;
+    for (const f of fields) {
+      const cell = $('div', '', row);
+      $('div', 'panel-note', cell, f.label).style.margin = '0 0 4px';
+      const c = $('canvas', 'lab-canvas canvas-square', cell);
+      const side = Math.min(220, Math.max(120, 8 * Math.max(nx, ny)));
+      c.width = side; c.height = side;
+      c.setAttribute('role', 'img');
+      c.setAttribute('aria-label', f.label);
+      const ctx = c.getContext('2d');
+      const off = document.createElement('canvas');
+      off.width = nx; off.height = ny;
+      const octx = off.getContext('2d');
+      const img = octx.createImageData(nx, ny);
+      const buf = img.data;
+      for (let i = 0; i < nx * ny; i++) {
+        const t = (Number(f.data[i]) - vmin) / span;
+        const u = Math.max(0, Math.min(1, t));
+        // Coolwarm-ish: blue → white → red
+        const r = Math.round(255 * Math.min(1, 2 * u));
+        const b = Math.round(255 * Math.min(1, 2 * (1 - u)));
+        const g = Math.round(255 * (1 - Math.abs(2 * u - 1)));
+        const o = i * 4;
+        buf[o] = r; buf[o + 1] = g; buf[o + 2] = b; buf[o + 3] = 255;
+      }
+      octx.putImageData(img, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(off, 0, 0, side, side);
+    }
+    $('p', 'panel-note', block,
+      slice.note || 'Shared color scale across panels. Green draws are IR+CT plus independent residual noise matched to leftover displacement shell power.');
+  }
+  $('p', 'panel-note', p, d.convention || 'Convention: ψ_UV ≈ ψ_IR − cₛ² k² ψ_IR + stochastic residual with matched shell power.');
+}
 function showDiagnostics(d) {
   if(!d)return;
   showExecution(d.execution||execution);
@@ -2176,7 +2649,7 @@ function showExecution(meta){
   const details=$('details','published-provenance execution-raw',backendMeta);$('summary','',details,'Full execution metadata');
   const pre=$('pre','execution-raw-json',details);pre.textContent=JSON.stringify(meta,null,2);
 }
-function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and simplex Jacobian determinants are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'The sheet maps use exact cell integration of the P₀ and P₁ phase-space sheet following LPT trajectories. The CIC and TSC maps treat the same vertices as point particles; their empty cells and discreteness are properties of the estimator, not of the dynamics.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare Lagrangian resolution and observation-grid changes independently.',variance:'By Parseval’s theorem, the variance σ²(R) of a smoothed periodic field equals the sum over discrete Fourier modes weighted by W²(kR). At R = 8 Mpc/h with a real-space Top-Hat window, the unfiltered linear spectrum reproduces σ₈²(D(a)/D(1))² by construction.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
+function renderTheory(){theory.replaceChildren();$('h2','section-heading',theory,'Interpretation and conventions');const text={sheet:'The resolved LPT vertex orientations and simplex Jacobian determinants are monitored throughout the evolution. Beyond the first orientation loss, the displayed density remains a sum of positive streams, while single-stream fluid interpretation and controlled pre-crossing LPT validity no longer apply.',density:'The sheet maps use exact cell integration of the P₀ and P₁ phase-space sheet following LPT trajectories. The CIC and TSC maps treat the same vertices as point particles; their empty cells and discreteness are properties of the estimator, not of the dynamics.',spectra:'The high-k end is where resolution, assignment, and perturbation-order differences become clearest. Compare Lagrangian resolution and observation-grid changes independently.',variance:'By Parseval’s theorem, the variance σ²(R) of a smoothed periodic field equals the sum over discrete Fourier modes weighted by W²(kR). At R = 8 Mpc/h with a real-space Top-Hat window, the unfiltered linear spectrum reproduces σ₈²(D(a)/D(1))² by construction.',pdf:'Mass weighting uses raw unsmoothed cell mass. At R > 0, the density value is smoothed, so the mass and volume PDFs are not related by a simple ρ pV transform.',gradient:'The tangent is the derivative of continuous P₀ Fourier power with respect to initial amplitude A at fixed epoch. It is not a derivative of clipped, deposited density.',published:'The archive panel replays the packaged reference measurements and records their simulation restrictions. It is separate from the live ΛCDM experiment.',counterterms:'Dual Gaussian IC filters of one seed isolate the UV→IR power response. Exact P₁ deposits for 1–4LPT measure that response without shot noise; the fit −2 cₛ² k² P_lin is the leading LEFT/EFTofLSS counterterm that absorbs it on large scales. Residuals diagnose higher-derivative operators.'};$('p','',theory,text[S.view]||text.sheet);const a=$('a','chapter-link',theory,'Open the chapter ↗');a.href=chapterRefs[S.view]||chapterRefs.sheet;}
 async function loadPublished(){
   replayLibrary = await listReplayLibrary();
   if(!publishedData){
